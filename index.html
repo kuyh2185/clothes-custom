@@ -75,6 +75,8 @@ button{background:none;border:0;padding:0;cursor:pointer}
 #stage[data-tool="dmg"]{cursor:none}
 #stage [data-h]{cursor:grab}
 #stage.dragging,#stage.dragging [data-h]{cursor:grabbing}
+#L-back,#L-bottom,#L-topbody,#L-sleeves{transition:opacity .18s var(--ease)}
+#stage.adjusting #L-back,#stage.adjusting #L-bottom,#stage.adjusting #L-topbody,#stage.adjusting #L-sleeves{opacity:.5}
 .status{position:absolute;left:50%;bottom:16px;transform:translateX(-50%);background:var(--ink);color:var(--paper);font-size:13px;font-weight:600;padding:8px 14px;opacity:0;pointer-events:none;transition:opacity .25s var(--ease);white-space:nowrap}
 .status.show{opacity:1}
 
@@ -103,6 +105,11 @@ input[type=range]{width:100%;margin:0;accent-color:var(--ink);height:22px}
 .sw[aria-pressed="true"]::after{content:"";position:absolute;inset:-4px;border:2px solid var(--ink)}
 .custom{display:flex;align-items:center;gap:8px;margin-top:8px;font-size:13px;color:var(--ink-2)}
 .custom input[type=color]{width:34px;height:26px;padding:0;border:1px solid var(--rule);background:none}
+.hexrow{display:flex;align-items:center;gap:8px;margin:0 0 10px}
+.hexrow input[type=color]{width:40px;height:34px;padding:0;border:1px solid var(--rule);background:none;cursor:pointer}
+.hex{width:112px;height:34px;padding:0 10px;border:1px solid var(--rule);background:var(--paper);color:var(--ink);font-family:ui-monospace,"Cascadia Mono",Consolas,monospace;font-size:14px}
+.hex:focus{outline:none;border-color:var(--ink)}
+.hex.bad{border-color:#b8382e;color:#b8382e}
 .file{position:relative;display:inline-flex;align-items:center;height:34px;padding:0 14px;border:1px solid var(--ink);font-size:13px;font-weight:600;cursor:pointer}
 .file:hover{background:var(--paper-2)}
 .file input{position:absolute;inset:0;opacity:0;cursor:pointer}

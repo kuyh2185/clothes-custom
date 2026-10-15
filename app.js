@@ -70,19 +70,38 @@ function rng(seed) {
 /* ---------- garments ---------- */
 const SOLID = c1 => ({ type: 'solid', c1, c2: '#24324a', scale: 1 });
 const DEF = {
-  tee:   { kind: 'tee',   neckD: 12, neckW: 20, neckV: 0, len: 400, sleeve: 238, fit: 6, fill: SOLID('#f3f1ec'), dmg: [], print: null, rawHem: false, rawSleeve: false },
-  long:  { kind: 'long',  neckD: 10, neckW: 19, neckV: 0, len: 410, sleeve: 424, fit: 3, fill: { type: 'stripe', c1: '#f3f1ec', c2: '#24324a', scale: 1 }, dmg: [], print: null, rawHem: false, rawSleeve: false },
-  jeans: { kind: 'jeans', len: 732, fit: 0.4, fill: { type: 'solid', c1: '#4a6787', c2: '#f3f1ec', scale: 1 }, dmg: [], print: null, rawHem: false },
-  skirt: { kind: 'skirt', len: 476, fit: 0.3, fill: { type: 'solid', c1: '#c7b299', c2: '#3b3b3b', scale: 1 }, dmg: [], print: null, rawHem: false },
+  // tops: fit = body ease, sfit = sleeve ease, drop = shoulder drop, flare = hem flare (all in px)
+  tee:   { kind: 'tee',   neckD: 12, neckW: 20, neckV: 0, len: 400, sleeve: 238, fit: 6, sfit: 2, drop: 3, flare: 0, fill: SOLID('#f3f1ec'), dmg: [], print: null, rawHem: false, rawSleeve: false },
+  long:  { kind: 'long',  neckD: 10, neckW: 19, neckV: 0, len: 410, sleeve: 424, fit: 3, sfit: 1, drop: 2, flare: 0, fill: { type: 'stripe', c1: '#f3f1ec', c2: '#24324a', scale: 1 }, dmg: [], print: null, rawHem: false, rawSleeve: false },
+  // jeans: thigh / knee / hem width, 0..1 each
+  jeans: { kind: 'jeans', len: 732, thigh: .32, knee: .33, hemW: .36, fill: { type: 'solid', c1: '#4a6787', c2: '#f3f1ec', scale: 1 }, dmg: [], print: null, rawHem: false },
+  // skirt: hip = ease over the hips, fit = hem flare, 0..1 each
+  skirt: { kind: 'skirt', len: 476, hip: .06, fit: 0.3, fill: { type: 'solid', c1: '#c7b299', c2: '#3b3b3b', scale: 1 }, dmg: [], print: null, rawHem: false },
 };
 const SLOT = { tee: 'top', long: 'top', jeans: 'bottom', skirt: 'bottom' };
 const NAME = { tee: '반팔 티', long: '긴팔 티', jeans: '청바지', skirt: '치마' };
 const SLEEVELESS = 200;
 const LIMIT = {
   'top.len': [225, 470], 'top.sleeve': [190, 424], 'top.fit': [-3, 40],
+  'top.sfit': [-4, 30], 'top.drop': [0, 34], 'top.flare': [-12, 36],
   'top.neckD': [8, 150], 'top.neckW': [14, 58], 'top.neckV': [0, 1],
-  'bottom.fit': [0, 1],
+  'bottom.fit': [0, 1], 'bottom.hip': [0, 1], 'bottom.thigh': [0, 1], 'bottom.knee': [0, 1], 'bottom.hemW': [0, 1],
 };
+// half-widths of a jeans leg (px) from the 0..1 settings
+const LEG = { thigh: t => 27 + 17 * t, knee: k => 18 + 22 * k, hem: h => 13 + 39 * h };
+// older saves had a single `fit` per garment: spread it over the new per-part settings
+function upgrade(g) {
+  if (!g) return g;
+  const f = g.fit ?? 0;
+  if (SLOT[g.kind] === 'top' && g.sfit == null) Object.assign(g, { sfit: Math.round(f * .32), drop: Math.max(0, f * .55), flare: 0 });
+  if (g.kind === 'jeans' && g.thigh == null) {
+    const j = g.fit ?? .4;
+    Object.assign(g, { thigh: (3 + 6 * j) / 17, knee: (2 + 13 * j) / 22, hemW: (2 + 30 * j) / 39 });
+    delete g.fit;
+  }
+  if (g.kind === 'skirt' && g.hip == null) g.hip = f * .2;
+  return g;
+}
 const bottomLenLimit = b => b.kind === 'jeans' ? [425, 735] : [372, 720];
 
 const topLenName = y => y < 285 ? '크롭' : y < 345 ? '숏' : y < 425 ? '기본' : '롱';
@@ -91,9 +110,17 @@ const bottomLenName = (b, y) => b.kind === 'jeans'
   ? (y < 465 ? '숏팬츠' : y < 590 ? '버뮤다' : y < 680 ? '7부' : y < 722 ? '9부' : '기본')
   : (y < 405 ? '마이크로 미니' : y < 480 ? '미니' : y < 565 ? '무릎' : y < 660 ? '미디' : '맥시');
 const topFitName = e => e < 2 ? '슬림핏' : e < 12 ? '레귤러핏' : e < 24 ? '세미 오버핏' : '오버핏';
-const bottomFitName = b => b.kind === 'jeans'
-  ? (b.fit < .2 ? '스키니' : b.fit < .42 ? '슬림' : b.fit < .62 ? '스트레이트' : b.fit < .82 ? '세미 와이드' : '와이드')
-  : (b.fit < .2 ? 'H라인' : b.fit < .5 ? 'A라인' : b.fit < .8 ? '플레어' : '풀 플레어');
+const sleeveFitName = s => s < 0 ? '타이트' : s < 8 ? '기본' : s < 18 ? '여유' : '오버';
+const dropName = d => d < 6 ? '기본' : d < 18 ? '살짝 드롭' : '드롭 숄더';
+const flareName = f => f < -4 ? '좁게' : f < 6 ? '일자' : f < 18 ? '살짝 퍼짐' : '많이 퍼짐';
+function bottomFitName(b) {
+  if (b.kind !== 'jeans') return b.fit < .2 ? 'H라인' : b.fit < .5 ? 'A라인' : b.fit < .8 ? '플레어' : '풀 플레어';
+  const K = LEG.knee(b.knee), H = LEG.hem(b.hemW);
+  if (H < 17) return '스키니';
+  if (H < K - 3) return '테이퍼드';
+  if (H > K + 8 && K < 30) return H > 44 ? '플레어' : '부츠컷';
+  return K > 32 ? '와이드' : K > 25 ? '스트레이트' : '슬림';
+}
 function neckName(t) {
   if (t.neckV >= .65) return t.neckD >= 90 ? '딥 V넥' : 'V넥';
   if (t.neckV > .35) return 'U와 V 사이';
@@ -103,7 +130,7 @@ function neckName(t) {
 
 function topGeo(t) {
   const e = t.fit, hy = t.len, sy = t.sleeve, nl = sy <= SLEEVELESS;
-  const ST = nl ? [152 - e * .3, neckY(152 - e * .3) + 1] : [139 - e * .55, 147 + e * .3];
+  const ST = nl ? [152 - e * .3, neckY(152 - e * .3) + 1] : [139 - t.drop, 147 + t.drop * .55];
   const nw = Math.min(t.neckW, CX - ST[0] - 12);
   const NL = [CX - nw, neckY(CX - nw)];
   const C0 = [CX, Math.max(NL[1] + 6, 123 + t.neckD)];
@@ -111,8 +138,11 @@ function topGeo(t) {
   const uA = [NL[0], NL[1] + dy * .8], uB = [CX - nw * .55, C0[1]];
   const vA = mix(NL, C0, 1 / 3), vB = mix(NL, C0, 2 / 3);
   const nA = mix(uA, vA, t.neckV), nB = mix(uB, vB, t.neckV);
-  const half = y => { const b = bodyHalf(y); return Math.max(b, .25 * b + .75 * 54) + 2 + e; };
   const apY = (nl ? 208 : 200) + e * .25;
+  const half = y => {
+    const b = bodyHalf(y), fl = t.flare * Math.pow(clamp((y - apY) / Math.max(1, hy - apY), 0, 1), 1.6);
+    return Math.max(b + 1, Math.max(b, .25 * b + .75 * 54) + 2 + e + fl);
+  };
   const AP = [nl ? Math.max(CX - half(apY), armI(apY) + 1) : CX - half(apY), apY];   // sleeveless armhole stops at the arm
   const side = [AP];
   for (let y = apY + 26; y < hy - 12; y += 26) side.push([CX - half(y), y]);
@@ -129,7 +159,7 @@ function topGeo(t) {
     armhole, ...crSegs(side),
     { t: 'C', a: [HL[0] + 30, hy + 2], b: [176, hy + 3], p: [CX, hy + 3] },
   ]);
-  const G = { body, C0, NL, nw, ST, AP, HL, hy, half, nl, sy };
+  const G = { body, C0, NL, nw, ST, AP, HL, hy, half, nl, sy, apY };
   G.Um = cubicMid(NL, uA, uB, C0); G.Vm = cubicMid(NL, vA, vB, C0); G.mid = cubicMid(NL, nA, nB, C0);
   const NR = mir(NL);
   // shoulder yoke above the armpits: the bare arm is hidden under it
@@ -138,7 +168,7 @@ function topGeo(t) {
   G.backBandD = `M${pt(NL)}Q${pt([CX, NL[1] - 9])} ${pt(NR)}`;
   G.bandD = `M${pt(NL)}C${pt(nA)} ${pt(nB)} ${pt(C0)}C${pt(mir(nB))} ${pt(mir(nA))} ${pt(NR)}`;
   if (!nl) {
-    const se = (t.kind === 'tee' ? 9 : 3) + e * .32, si = se * .45;
+    const se = Math.max(1, (t.kind === 'tee' ? 9 : 3) + t.sfit), si = se * .45;
     const outs = [ST];
     for (let y = ST[1] + 34; y < sy - 8; y += 34) outs.push([armO(y) - se, y]);
     const SO = [armO(sy) - se, sy], SI = [armI(sy) + si, sy];
@@ -157,11 +187,12 @@ function topGeo(t) {
 }
 
 function jeansGeo(b) {
-  const f = b.fit, hy = b.len, wy = 296;
+  const hy = b.len, wy = 296;
   const wh = bodyHalf(wy) + 3;
-  const hipH = y => bodyHalf(y) + 3 + f * 5;
+  const hipH = y => bodyHalf(y) + 3 + b.thigh * 5;
   const cxT = [[414, 171], [440, 172], [560, 177], [735, 181]];
-  const lhT = [[414, 31 + 6 * f], [440, 30 + 6 * f], [560, 20 + 13 * f], [735, 15 + 30 * f]];
+  const T = LEG.thigh(b.thigh);
+  const lhT = [[414, T + 1], [450, T], [560, LEG.knee(b.knee)], [735, LEG.hem(b.hemW)]];
   // legs keep a small gap between them; wider legs grow outward instead of overlapping
   const inMax = y => table([[416, 199.3], [470, 198.5], [735, 195.5]], y);
   const lh = y => table(lhT, y);
@@ -182,11 +213,11 @@ function jeansGeo(b) {
 
 function skirtGeo(b) {
   const fl = b.fit, hy = b.len, wy = 290, hipY = 362;
-  const wh = bodyHalf(wy) + 2.5, hipH = bodyHalf(hipY) + 3 + fl * 3;
+  const wh = bodyHalf(wy) + 2.5, hipH = bodyHalf(hipY) + 3 + fl * 3 + b.hip * 14;
   const hemH = hy <= hipY ? lerp(wh, hipH, (hy - wy) / (hipY - wy)) + fl * 6
                           : hipH - 3 + (hy - hipY) * (.04 + .6 * fl) + fl * 8;
   const pts = [[CX - wh, wy]];
-  if (hy > 340) pts.push([CX - bodyHalf(330) - 3 - fl * 2, 330]);
+  if (hy > 340) pts.push([CX - bodyHalf(330) - 3 - fl * 2 - b.hip * 8, 330]);
   if (hy > hipY + 14) pts.push([CX - hipH, hipY]);
   const HL = [CX - hemH, hy];
   pts.push(HL);
@@ -215,7 +246,7 @@ let images = {};
 const blobUrls = {};
 try {
   const s = JSON.parse(localStorage.getItem(STORE) || 'null');
-  if (s) { state.top = s.top ?? null; state.bottom = s.bottom ?? null; images = s.images || {}; }
+  if (s) { state.top = upgrade(s.top ?? null); state.bottom = upgrade(s.bottom ?? null); images = s.images || {}; }
 } catch (e) { /* storage unavailable: start fresh */ }
 if (!state[state.target]) state.target = state.top ? 'top' : 'bottom';
 
@@ -410,15 +441,29 @@ function render() {
 
 /* ---------- overlay: handles, cut line, brush ---------- */
 let hover = null, drag = null;
+// while adjusting, garments turn see-through and the shape from before the change stays as a dashed outline
+let ghost = null, sliderAdjust = false;
+function startAdjust() {
+  ghost = [geo.top && geo.top.body, geo.top && geo.top.sleeveL, geo.top && geo.top.sleeveR, geo.bottom && geo.bottom.d].filter(Boolean);
+  svg.classList.add('adjusting');
+}
+function endAdjust() {
+  if (!ghost) return;
+  ghost = null; svg.classList.remove('adjusting');
+  renderOverlay();
+}
+const adj = (p, key, scale, side) =>
+  `<g data-h="adj" data-key="${key}" data-scale="${r1(scale)}" data-side="${side}"><circle cx="${r1(p[0])}" cy="${r1(p[1])}" r="14" fill="transparent"/><circle cx="${r1(p[0])}" cy="${r1(p[1])}" r="7" fill="#fff" stroke="#161616" stroke-width="2"/></g>`;
 const handle = (p, h, side, shape) => shape === 'diamond'
   ? `<g data-h="${h}" data-side="${side}"><circle cx="${r1(p[0])}" cy="${r1(p[1])}" r="16" fill="transparent"/><rect x="${r1(p[0] - 6)}" y="${r1(p[1] - 6)}" width="12" height="12" transform="rotate(45 ${r1(p[0])} ${r1(p[1])})" fill="#fff" stroke="#161616" stroke-width="2"/></g>`
   : `<g data-h="${h}" data-side="${side}"><circle cx="${r1(p[0])}" cy="${r1(p[1])}" r="17" fill="transparent"/><circle cx="${r1(p[0])}" cy="${r1(p[1])}" r="7.5" fill="#fff" stroke="#161616" stroke-width="2"/></g>`;
 const tag = (x, y, text, anchor = 'middle') =>
-  `<text x="${r1(x)}" y="${r1(y)}" text-anchor="${anchor}" font-size="12" font-weight="700" fill="#161616" stroke="#fff" stroke-width="3.5" paint-order="stroke" stroke-linejoin="round" font-family="Pretendard Variable, Pretendard, Malgun Gothic, sans-serif">${text}</text>`;
+  `<text x="${r1(x)}" y="${r1(y)}" text-anchor="${anchor}" pointer-events="none" font-size="12" font-weight="700" fill="#161616" stroke="#fff" stroke-width="3.5" paint-order="stroke" stroke-linejoin="round" font-family="Pretendard Variable, Pretendard, Malgun Gothic, sans-serif">${text}</text>`;
 
 function renderOverlay() {
   let s = '';
   const T = state.top, B = state.bottom;
+  if (ghost) s += ghost.map(d => `<path d="${d}" fill="none" stroke="#fff" stroke-width="2.6" opacity=".7"/><path d="${d}" fill="none" stroke="#161616" stroke-width="1.3" stroke-dasharray="5 4"/>`).join('');
   if (tool === 'neck' && T && geo.top) {
     const G = geo.top;
     s += `<path d="${G.bandD}" fill="none" stroke="#161616" stroke-width="1.2" stroke-dasharray="4 3" opacity=".6"/>`;
@@ -427,14 +472,40 @@ function renderOverlay() {
     s += tag(CX, G.C0[1] + 26, neckName(T));
   }
   if (tool === 'fit') {
+    // one pair of handles per body part; shoulder/sleeve labels sit on the left, body/hem/leg labels on the right
+    const labels = [];
+    const pair = (p, key, scale, text, labelSide) => {
+      s += adj(p, key, scale, -1) + adj(mir(p), key, scale, 1);
+      const q = labelSide > 0 ? mir(p) : p;
+      labels.push(tag(q[0] + 13 * labelSide, q[1] + 4, text, labelSide > 0 ? 'start' : 'end'));
+    };
     if (T && geo.top) {
-      const y = geo.top.hy - 16, x = CX - geo.top.half(y);
-      s += handle([x, y], 'fitTop', -1) + handle([400 - x, y], 'fitTop', 1) + tag(x - 14, y + 4, topFitName(T.fit), 'end');
+      const G = geo.top;
+      if (!G.nl) {
+        pair(G.ST, 'top.drop', 1, '어깨 · ' + dropName(T.drop), -1);
+        const y = (G.ST[1] + G.sy) / 2;
+        pair([armO(y) - G.se, y], 'top.sfit', 1, '소매 · ' + sleeveFitName(T.sfit), -1);
+      }
+      const yb = (G.apY + G.hy) / 2, yh = G.hy - 6;
+      pair([CX - G.half(yb), yb], 'top.fit', 1, '몸통 · ' + topFitName(T.fit), 1);
+      pair([CX - G.half(yh), yh], 'top.flare', 1, '밑단 · ' + flareName(T.flare), 1);
     }
     if (B && geo.bottom) {
-      const [x, y] = geo.bottom.handle;
-      s += handle([x, y], 'fitBottom', -1) + handle([400 - x, y], 'fitBottom', 1) + tag(x - 14, y + 4, bottomFitName(B), 'end');
+      const G = geo.bottom;
+      if (B.kind === 'jeans') {
+        const at = y => [G.cx(y) - G.lh(y), y], yh = G.hy - 12;
+        if (G.hy > 490) pair(at(452), 'bottom.thigh', 17, '허벅지', 1);
+        if (G.hy > 610) {
+          pair(at(560), 'bottom.knee', 22, '무릎', 1);
+          pair(at(yh), 'bottom.hemW', Math.max(8, 39 * (yh - 560) / 175), '밑단 · ' + bottomFitName(B), 1);
+        } else if (G.hy > 490) pair(at(yh), 'bottom.knee', Math.max(6, 22 * (yh - 450) / 110), '밑단 · ' + bottomFitName(B), 1);
+        else pair(at(yh), 'bottom.thigh', 17, '밑단 · ' + bottomFitName(B), 1);
+      } else {
+        if (G.hy > G.hipY + 20) pair([CX - G.hipH, G.hipY], 'bottom.hip', 14, '엉덩이', 1);
+        pair(G.handle, 'bottom.fit', Math.max(10, (G.hy - G.hipY) * .6 + 8), '밑단 · ' + bottomFitName(B), 1);
+      }
     }
+    s += labels.join('');
   }
   if (tool === 'cut' && hover && hover.cut) {
     const { x0, x1, y, label } = hover.cut;
@@ -506,7 +577,9 @@ svg.addEventListener('pointerdown', e => {
   const p = svgPt(e), h = e.target.closest('[data-h]');
   const start = () => { svg.setPointerCapture(e.pointerId); svg.classList.add('dragging'); e.preventDefault(); };
   if (h) {
-    drag = { h: h.dataset.h, side: +h.dataset.side, p0: p, top: clone(state.top), bottom: clone(state.bottom) };
+    const key = h.dataset.key;
+    drag = { h: h.dataset.h, side: +h.dataset.side, p0: p, key, scale: +h.dataset.scale, v0: key ? getK(key) : 0 };
+    startAdjust();
     return start();
   }
   if (tool === 'cut') {
@@ -564,8 +637,7 @@ svg.addEventListener('pointermove', e => {
       if (Math.abs(bulge) > .5) T.neckV = clamp(1 - off(q) / bulge, 0, 1);
       break;
     }
-    case 'fitTop': T.fit = clamp(d.top.fit + out, ...LIMIT['top.fit']); break;
-    case 'fitBottom': B.fit = clamp(d.bottom.fit + out / 60, 0, 1); break;
+    case 'adj': setK(d.key, r1(clamp(d.v0 + out / d.scale, ...LIMIT[d.key]) * 100) / 100); break;
     case 'print': { const pr = state[state.target].print; pr.cx = d.cx + p[0] - d.p0[0]; pr.cy = d.cy + p[1] - d.p0[1]; break; }
     case 'paint':
       hover = { p };
@@ -587,6 +659,7 @@ function endDrag() {
   if (!drag) return;
   if (drag.h === 'cut') { drag = null; svg.classList.remove('dragging'); applyCut(hover && hover.cut, null); renderOverlay(); return; }
   drag = null; svg.classList.remove('dragging');
+  endAdjust();
   commit();
 }
 svg.addEventListener('pointerup', endDrag);
@@ -683,6 +756,18 @@ function setTool(id) {
 const COLORS = [['흰색', '#f3f1ec'], ['아이보리', '#e9e1cf'], ['베이지', '#c7b299'], ['카키', '#8b8256'], ['올리브', '#556045'], ['그린', '#2f5d46'], ['하늘', '#a9c8e0'], ['연청', '#8aa4bf'], ['중청', '#4a6787'],
   ['네이비', '#24324a'], ['그레이', '#9a9a96'], ['차콜', '#3b3b3b'], ['블랙', '#1c1c1c'], ['브라운', '#6b4a33'], ['버건디', '#6e2533'], ['레드', '#b8382e'], ['핑크', '#e8b4b8'], ['버터', '#efd98a']];
 const PATS = [['solid', '단색'], ['stripe', '스트라이프'], ['check', '체크'], ['dot', '도트']];
+const FIT_PRESETS = {
+  top: [['슬림', { fit: -1, sfit: -2, drop: 0, flare: -4 }], ['레귤러', { fit: 6, sfit: 2, drop: 3, flare: 0 }],
+        ['오버핏', { fit: 26, sfit: 16, drop: 20, flare: 2 }], ['박시', { fit: 30, sfit: 10, drop: 14, flare: -6 }]],
+  jeans: [['스키니', { thigh: .1, knee: .05, hemW: .05 }], ['슬림', { thigh: .3, knee: .25, hemW: .2 }], ['스트레이트', { thigh: .45, knee: .45, hemW: .4 }],
+          ['부츠컷', { thigh: .4, knee: .3, hemW: .6 }], ['와이드', { thigh: .8, knee: .85, hemW: .85 }]],
+  skirt: [['H라인', { hip: 0, fit: 0 }], ['A라인', { hip: .1, fit: .35 }], ['플레어', { hip: .15, fit: .75 }]],
+};
+const parseHex = s => {
+  let h = String(s).trim().replace(/^#/, '');
+  if (/^[0-9a-f]{3}$/i.test(h)) h = h.split('').map(c => c + c).join('');
+  return /^[0-9a-f]{6}$/i.test(h) ? '#' + h.toLowerCase() : null;
+};
 const PRESETS = { round: ['라운드', 12, 20, 0], u: ['U넥', 62, 30, 0], v: ['V넥', 58, 22, 1], deepv: ['딥 V', 112, 26, 1], boat: ['보트넥', 10, 50, 0] };
 
 function getK(k) {
@@ -700,11 +785,19 @@ const OUT = {
   'top.len': () => topLenName(state.top.len), 'top.sleeve': () => sleeveName(state.top.sleeve),
   'bottom.len': () => bottomLenName(state.bottom, state.bottom.len),
   'top.fit': () => topFitName(state.top.fit), 'bottom.fit': () => bottomFitName(state.bottom),
+  'top.sfit': () => sleeveFitName(state.top.sfit), 'top.drop': () => dropName(state.top.drop), 'top.flare': () => flareName(state.top.flare),
+  'bottom.thigh': () => wideName(state.bottom.thigh), 'bottom.knee': () => wideName(state.bottom.knee),
+  'bottom.hemW': () => bottomFitName(state.bottom), 'bottom.hip': () => wideName(state.bottom.hip),
   'cur.fill.scale': () => '×' + (getK('cur.fill.scale') || 1).toFixed(1),
   'cur.print.w': () => Math.round(getK('cur.print.w') || 0) + '',
 };
 const slider = (k, label, min, max, step) =>
   `<label class="row"><span class="lab">${label}<b data-out="${k}"></b></span><input type="range" data-k="${k}" min="${min}" max="${max}" step="${step}"></label>`;
+const wideName = v => v < .25 ? '좁게' : v < .6 ? '보통' : '넓게';
+const hexRow = (c, label) =>
+  `<div class="hexrow"><input type="color" data-k="cur.fill.${c}" aria-label="${label} 고르기"><input type="text" class="hex" data-hex="${c}" maxlength="7" spellcheck="false" autocomplete="off" placeholder="#ffffff" aria-label="${label} 코드"><span class="note" style="margin:0">색상 코드 입력</span></div>`;
+const fitChips = (slot, list) =>
+  `<div class="chips" style="margin:0 0 12px">${list.map(([n], i) => `<button type="button" class="chip" data-fitp="${slot}:${i}">${n}</button>`).join('')}</div>`;
 const need = what => `<p class="empty">${what}을 먼저 입혀 주세요. 왼쪽 <b>옷 고르기</b>에서 고를 수 있어요.</p>`;
 
 function panelHTML() {
@@ -727,8 +820,15 @@ function panelHTML() {
         <div class="btn-row"><button type="button" class="chip" data-mode="paint">칠하기</button><button type="button" class="chip" data-mode="erase">지우개</button><button type="button" class="chip" data-act="clear-dmg">전부 지우기</button></div>`;
     case 'fit':
       if (!T && !B) return need('옷');
-      return `<p class="hint">옷 아래쪽 <b>양옆 점</b>을 바깥으로 끌면 넓어지고, 안쪽으로 끌면 좁아져요.</p>
-        ${T ? slider('top.fit', '상의 품', ...LIMIT['top.fit'], 1) : ''}${B ? slider('bottom.fit', B.kind === 'jeans' ? '바지 통' : '치마 퍼짐', 0, 1, .01) : ''}`;
+      return `<p class="hint">부위마다 <b>점이 따로</b> 있어요. 바깥으로 끌면 넓어지고 안쪽으로 끌면 좁아져요. 조절하는 동안 옷이 <b>반투명</b>해지고 원래 모양이 점선으로 남아요.</p>
+        ${T ? `<span class="label-sm">상의 · ${NAME[T.kind]}</span>${fitChips('top', FIT_PRESETS.top)}
+          ${slider('top.fit', '몸통 품', ...LIMIT['top.fit'], .5)}
+          ${geo.top && !geo.top.nl ? slider('top.sfit', '소매 품', ...LIMIT['top.sfit'], .5) + slider('top.drop', '어깨선', ...LIMIT['top.drop'], .5) : ''}
+          ${slider('top.flare', '밑단 퍼짐', ...LIMIT['top.flare'], .5)}` : ''}
+        ${B ? `<span class="label-sm">하의 · ${NAME[B.kind]}</span>${fitChips(B.kind, FIT_PRESETS[B.kind])}
+          ${B.kind === 'jeans'
+            ? slider('bottom.thigh', '허벅지', 0, 1, .01) + slider('bottom.knee', '무릎', 0, 1, .01) + slider('bottom.hemW', '밑단', 0, 1, .01)
+            : slider('bottom.hip', '엉덩이', 0, 1, .01) + slider('bottom.fit', '밑단 퍼짐', 0, 1, .01)}` : ''}`;
     case 'color': {
       const g = state[state.target];
       if (!g) return need('옷');
@@ -738,13 +838,13 @@ function panelHTML() {
           <button type="button" class="chip" data-target="bottom" ${B ? '' : 'disabled'}>하의${B ? ' · ' + NAME[B.kind] : ''}</button></div>
         <p class="note" style="margin:0 0 4px">마네킹의 옷을 눌러도 바꿀 수 있어요.</p>
         <span class="label-sm">색</span>
-        <div class="swatches">${COLORS.map(([n, c]) => `<button type="button" class="sw" data-c1="${c}" style="background:${c}" aria-label="${n}" title="${n}"></button>`).join('')}</div>
-        <label class="custom"><input type="color" data-k="cur.fill.c1"> 직접 고르기</label>
+        ${hexRow('c1', '색')}
+        <div class="swatches">${COLORS.map(([n, c]) => `<button type="button" class="sw" data-c1="${c}" style="background:${c}" aria-label="${n}" title="${n} ${c}"></button>`).join('')}</div>
         <span class="label-sm">무늬</span>
         <div class="chips">${PATS.map(([id, n]) => `<button type="button" class="chip" data-pat="${id}">${n}</button>`).join('')}</div>
         ${pat ? `<span class="label-sm">무늬 색</span>
-          <div class="swatches">${COLORS.map(([n, c]) => `<button type="button" class="sw" data-c2="${c}" style="background:${c}" aria-label="무늬 ${n}" title="${n}"></button>`).join('')}</div>
-          <label class="custom"><input type="color" data-k="cur.fill.c2"> 직접 고르기</label>
+          ${hexRow('c2', '무늬 색')}
+          <div class="swatches">${COLORS.map(([n, c]) => `<button type="button" class="sw" data-c2="${c}" style="background:${c}" aria-label="무늬 ${n}" title="${n} ${c}"></button>`).join('')}</div>
           <div style="margin-top:14px">${slider('cur.fill.scale', '무늬 크기', .5, 2.5, .1)}</div>` : ''}
         <span class="label-sm">내 이미지 프린트</span>
         <div class="btn-row"><label class="file">${g.print ? '이미지 바꾸기' : '이미지 올리기'}<input type="file" accept="image/*" id="print-file"></label>
@@ -766,7 +866,12 @@ function syncPanel() {
   const g = state[state.target];
   P.querySelectorAll('[data-target]').forEach(b => b.setAttribute('aria-pressed', b.dataset.target === state.target));
   P.querySelectorAll('[data-mode]').forEach(b => b.setAttribute('aria-pressed', b.dataset.mode === dmgMode));
+  P.querySelectorAll('[data-fitp]').forEach(b => {
+    const [slot, i] = b.dataset.fitp.split(':'), g2 = state[slot === 'top' ? 'top' : 'bottom'], p = FIT_PRESETS[slot][+i][1];
+    b.setAttribute('aria-pressed', !!g2 && Object.entries(p).every(([k, v]) => Math.abs(g2[k] - v) < 1e-6));
+  });
   if (g) {
+    P.querySelectorAll('[data-hex]').forEach(el => { if (document.activeElement !== el) { el.value = g.fill[el.dataset.hex]; el.classList.remove('bad'); } });
     P.querySelectorAll('[data-pat]').forEach(b => b.setAttribute('aria-pressed', b.dataset.pat === g.fill.type));
     P.querySelectorAll('[data-c1]').forEach(b => b.setAttribute('aria-pressed', b.dataset.c1 === g.fill.c1));
     P.querySelectorAll('[data-c2]').forEach(b => b.setAttribute('aria-pressed', b.dataset.c2 === g.fill.c2));
@@ -774,13 +879,32 @@ function syncPanel() {
   if (state.top) P.querySelectorAll('[data-preset]').forEach(b => { const p = PRESETS[b.dataset.preset]; b.setAttribute('aria-pressed', state.top.neckD === p[1] && state.top.neckW === p[2] && state.top.neckV === p[3]); });
 }
 const P = $('#panel');
+P.addEventListener('pointerdown', e => {
+  if (e.target.matches('input[type=range]')) { sliderAdjust = true; startAdjust(); renderOverlay(); }
+});
+document.addEventListener('pointerup', () => { if (sliderAdjust) { sliderAdjust = false; endAdjust(); } });
+document.addEventListener('pointercancel', () => { if (sliderAdjust) { sliderAdjust = false; endAdjust(); } });
 P.addEventListener('input', e => {
+  const hx = e.target.closest('[data-hex]');
+  if (hx) {
+    const v = parseHex(hx.value), g = state[state.target];
+    hx.classList.toggle('bad', !v && hx.value.trim() !== '');
+    if (v && g) { g.fill[hx.dataset.hex] = v; render(); syncPanel(); }
+    return;
+  }
   const el = e.target.closest('[data-k]');
   if (!el) return;
   setK(el.dataset.k, el.type === 'color' ? el.value : +el.value);
   render(); syncPanel();
 });
+P.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.matches('[data-hex]')) e.target.blur(); });
 P.addEventListener('change', e => {
+  if (e.target.matches('[data-hex]')) {
+    if (parseHex(e.target.value)) commit();
+    else say('색상 코드는 #ffffff처럼 6자리로 써 주세요');
+    syncPanel();
+    return;
+  }
   if (e.target.closest('[data-k]')) {
     if (e.target.dataset.k === 'top.sleeve' && state.top.sleeve <= SLEEVELESS) state.top.sleeve = 190;
     commit();
@@ -792,6 +916,7 @@ P.addEventListener('click', e => {
   if (!b || b.disabled) return;
   const g = state[state.target], d = b.dataset;
   if (d.preset) { const p = PRESETS[d.preset]; Object.assign(state.top, { neckD: p[1], neckW: p[2], neckV: p[3] }); }
+  else if (d.fitp) { const [slot, i] = d.fitp.split(':'); Object.assign(state[slot === 'top' ? 'top' : 'bottom'], FIT_PRESETS[slot][+i][1]); }
   else if (d.target) { state.target = d.target; renderPanel(); renderOverlay(); return; }
   else if (d.mode) { dmgMode = d.mode; syncPanel(); return; }
   else if (d.c1) g.fill.c1 = d.c1;
