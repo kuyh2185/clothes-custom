@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>고쳐 입기</title>
+<meta name="description" content="기본 옷을 클릭과 드래그만으로 고쳐서 마네킹에 입혀 보세요.">
+<meta property="og:title" content="고쳐 입기">
+<meta property="og:description" content="기본 옷을 클릭과 드래그만으로 고쳐서 마네킹에 입혀 보세요.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23161616'/%3E%3Ccircle cx='11' cy='22' r='3.2' fill='none' stroke='%23ecece9' stroke-width='2'/%3E%3Ccircle cx='21' cy='22' r='3.2' fill='none' stroke='%23ecece9' stroke-width='2'/%3E%3Cpath d='M13 19.5 22 7M19 19.5 10 7' stroke='%23ecece9' stroke-width='2'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Hahmlet:wght@300;400;500;600&display=swap">
+<style>
+/* Sibling of 내일 뭐 입지?: same paper/ink palette, Hahmlet for headings, Pretendard for UI, square corners.
+   The stage is a soft studio backdrop; garments are SVG built from a few draggable control points. */
+:root{
+  --paper:#ecece9; --paper-2:#e3e3e0; --ink:#161616; --ink-2:#4a4a48; --muted:#6f6f6c; --rule:#c9c9c5;
+  --stage:#dedcd7; --focus:#161616;
+  --serif:"Hahmlet","Nanum Myeongjo","AppleMyungjo",serif;
+  --sans:"Pretendard Variable",Pretendard,"Apple SD Gothic Neo","Malgun Gothic",system-ui,sans-serif;
+  --ease:cubic-bezier(.22,1,.36,1);
+  --head:60px;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --paper:#121211; --paper-2:#1c1c1b; --ink:#e9e8e4; --ink-2:#bdbcb8; --muted:#929190; --rule:#363634;
+  --stage:#2a2a28; --focus:#e9e8e4; color-scheme:dark;
+}}
+:root[data-theme="dark"]{
+  --paper:#121211; --paper-2:#1c1c1b; --ink:#e9e8e4; --ink-2:#bdbcb8; --muted:#929190; --rule:#363634;
+  --stage:#2a2a28; --focus:#e9e8e4; color-scheme:dark;
+}
+*,*::before,*::after{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);font-size:14.5px;line-height:1.55;-webkit-font-smoothing:antialiased}
+button,input{font:inherit;color:inherit}
+button{background:none;border:0;padding:0;cursor:pointer}
+:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+
+/* header */
+.top{height:var(--head);display:flex;align-items:center;justify-content:space-between;gap:16px;padding:0 20px;border-bottom:1px solid var(--rule)}
+.brand{display:flex;align-items:baseline;gap:12px;min-width:0}
+.logo{margin:0;font-family:var(--serif);font-weight:500;font-size:22px;letter-spacing:-.02em;white-space:nowrap}
+.kicker{font-size:13px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.acts{display:flex;align-items:center;gap:4px}
+.act{display:inline-flex;align-items:center;gap:6px;height:36px;padding:0 12px;font-size:13.5px;font-weight:600;color:var(--ink-2)}
+.act:hover:not(:disabled){color:var(--ink);background:var(--paper-2)}
+.act:disabled{opacity:.35;cursor:default}
+.act svg{width:17px;height:17px}
+.act.primary{background:var(--ink);color:var(--paper);margin-left:8px;padding:0 16px}
+.act.primary:hover{background:var(--ink);color:var(--paper);opacity:.88}
+
+/* layout */
+.app{display:grid;grid-template-columns:212px minmax(0,1fr) 304px;height:calc(100dvh - var(--head))}
+.wardrobe,.tools{overflow-y:auto;padding:18px 18px 28px}
+.wardrobe{border-right:1px solid var(--rule)}
+.tools{border-left:1px solid var(--rule)}
+.sec-title{margin:0 0 12px;font-family:var(--serif);font-weight:500;font-size:18px;letter-spacing:-.02em}
+.group-label{margin:18px 0 8px;font-size:12px;font-weight:700;color:var(--muted);letter-spacing:.04em}
+.group-label:first-of-type{margin-top:4px}
+.cards{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.card{display:flex;flex-direction:column;align-items:center;gap:4px;padding:10px 6px 8px;border:1px solid var(--rule);background:var(--paper);transition:border-color .2s var(--ease),background .2s var(--ease)}
+.card:hover{border-color:var(--ink-2)}
+.card[aria-pressed="true"]{border-color:var(--ink);background:var(--paper-2);box-shadow:inset 0 0 0 1px var(--ink)}
+.card svg{width:100%;height:76px}
+.card span{font-size:13px;font-weight:600}
+.note{margin:14px 0 0;font-size:12.5px;color:var(--muted)}
+
+.stage-wrap{position:relative;background:var(--stage);min-height:0;display:flex;align-items:center;justify-content:center;overflow:hidden}
+#stage{width:100%;height:100%;display:block;touch-action:none;user-select:none;-webkit-user-select:none}
+#stage[data-tool="cut"]{cursor:crosshair}
+#stage[data-tool="dmg"]{cursor:none}
+#stage [data-h]{cursor:grab}
+#stage.dragging,#stage.dragging [data-h]{cursor:grabbing}
+.status{position:absolute;left:50%;bottom:16px;transform:translateX(-50%);background:var(--ink);color:var(--paper);font-size:13px;font-weight:600;padding:8px 14px;opacity:0;pointer-events:none;transition:opacity .25s var(--ease);white-space:nowrap}
+.status.show{opacity:1}
+
+/* tools */
+.toolbar{display:grid;grid-template-columns:repeat(5,1fr);gap:4px;margin-bottom:18px}
+.tool{display:flex;flex-direction:column;align-items:center;gap:4px;padding:10px 2px 8px;border:1px solid transparent;font-size:12px;font-weight:600;color:var(--ink-2)}
+.tool svg{width:22px;height:22px}
+.tool:hover{color:var(--ink);background:var(--paper-2)}
+.tool[aria-pressed="true"]{color:var(--paper);background:var(--ink)}
+.panel h3{margin:0 0 6px;font-family:var(--serif);font-weight:500;font-size:18px;letter-spacing:-.02em}
+.hint{margin:0 0 16px;font-size:13.5px;color:var(--ink-2)}
+.hint b{color:var(--ink);font-weight:700}
+.empty{margin:0;padding:14px;border:1px dashed var(--rule);font-size:13.5px;color:var(--muted)}
+.row{display:block;margin:0 0 14px}
+.row .lab{display:flex;justify-content:space-between;gap:8px;font-size:13px;font-weight:600;margin-bottom:4px}
+.row .lab b{font-weight:600;color:var(--muted)}
+input[type=range]{width:100%;margin:0;accent-color:var(--ink);height:22px}
+.label-sm{display:block;font-size:12px;font-weight:700;color:var(--muted);letter-spacing:.04em;margin:18px 0 8px}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{height:32px;padding:0 11px;border:1px solid var(--rule);font-size:13px;font-weight:600;color:var(--ink-2)}
+.chip:hover{border-color:var(--ink-2);color:var(--ink)}
+.chip[aria-pressed="true"]{border-color:var(--ink);background:var(--ink);color:var(--paper)}
+.chip:disabled{opacity:.35;cursor:default}
+.swatches{display:grid;grid-template-columns:repeat(9,1fr);gap:5px}
+.sw{aspect-ratio:1;border:1px solid rgba(0,0,0,.18);position:relative}
+.sw[aria-pressed="true"]::after{content:"";position:absolute;inset:-4px;border:2px solid var(--ink)}
+.custom{display:flex;align-items:center;gap:8px;margin-top:8px;font-size:13px;color:var(--ink-2)}
+.custom input[type=color]{width:34px;height:26px;padding:0;border:1px solid var(--rule);background:none}
+.file{position:relative;display:inline-flex;align-items:center;height:34px;padding:0 14px;border:1px solid var(--ink);font-size:13px;font-weight:600;cursor:pointer}
+.file:hover{background:var(--paper-2)}
+.file input{position:absolute;inset:0;opacity:0;cursor:pointer}
+.file:focus-within{outline:2px solid var(--focus);outline-offset:2px}
+.btn-row{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+
+@media (max-width:900px){
+  .app{grid-template-columns:1fr;height:auto}
+  .wardrobe{border-right:0;border-bottom:1px solid var(--rule);padding:12px 16px}
+  .wardrobe .sec-title,.wardrobe .group-label,.wardrobe .note{display:none}
+  .wardrobe .groups{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+  .cards{display:contents}
+  .card svg{height:52px}
+  .stage-wrap{height:62svh;min-height:420px}
+  .tools{border-left:0;padding:14px 16px 32px}
+  .kicker{display:none}
+  .act .t{display:none}
+  .act{padding:0 10px}
+  .act.primary .t{display:inline}
+}
+@media (max-width:420px){ .top{padding:0 12px} .logo{font-size:19px} .act{padding:0 8px} .act.primary{margin-left:4px;padding:0 12px} }
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <h1 class="logo">고쳐 입기</h1>
+    <span class="kicker">클릭과 드래그만으로 내 옷 만들기</span>
+  </div>
+  <div class="acts">
+    <button type="button" class="act" id="undo" aria-label="되돌리기" title="되돌리기 (Ctrl+Z)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg><span class="t">되돌리기</span></button>
+    <button type="button" class="act" id="redo" aria-label="다시하기" title="다시하기 (Ctrl+Shift+Z)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 14 5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/></svg><span class="t">다시하기</span></button>
+    <button type="button" class="act" id="reset" aria-label="처음부터" title="처음부터"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg><span class="t">처음부터</span></button>
+    <button type="button" class="act primary" id="save"><span class="t">PNG 저장</span></button>
+  </div>
+</header>
+
+<main class="app">
+  <aside class="wardrobe" aria-labelledby="w-title">
+    <h2 class="sec-title" id="w-title">옷 고르기</h2>
+    <div class="groups">
+      <p class="group-label">상의</p>
+      <div class="cards" id="cards-top"></div>
+      <p class="group-label">하의</p>
+      <div class="cards" id="cards-bottom"></div>
+    </div>
+    <p class="note">누르면 바로 입혀져요. 입은 옷을 한 번 더 누르면 벗어요.</p>
+  </aside>
+
+  <section class="stage-wrap" aria-label="마네킹">
+    <svg id="stage" viewBox="0 10 400 760" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="옷을 입은 마네킹">
+      <defs id="static-defs"></defs>
+      <defs id="defs"></defs>
+      <ellipse cx="200" cy="752" rx="74" ry="8" fill="#000" opacity=".1"/>
+      <g id="L-back"></g>
+      <g id="L-man"></g>
+      <g id="L-bottom"></g>
+      <g id="L-topbody"></g>
+      <g id="L-arms"></g>
+      <g id="L-sleeves"></g>
+      <g id="L-ov"></g>
+    </svg>
+    <div class="status" id="status" role="status" aria-live="polite"></div>
+  </section>
+
+  <aside class="tools" aria-label="도구">
+    <div class="toolbar" id="toolbar" role="group" aria-label="도구 고르기"></div>
+    <div class="panel" id="panel"></div>
+  </aside>
+</main>
+<script src="app.js"></script>
+</body>
+</html>
