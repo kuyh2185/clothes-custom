@@ -106,7 +106,18 @@ input[type=range]{width:100%;margin:0;accent-color:var(--ink);height:22px}
 .custom{display:flex;align-items:center;gap:8px;margin-top:8px;font-size:13px;color:var(--ink-2)}
 .custom input[type=color]{width:34px;height:26px;padding:0;border:1px solid var(--rule);background:none}
 .hexrow{display:flex;align-items:center;gap:8px;margin:0 0 10px}
-.hexrow input[type=color]{width:40px;height:34px;padding:0;border:1px solid var(--rule);background:none;cursor:pointer}
+.picker{margin:0 0 12px}
+.sv{position:relative;height:150px;border:1px solid var(--rule);cursor:crosshair;touch-action:none}
+.sv-dot{position:absolute;width:18px;height:18px;margin:-9px 0 0 -9px;border:2px solid #fff;border-radius:50%;box-shadow:0 0 0 1px rgba(0,0,0,.55),0 1px 4px rgba(0,0,0,.35);pointer-events:none}
+input[type=range].hue{-webkit-appearance:none;appearance:none;display:block;width:100%;height:16px;margin:12px 0 0;border:1px solid var(--rule);
+  background:linear-gradient(to right,#f00 0%,#ff0 16.7%,#0f0 33.3%,#0ff 50%,#00f 66.7%,#f0f 83.3%,#f00 100%)}
+.hue::-webkit-slider-thumb{-webkit-appearance:none;width:10px;height:24px;background:#fff;border:2px solid #161616;cursor:pointer}
+.hue::-moz-range-thumb{width:7px;height:21px;background:#fff;border:2px solid #161616;border-radius:0;cursor:pointer}
+.hue::-moz-range-track{background:transparent}
+.hue-names{position:relative;height:16px;margin:3px 0 8px;font-size:11px;font-weight:700;color:var(--muted)}
+.hue-names span{position:absolute;transform:translateX(-50%)}
+.hue-names span:first-child{transform:none}
+.prev{width:34px;height:34px;border:1px solid var(--rule);flex:none}
 .hex{width:112px;height:34px;padding:0 10px;border:1px solid var(--rule);background:var(--paper);color:var(--ink);font-family:ui-monospace,"Cascadia Mono",Consolas,monospace;font-size:14px}
 .hex:focus{outline:none;border-color:var(--ink)}
 .hex.bad{border-color:#b8382e;color:#b8382e}
@@ -120,8 +131,9 @@ input[type=range]{width:100%;margin:0;accent-color:var(--ink);height:22px}
   .app{grid-template-columns:1fr;height:auto}
   .wardrobe{border-right:0;border-bottom:1px solid var(--rule);padding:12px 16px}
   .wardrobe .sec-title,.wardrobe .group-label,.wardrobe .note{display:none}
-  .wardrobe .groups{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+  .wardrobe .groups{display:flex;gap:8px;overflow-x:auto;scrollbar-width:none;margin:0 -16px;padding:0 16px}
   .cards{display:contents}
+  .card{flex:0 0 76px}
   .card svg{height:52px}
   .stage-wrap{height:62svh;min-height:420px}
   .tools{border-left:0;padding:14px 16px 32px}
@@ -164,7 +176,7 @@ input[type=range]{width:100%;margin:0;accent-color:var(--ink);height:22px}
     <svg id="stage" viewBox="0 10 400 760" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="옷을 입은 마네킹">
       <defs id="static-defs"></defs>
       <defs id="defs"></defs>
-      <ellipse cx="200" cy="752" rx="74" ry="8" fill="#000" opacity=".1"/>
+      <ellipse cx="200" cy="750" rx="64" ry="7" fill="#000" opacity=".1"/>
       <g id="L-back"></g>
       <g id="L-man"></g>
       <g id="L-bottom"></g>
