@@ -5,6 +5,8 @@ Output assets/body_<kind>.glb (Draco-compressed). Extra per-vertex data for the 
   body     _m_<garment>  1 where that garment covers the body (MPFB delete groups) → pushed inside so it never pokes through
   garments _h            rest-pose height in metres (cutting the hem, damage, patterns)
            _s            0 on the body panel, 0..1 from shoulder seam to wrist on sleeves (cutting sleeves)
+           _x            tops only: 1 on the fabric added below the asset's own hem (so the top can be made longer)
+Shape keys (morph targets): slim / loose / wide / flare (fit), over_jeans / over_skirt (a top worn out over the bottom).
 """
 import math
 import os
@@ -159,6 +161,159 @@ def arm_param(p, side):
     return best[1]
 
 
+def apply_first(ob, m):
+    """Apply a modifier as if it were first in the stack (the garment's armature is at rest anyway)."""
+    for o in bpy.context.selected_objects:
+        o.select_set(False)
+    bpy.context.view_layer.objects.active = ob
+    ob.select_set(True)
+    bpy.ops.object.modifier_move_to_index(modifier=m.name, index=0)
+    bpy.ops.object.modifier_apply(modifier=m.name)
+    ob.select_set(False)
+
+
+EXT, RINGS = 0.22, 9   # extra fabric below a top's own hem, so "longer" really gets longer
+
+
+def extend_hem(ob):
+    """Continue the body panel's hem straight down (rings of quads), texture continuing, weights copied from the hem,
+    then pushed just outside the body where the hips/thighs are in the way. Returns the new vertex indices."""
+    bm = bmesh.new()
+    bm.from_mesh(ob.data)
+    bm.verts.ensure_lookup_table()
+    uvl = bm.loops.layers.uv.active
+    bound = [e for e in bm.edges if e.is_boundary]
+    adj = {}
+    for e in bound:
+        for v in e.verts:
+            adj.setdefault(v, []).append(e)
+    seen, loops = set(), []
+    for e in bound:
+        if e in seen:
+            continue
+        comp, stack = [], [e]
+        seen.add(e)
+        while stack:
+            x = stack.pop()
+            comp.append(x)
+            for v in x.verts:
+                for y in adj[v]:
+                    if y not in seen:
+                        seen.add(y)
+                        stack.append(y)
+        loops.append(comp)
+    # the hem goes round the torso: centred on x = 0, lowest such loop (sleeve cuffs are off to the sides)
+    def centre(c):
+        vs = {v for e in c for v in e.verts}
+        return sum(v.co.x for v in vs) / len(vs), sum(v.co.z for v in vs) / len(vs), max(v.co.x for v in vs) - min(v.co.x for v in vs)
+    torso = [c for c in loops if abs(centre(c)[0]) < 0.04 and centre(c)[2] > 0.2]
+    hem = min(torso, key=lambda c: centre(c)[1])
+    ring0 = list({v for e in hem for v in e.verts})
+    hem_faces = list({f for e in hem for f in e.link_faces})
+    cx = sum(v.co.x for v in ring0) / len(ring0)
+    cy = sum(v.co.y for v in ring0) / len(ring0)
+    face_ids = lambda v: {l.face.index for l in v.link_loops}
+    uvinfo = {}
+    for v in ring0:
+        l0 = v.link_loops[0]
+        uv0 = l0[uvl].uv.copy()
+        ups = [e.other_vert(v) for e in v.link_edges if not e.is_boundary]
+        p = max(ups, key=lambda u: u.co.z) if ups else None
+        duv = uv0 * 0
+        if p is not None:
+            lp = next((l for l in p.link_loops if l.face.index == l0.face.index), p.link_loops[0])
+            d = max((v.co - p.co).length, 1e-4)
+            duv = (uv0 - lp[uvl].uv) / d
+        uvinfo[v] = (uv0, duv)
+    step = EXT / RINGS
+    origin, ring = {v: v for v in ring0}, {v: 0 for v in ring0}
+    base = {v: v.co.copy() for v in ring0}
+    cur = set(ring0)
+    cur_edges = hem
+    new_faces, new_verts = [], []
+    for k in range(1, RINGS + 1):
+        res = bmesh.ops.extrude_edge_only(bm, edges=cur_edges)
+        nv = [g for g in res["geom"] if isinstance(g, bmesh.types.BMVert)]
+        nset = set(nv)
+        for v in nv:
+            src = next(e.other_vert(v) for e in v.link_edges if e.other_vert(v) in cur)
+            o = origin[src]
+            origin[v], ring[v] = o, k
+            r = Vector((base[o].x - cx, base[o].y - cy, 0))
+            r = r.normalized() if r.length > 1e-6 else r
+            v.co = base[o] + Vector((0, 0, -k * step)) + r * (k * step * 0.06)
+        new_verts += nv
+        new_faces += [g for g in res["geom"] if isinstance(g, bmesh.types.BMFace)]
+        cur_edges = [g for g in res["geom"] if isinstance(g, bmesh.types.BMEdge) and all(x in nset for x in g.verts)]
+        cur = nset
+    for f in new_faces:
+        f.smooth = True
+        for l in f.loops:
+            uv0, duv = uvinfo[origin[l.vert]]
+            l[uvl].uv = uv0 + duv * (ring[l.vert] * step)
+    # face the same way as the hem it continues (no shading seam where the old hem was)
+    bm.normal_update()
+    before = {f: f.normal.copy() for f in hem_faces}
+    bmesh.ops.recalc_face_normals(bm, faces=new_faces + hem_faces)
+    bm.normal_update()
+    if sum(1 for f in hem_faces if f.normal.dot(before[f]) < 0) > len(hem_faces) / 2:
+        bmesh.ops.reverse_faces(bm, faces=new_faces + hem_faces)
+    bm.to_mesh(ob.data)
+    ids = [v.index for v in new_verts]
+    kring = {v.index: ring[v] for v in new_verts}
+    bm.free()
+    vg = ob.vertex_groups.new(name="_ext")
+    vg.add(ids, 1.0, "REPLACE")
+    m = ob.modifiers.new("ext_out", "SHRINKWRAP")
+    m.target, m.wrap_method, m.wrap_mode, m.offset, m.vertex_group = body, "NEAREST_SURFACEPOINT", "OUTSIDE", 0.005, "_ext"
+    apply_first(ob, m)
+    # smooth the added fabric (the old hem ring stays put), so it flows on from the hem without a ledge
+    nb = {}
+    for e in ob.data.edges:
+        i, j = e.vertices
+        nb.setdefault(i, []).append(j)
+        nb.setdefault(j, []).append(i)
+    co = {v.index: v.co.copy() for v in ob.data.vertices}
+    sid = set(ids)
+    for _ in range(6):
+        co.update({i: sum((co[j] for j in nb[i]), co[i] * 0) / len(nb[i]) * 0.5 + co[i] * 0.5 for i in sid})
+    for i in sid:
+        ob.data.vertices[i].co = co[i]
+    m = ob.modifiers.new("ext_out2", "SHRINKWRAP")
+    m.target, m.wrap_method, m.wrap_mode, m.offset, m.vertex_group = body, "NEAREST_SURFACEPOINT", "OUTSIDE", 0.004, "_ext"
+    apply_first(ob, m)
+    # the lower it hangs, the more it moves with the legs (weights from the nearest body point), so a bent knee
+    # carries the hem along instead of poking through it
+    from mathutils import kdtree
+    bones = {b.name for b in rig.data.bones}
+    kd = kdtree.KDTree(len(body.data.vertices))
+    for v in body.data.vertices:
+        kd.insert(v.co, v.index)
+    kd.balance()
+    bname = {g.index: g.name for g in body.vertex_groups if g.name in bones}
+    for i in ids:
+        v = ob.data.vertices[i]
+        t = min(1.0, 1.6 * kring[i] / RINGS)
+        new = {ob.vertex_groups[g.group].name: g.weight * (1 - t) for g in v.groups if ob.vertex_groups[g.group].name in bones}
+        bw = {}
+        for _, j, d in kd.find_n(v.co, 4):
+            for g in body.data.vertices[j].groups:
+                if g.group in bname:
+                    bw[bname[g.group]] = bw.get(bname[g.group], 0) + g.weight / 4
+        for n, w in bw.items():
+            new[n] = new.get(n, 0) + w * t
+        tot = sum(new.values()) or 1
+        for g in list(v.groups):
+            if ob.vertex_groups[g.group].name in bones:
+                ob.vertex_groups[g.group].remove([i])
+        for n, w in new.items():
+            if w / tot > 0.01:
+                (ob.vertex_groups.get(n) or ob.vertex_groups.new(name=n)).add([i], w / tot, "REPLACE")
+    print("EXTEND", ob.name, len(ids))
+    return set(ids)
+
+
+EXTENDED = {}
 for gid, (ob, name) in garments.items():
     mesh = ob.data
     for m in list(ob.modifiers):
@@ -167,8 +322,15 @@ for gid, (ob, name) in garments.items():
             m.levels = max(1, m.render_levels)
             bpy.context.view_layer.objects.active = ob
             bpy.ops.object.modifier_apply(modifier=m.name)
+    ext = extend_hem(ob) if gid in ("tee", "long") else set()
+    EXTENDED[gid] = ext
     ah = mesh.attributes.new("_h", "FLOAT", "POINT")
     asl = mesh.attributes.new("_s", "FLOAT", "POINT")
+    if gid in ("tee", "long"):
+        axt = mesh.attributes.new("_x", "FLOAT", "POINT")
+        for i in ext:
+            axt.data[i].value = 1.0
+        ob.vertex_groups.remove(ob.vertex_groups["_ext"])
     gidx = {vg.index: vg.name for vg in ob.vertex_groups}
     for v in mesh.vertices:
         w = sum(g.weight for g in v.groups if gidx.get(g.group) in ARM_GROUPS)
@@ -271,6 +433,91 @@ def bake_cloth(ob, offset, pin, frames=40, bend=0.5, mass=0.22):
     return out
 
 
+def bake_over(ob, target, lift=0.11, start=None):
+    ttop = max(v.co.z for v in target.data.vertices)
+    orig = [v.co.copy() for v in ob.data.vertices]
+    if start:   # start from another shape (a lengthened top) instead of the basis
+        for v, c in zip(ob.data.vertices, start):
+            v.co = c
+    base = [v.co.copy() for v in ob.data.vertices]
+    m = ob.modifiers.new("over", "SHRINKWRAP")
+    m.target, m.wrap_method, m.wrap_mode, m.offset = target, "NEAREST_SURFACEPOINT", "OUTSIDE", 0.013
+    for o in bpy.context.selected_objects:
+        o.select_set(False)
+    bpy.context.view_layer.objects.active = ob
+    bpy.ops.object.modifier_move_to_index(modifier=m.name, index=0)
+    out = [b.lerp(c, sstep(ttop + lift, ttop - 0.01, b.z)) for b, c in zip(base, evaluated_coords(ob))]
+    ob.modifiers.remove(m)
+    for v, c in zip(ob.data.vertices, orig):
+        v.co = c
+    # spread the push out smoothly over the neighbours (no hard step at the waistband), never less than the push itself
+    nb = [[] for _ in base]
+    for e in ob.data.edges:
+        i, j = e.vertices
+        nb[i].append(j)
+        nb[j].append(i)
+    d0 = [o - b for o, b in zip(out, base)]
+    d = d0[:]
+    for _ in range(20):
+        d = [sum((d[j] for j in nb[i]), d[i]) / (len(nb[i]) + 1) for i in range(len(d))]
+        d = [x if x.length >= y.length else y for x, y in zip(d, d0)]
+    return [b + x for b, x in zip(base, d)]
+
+
+def bake_relax(ob, ext, band=0.10):
+    """A lengthened top: the old hem band (often a tight rib) lets go, so the fabric hangs on smoothly into the added
+    length instead of stepping out below the old hem. Smooths ~10 cm above the old hem plus the added part."""
+    import heapq
+    me = ob.data
+    base = [v.co.copy() for v in me.vertices]
+    nb = [[] for _ in base]
+    for e in me.edges:
+        i, j = e.vertices
+        nb[i].append(j)
+        nb[j].append(i)
+    dist = {i: 0.0 for i in range(len(base)) if i not in ext and any(j in ext for j in nb[i])}
+    q = [(0.0, i) for i in dist]
+    heapq.heapify(q)
+    while q:
+        d, i = heapq.heappop(q)
+        if d > dist.get(i, 9) or d > band:
+            continue
+        for j in nb[i]:
+            if j in ext:
+                continue
+            nd = d + (base[i] - base[j]).length
+            if nd < dist.get(j, 9):
+                dist[j] = nd
+                heapq.heappush(q, (nd, j))
+    w = {i: 1.0 for i in ext}
+    w.update({i: sstep(band, band * 0.3, d) for i, d in dist.items() if d < band})
+    co = base[:]
+    for _ in range(25):   # sideways only: heights stay, so stripes and the rib's tight rows don't smear
+        nco = []
+        for i in range(len(co)):
+            if i in w and nb[i]:
+                avg = sum((co[j] for j in nb[i]), co[i] * 0) / len(nb[i])
+                c = lerp(co[i], avg, 0.5 * w[i])
+                c.z = co[i].z
+                nco.append(c)
+            else:
+                nco.append(co[i])
+        co = nco
+    for v, c in zip(me.vertices, co):
+        v.co = c
+    m = ob.modifiers.new("relax_out", "SHRINKWRAP")
+    m.target, m.wrap_method, m.wrap_mode, m.offset = body, "NEAREST_SURFACEPOINT", "OUTSIDE", 0.005
+    for o in bpy.context.selected_objects:
+        o.select_set(False)
+    bpy.context.view_layer.objects.active = ob
+    bpy.ops.object.modifier_move_to_index(modifier=m.name, index=0)
+    out = evaluated_coords(ob)
+    ob.modifiers.remove(m)
+    for v, b in zip(me.vertices, base):
+        v.co = b
+    return [b.lerp(c, w.get(i, 0.0)) for i, (b, c) in enumerate(zip(base, out))]
+
+
 def add_keys(ob, keys):
     ob.shape_key_add(name="Basis", from_mix=False)
     for name, coords in keys.items():
@@ -294,8 +541,15 @@ for gid, (ob, name) in garments.items():
         co_idx = {tuple(round(c, 6) for c in v.co): v.index for v in ob.data.vertices}
         aw = lambda b: armw.get(co_idx.get(tuple(round(c, 6) for c in b), -1), 0.0)
         keys["slim"] = bake_shrink(ob, 0.8)
-        keys["loose"] = bake_cloth(ob, lambda b: lerp(0.022 + 0.014 * sstep(top - 0.25, bot, b.z), 0.009, aw(b)),
-                                   lambda b: max(sstep(top - 0.10, top - 0.03, b.z), 0.92 * aw(b)), bend=0.4)
+        # the shoulders stay on the body (pinned where they are); the extra room starts at the chest and grows down,
+        # so an oversized top hangs from the shoulders instead of floating above them
+        keys["loose"] = bake_cloth(ob, lambda b: lerp(0.03 * sstep(top - 0.08, top - 0.24, b.z) + 0.012 * sstep(top - 0.3, bot, b.z), 0.009, aw(b)),
+                                   lambda b: max(sstep(top - 0.12, top - 0.05, b.z), 0.92 * aw(b)), bend=0.4)
+        # worn out over the trousers / skirt: everything below their waistband goes just outside them
+        for low in ("jeans", "skirt"):
+            keys["over_" + low] = bake_over(ob, garments[low][0])
+        keys["ext"] = bake_relax(ob, EXTENDED[gid])
+        keys["ext_jeans"] = bake_over(ob, garments["jeans"][0], start=keys["ext"])   # lengthened and worn out over jeans
     elif gid == "jeans":
         keys["slim"] = bake_shrink(ob, 0.85, lambda z: sstep(L_CROTCH, L_CROTCH - 0.12, z))
         keys["wide"] = bake_cloth(ob, lambda b: 0.004 + 0.034 * sstep(L_CROTCH - 0.05, L_ANKLE, b.z),

@@ -16,7 +16,7 @@ const cc = window.__cc;
 const PI = Math.PI, TAU = PI * 2;
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const lerp = (a, b, t) => a + (b - a) * t;
-const VER = 8;   // bump with the assets
+const VER = 9;   // bump with the assets
 const GARMENTS = ['tee', 'long', 'jeans', 'skirt'];
 const NP = 17, NO = 17, NC = 5, HP = 8, MAXD = 16;   // neckline: shader samples / garment outline samples / handles per side
 
@@ -116,9 +116,12 @@ function start() {
   // what each garment looks like at rest: its height range, sleeve end, and its own neckline/shoulder outline
   // (front and back, as the highest point of the fabric at each x) — the free neckline starts on that outline
   function analyse(mesh, H) {
-    const g = mesh.geometry, P = g.attributes.position, h = g.attributes._h, s = g.attributes._s, n = P.count;
-    let lo = 1e9, hi = -1e9, smax = 0;
-    for (let i = 0; i < n; i++) { const v = h.getX(i); lo = Math.min(lo, v); hi = Math.max(hi, v); smax = Math.max(smax, s.getX(i)); }
+    const g = mesh.geometry, P = g.attributes.position, h = g.attributes._h, s = g.attributes._s, x = g.attributes._x, n = P.count;
+    let lo = 1e9, hi = -1e9, smax = 0, lo0 = 1e9;
+    for (let i = 0; i < n; i++) {
+      const v = h.getX(i); lo = Math.min(lo, v); hi = Math.max(hi, v); smax = Math.max(smax, s.getX(i));
+      if (!x || x.getX(i) < .5) lo0 = Math.min(lo0, v);
+    }
     const span = 0.19 * H / 1.77, xs = Array.from({ length: NO }, (_, i) => lerp(-span, span, i / (NO - 1)));   // out to the shoulder seam
     const outline = sgn => xs.map(x => {
       let best = -1e9;
@@ -129,7 +132,7 @@ function start() {
       }
       return [x, best > -1e8 ? best : hi];
     });
-    return { lo, hi, smax, neckF: outline(1), neckB: outline(-1) };
+    return { lo, lo0, hi, smax, neckF: outline(1), neckB: outline(-1) };
   }
 
   /* ---------- materials ---------- */
@@ -167,10 +170,10 @@ function start() {
       uCutH: { value: -1 }, uSleeveCut: { value: new THREE.Vector2(2, 2) }, uRaw: { value: 0 }, uRawS: { value: 0 }, uTuckH: { value: -1 },
       uHemOff: { value: new Array(HP).fill(0) }, uHemLeg: { value: 0 },
       uNeckF: { value: Array.from({ length: NP }, () => new THREE.Vector2()) }, uNeckB: { value: Array.from({ length: NP }, () => new THREE.Vector2()) }, uNeckOn: { value: 0 },
-      uFit: { value: new THREE.Vector4() }, uFitH: { value: new THREE.Vector4() },
+      uFit: { value: new THREE.Vector4() }, uFitH: { value: new THREE.Vector4() }, uSh: { value: new THREE.Vector2(9, 10) },
       uDmg: { value: Array.from({ length: MAXD }, () => new THREE.Vector4()) }, uDmgN: { value: 0 },
       uPrint: { value: null }, uPrintOn: { value: 0 }, uPrintBox: { value: new THREE.Vector4() },
-      uHover: { value: -10 }, uBand: { value: new THREE.Vector3() }, uHem: { value: new THREE.Vector2() },
+      uHover: { value: -10 }, uBand: { value: new THREE.Vector3() }, uHem: { value: new THREE.Vector2() }, uUnder: { value: 99 },
       uMask: { value: mask.t }, uPaint: { value: paint.t }, uBrushOn: { value: 0 },
     };
     const m = new THREE.MeshPhysicalMaterial({
@@ -189,10 +192,10 @@ attribute float _h; attribute float _s;
 attribute vec2 uv1;
 #endif
 varying vec3 vRest; varying float vH; varying float vS; varying vec2 vB;
-uniform vec4 uFit; uniform vec4 uFitH;`)
+uniform vec4 uFit; uniform vec4 uFitH; uniform vec2 uSh;`)
         .replace('#include <begin_vertex>', `#include <begin_vertex>
 vRest = position; vH = _h; vS = _s; vB = uv1;
-float off = (vS > 0.01 ? uFit.y : uFit.x);
+float off = (vS > 0.01 ? uFit.y : uFit.x * (1.0 - smoothstep(uSh.y, uSh.x, _h)));   // no push at the shoulders: a big top hangs from them
 off += uFit.z * max(0.0, uFitH.x - _h);
 if (uFitH.y > 0.0) { float t = clamp((uFitH.y - _h) / max(0.01, uFitH.y - uFitH.z), 0.0, 1.0); off += mix(uFit.w, uFitH.w, t); }
 transformed += objectNormal * off;`);
@@ -205,7 +208,7 @@ uniform float uHemOff[${HP}]; uniform float uHemLeg;
 uniform vec2 uNeckF[${NP}]; uniform vec2 uNeckB[${NP}]; uniform float uNeckOn;
 uniform vec4 uDmg[${MAXD}]; uniform int uDmgN;
 uniform sampler2D uPrint; uniform float uPrintOn; uniform vec4 uPrintBox;
-uniform float uHover; uniform vec3 uBand; uniform vec2 uHem;
+uniform float uHover; uniform vec3 uBand; uniform vec2 uHem; uniform float uUnder;
 uniform sampler2D uMask; uniform sampler2D uPaint; uniform float uBrushOn;
 float hash(float n) { return fract(sin(n) * 43758.5453); }
 float noise1(float x) { float i = floor(x), f = fract(x); return mix(hash(i), hash(i + 1.0), f * f * (3.0 - 2.0 * f)); }
@@ -240,6 +243,7 @@ float sc = vRest.x > 0.0 ? uSleeveCut.x : uSleeveCut.y;
 float frs = uRawS > 0.5 ? noise1(vRest.y * 900.0 + vRest.z * 600.0) * 0.03 : 0.0;
 if (vS > 0.01 && vS > sc - frs) discard;
 if (uTuckH > 0.0 && vS < 0.01 && vH < uTuckH) discard;
+if (vH > uUnder) discard;   // waistband and belt loops under a top worn out over them
 if (uNeckOn > 0.5 && vS < 0.01) {
   if (vRest.z > 0.0 && aboveNeck(uNeckF, vRest.x, vRest.y)) discard;
   if (vRest.z <= 0.0 && aboveNeck(uNeckB, vRest.x, vRest.y)) discard;
@@ -389,6 +393,18 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = vec3(0.88);`);
   const meshOf = (slot, g) => !g ? null : slot === 'top' ? (g.kind === 'long' ? 'long' : 'tee') : (g.kind === 'skirt' ? 'skirt' : 'jeans');
   const legC = () => 0.09 * A.H / 1.77;
   const r4 = v => Math.round(v * 1e4) / 1e4;
+  /* top length (the editor's y, 750 = floor) ↔ cut height in metres. Up to TOP_FULL the top ends where the asset ends
+     (as it always did); longer than that uses the fabric added below the asset's hem. */
+  const TOP_FULL = 380;
+  function topCut(id, len) {
+    const k = A.H / 728, lo0 = A.info[id].lo0, h = (750 - len) * k;
+    if (h >= lo0) return h;
+    return len <= TOP_FULL ? lo0 : lo0 - (len - TOP_FULL) * k;
+  }
+  function topLen(id, h) {
+    const k = A.H / 728, lo0 = A.info[id].lo0;
+    return h >= lo0 ? 750 - h / k : TOP_FULL + (lo0 - h) / k;
+  }
   /* neckline: 5 points per side (two ends on the shoulder line, two in between, one in the middle).
      The cut follows a smooth curve through them (straight lines for a V) and never rises above the garment's own edge. */
   const NSPAN = H => 0.115 * H / 1.77;
@@ -484,20 +500,28 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = vec3(0.88);`);
     if (topMesh) {
       const U = M[topMesh].material.userData.U, wristY = B.armO[B.armO.length - 1][0], inf = A.info[topMesh];
       common(U, T, topMesh);
-      U.uCutH.value = toH(T.len);
+      U.uCutH.value = topCut(topMesh, T.len);
+      // over a full skirt a top worn out ends just past the skirt's waistband (it can't hang down over the skirt's volume)
+      if (botMesh === 'skirt' && !T.tuck) U.uCutH.value = Math.max(U.uCutH.value, A.info.skirt.hi - .07);
+      U.uSh.value.set(inf.hi - .06, inf.hi - .2);
       U.uRaw.value = T.rawHem ? 1 : 0;
       const sb = T.sleeve <= cc.SLEEVELESS ? 0.02 : clamp((T.sleeve - B.st0[1]) / (wristY - B.st0[1]), 0.02, 2), adj = T.sleeveAdj || [0, 0];
       U.uSleeveCut.value.set(clamp(sb + adj[0], .02, 2), clamp(sb + adj[1], .02, 2));
       U.uRawS.value = T.rawSleeve ? 1 : 0;
-      U.uTuckH.value = T.tuck && Bt && Bt.kind === 'jeans' ? toH(Y.waist + B.rise + 6) : -1;
+      U.uTuckH.value = T.tuck && botMesh === 'jeans' ? A.info.jeans.hi - .025 : -1;   // tucked: ends just inside the waistband
       U.uHemLeg.value = 0;
       const nf = neckCurve(T, topMesh, 'F'), nb = neckCurve(T, topMesh, 'B');
       nf.forEach((q, i) => U.uNeckF.value[i].set(q[0], q[1])); nb.forEach((q, i) => U.uNeckB.value[i].set(q[0], q[1]));
       U.uNeckOn.value = 1;
-      morph(M[topMesh], { slim: clamp((5 - T.fit) / 7, 0, 1), loose: clamp((T.fit - 5) / 21, 0, 1) });
+      // worn out (not tucked) over trousers or a skirt: the part below their waistband sits outside them
+      const loose = clamp((T.fit - 5) / 21, 0, 1), over = !T.tuck ? 1 - loose * .6 : 0;
+      // lengthened: the old hem band lets go so the added length hangs on smoothly
+      const ext = clamp((inf.lo0 - U.uCutH.value) / .03, 0, 1);
+      const oj = botMesh === 'jeans' ? over : 0, ej = Math.min(ext, oj);   // both at once has its own baked shape
+      morph(M[topMesh], { slim: clamp((5 - T.fit) / 7, 0, 1), loose, ext: ext - ej, ext_jeans: ej, over_jeans: oj - ej, over_skirt: botMesh === 'skirt' ? over : 0 });
       U.uFit.value.set(clamp((T.fit - 26) * k * .5, 0, .04), clamp((T.sfit - 2) * k * .4, -.002, .03), Math.max(0, T.flare) * .05, 0);
       U.uFitH.value.set(toH(Y.waist), 0, 0, 0);
-      U.uHem.value.set(U.uCutH.value > inf.lo + .01 || (T.hemOff || []).some(v => v) ? 1 : 0, Math.min(U.uSleeveCut.value.x, U.uSleeveCut.value.y) < inf.smax - .03 ? 1 : 0);
+      U.uHem.value.set(Math.abs(U.uCutH.value - inf.lo0) > .01 || (T.hemOff || []).some(v => v) ? 1 : 0, Math.min(U.uSleeveCut.value.x, U.uSleeveCut.value.y) < inf.smax - .03 ? 1 : 0);
       U.uBand.value.set(0, 0, 0);
     }
     if (botMesh) {
@@ -506,6 +530,9 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = vec3(0.88);`);
       U.uCutH.value = toH(Bt.len);
       U.uRaw.value = Bt.rawHem ? 1 : 0;
       U.uSleeveCut.value.set(2, 2); U.uRawS.value = 0; U.uTuckH.value = -1; U.uNeckOn.value = 0;
+      // a top worn out over the bottom covers its waistband: hide that strip (unless the top has holes or brush cuts there)
+      const tc = topMesh && M[topMesh].material.userData.U, holes = T && ((T.strokes || []).length || (T.dmg3 || []).length || (T.hemOff || []).some(v => v));
+      U.uUnder.value = T && !T.tuck && tc && !holes && tc.uCutH.value < inf.hi - .1 ? inf.hi - .045 : 99;
       U.uHemLeg.value = botMesh === 'jeans' ? legC() : 0;
       U.uHem.value.set(U.uCutH.value > inf.lo + .01 || (Bt.hemOff || []).some(v => v) ? 1 : 0, 0);
       if (botMesh === 'jeans') {
@@ -782,8 +809,8 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = vec3(0.88);`);
       return v >= T.sleeve - 4 ? null : { key: 'sleeve', val: v, label: cc.sleeveName(v), mesh: h.mesh, sleeve: true, s: h.s };
     }
     if (h.slot === 'top') {
-      const T = st.top, ny = clamp(y2, cc.LIMIT['top.len'][0], T.len);
-      return ny >= T.len - 4 ? null : { key: 'topLen', val: ny, label: cc.topLenName(ny), mesh: h.mesh, h: (750 - ny) * k };
+      const T = st.top, ny = clamp(topLen(h.mesh, h.h), cc.LIMIT['top.len'][0], T.len);
+      return ny >= T.len - 4 ? null : { key: 'topLen', val: ny, label: cc.topLenName(ny), mesh: h.mesh, h: topCut(h.mesh, ny) };
     }
     const Bt = st.bottom, lim = cc.bottomLenLimit(Bt), ny = clamp(y2, lim[0], Bt.len);
     return ny >= Bt.len - 4 ? null : { key: 'bottomLen', val: ny, label: cc.bottomLenName(Bt, ny), mesh: h.mesh, h: (750 - ny) * k };
