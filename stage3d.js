@@ -16,7 +16,7 @@ const cc = window.__cc;
 const PI = Math.PI, TAU = PI * 2;
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const lerp = (a, b, t) => a + (b - a) * t;
-const VER = 9;   // bump with the assets
+const VER = 10;   // bump with the assets
 const GARMENTS = ['tee', 'long', 'jeans', 'skirt'];
 const NP = 17, NO = 17, NC = 5, HP = 8, MAXD = 16;   // neckline: shader samples / garment outline samples / handles per side
 
