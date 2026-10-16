@@ -606,12 +606,17 @@ for gid, (ob, name) in garments.items():
         co_idx = {tuple(round(c, 6) for c in v.co): v.index for v in ob.data.vertices}
         aw = lambda b: armw.get(co_idx.get(tuple(round(c, 6) for c in b), -1), 0.0)
         keys["slim"] = bake_shrink(ob, 0.8)
+        # "waist line": the hug of the slim shape, only in a band round the waist (the slider pulls it in or lets it out)
+        base0 = [v.co.copy() for v in ob.data.vertices]
+        keys["waist"] = [b.lerp(c, math.exp(-((b.z - Hh * 0.62) / 0.085) ** 2)) for b, c in zip(base0, keys["slim"])]
         # the shoulders stay on the body (pinned where they are); the extra room starts at the chest and grows down,
         # so an oversized top hangs from the shoulders instead of floating above them
         loose = bake_cloth(ob, lambda b: lerp(0.03 * sstep(top - 0.08, top - 0.24, b.z) + 0.012 * sstep(top - 0.3, bot, b.z), 0.009, aw(b)),
                            lambda b: max(sstep(top - 0.12, top - 0.05, b.z), 0.92 * aw(b)), bend=0.4)
         base = [v.co.copy() for v in ob.data.vertices]
         keys["loose"] = smooth_delta(ob, base, loose, lambda b: lerp(sstep(top - 0.2, top - 0.42, b.z), 0.25, aw(b)))
+        # the loose shape's extra room at the waist alone: the waist-line slider takes it back out when it pulls the waist in
+        keys["loose_waist"] = [b.lerp(c, math.exp(-((b.z - Hh * 0.62) / 0.085) ** 2) * (1 - aw(b))) for b, c in zip(base, keys["loose"])]
         # worn out over the trousers / skirt: everything below their waistband goes just outside them
         for low in ("jeans", "skirt"):
             keys["over_" + low] = bake_over(ob, garments[low][0])
@@ -619,9 +624,17 @@ for gid, (ob, name) in garments.items():
         keys["ext_jeans"] = bake_over(ob, garments["jeans"][0], start=keys["ext"])   # lengthened and worn out over jeans
         keys["loose_jeans"] = bake_over(ob, garments["jeans"][0], start=keys["loose"])   # oversized and worn out over jeans
     elif gid == "jeans":
-        keys["slim"] = bake_shrink(ob, 0.85, lambda z: sstep(L_CROTCH, L_CROTCH - 0.12, z))
-        keys["wide"] = bake_cloth(ob, lambda b: 0.004 + 0.034 * sstep(L_CROTCH - 0.05, L_ANKLE, b.z),
-                                  lambda b: sstep(top - 0.16, top - 0.05, b.z), bend=1.2, mass=0.3)
+        slim = bake_shrink(ob, 0.85, lambda z: sstep(L_CROTCH, L_CROTCH - 0.12, z))
+        wide = bake_cloth(ob, lambda b: 0.004 + 0.034 * sstep(L_CROTCH - 0.05, L_ANKLE, b.z),
+                          lambda b: sstep(top - 0.16, top - 0.05, b.z), bend=1.2, mass=0.3)
+        # thigh / knee / hem as separate shapes (overlapping smoothly; all three together = the whole leg)
+        base0 = [v.co.copy() for v in ob.data.vertices]
+        zone = {"thigh": lambda z: sstep(L_KNEE + 0.06, L_KNEE + 0.18, z),
+                "hem": lambda z: sstep(L_KNEE - 0.08, L_KNEE - 0.22, z)}
+        zone["knee"] = lambda z: 1 - zone["thigh"](z) - zone["hem"](z)
+        for zn, wz in zone.items():
+            keys["slim_" + zn] = [b.lerp(c, wz(b.z)) for b, c in zip(base0, slim)]
+            keys["wide_" + zn] = [b.lerp(c, wz(b.z)) for b, c in zip(base0, wide)]
     elif gid == "skirt":
         keys["slim"] = bake_shrink(ob, 0.7, lambda z: sstep(top - 0.12, top - 0.3, z))
         keys["flare"] = bake_cloth(ob, lambda b: 0.07 * sstep(top - 0.12, bot, b.z),

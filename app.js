@@ -1263,7 +1263,7 @@ function panelHTML() {
         ${T ? `<span class="label-sm">상의 · ${NAME[T.kind]}</span>${fitChips('top', FIT_PRESETS.top)}
           ${B && T.len > Y.waist + BODY.rise + 10 ? `<div class="seg2" role="group" aria-label="입는 방법"><button type="button" class="chip" data-tuck="0">밖으로 빼 입기</button><button type="button" class="chip" data-tuck="1">넣어 입기</button></div>` : ''}
           ${slider('top.fit', '몸통 품', ...LIMIT['top.fit'], .5)}${slider('top.cling', '허리 라인 (일자 ↔ 붙게)', 0, 1, .01)}
-          ${geo.top && !geo.top.nl ? slider('top.sfit', '소매 품', ...LIMIT['top.sfit'], .5) + slider('top.drop', '어깨선', ...LIMIT['top.drop'], .5) : ''}
+          ${geo.top && !geo.top.nl ? slider('top.sfit', '소매 품', ...LIMIT['top.sfit'], .5) + (is3d() ? '' : slider('top.drop', '어깨선', ...LIMIT['top.drop'], .5)) : ''}
           ${slider('top.flare', '밑단 퍼짐', ...LIMIT['top.flare'], .5)}` : ''}
         ${B ? `<span class="label-sm">하의 · ${NAME[B.kind]}</span>${fitChips(B.kind, FIT_PRESETS[B.kind])}
           ${B.kind === 'jeans'

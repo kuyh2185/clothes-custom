@@ -16,7 +16,7 @@ const cc = window.__cc;
 const PI = Math.PI, TAU = PI * 2;
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const lerp = (a, b, t) => a + (b - a) * t;
-const VER = 11;   // bump with the assets
+const VER = 12;   // bump with the assets
 const GARMENTS = ['tee', 'long', 'jeans', 'skirt'];
 const NP = 17, NO = 17, NC = 5, HP = 8, MAXD = 16;
 const HANDS = [new THREE.Vector4(), new THREE.Vector4()];   // hand centres (xyz) + radius (w), in the garments' bind space   // neckline: shader samples / garment outline samples / handles per side
@@ -531,8 +531,12 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = uSock;`);
       // over jeans, oversized and lengthened each have a shape baked together with "over jeans":
       // use those and take "over jeans" itself out as many extra times as it was counted (it can go negative)
       const oj = botMesh === 'jeans' ? over : 0;
-      morph(M[topMesh], oj ? { slim: clamp((5 - T.fit) / 7, 0, 1), loose_jeans: loose, ext_jeans: ext, over_jeans: 1 - loose - ext }
-        : { slim: clamp((5 - T.fit) / 7, 0, 1), loose, ext, over_skirt: botMesh === 'skirt' ? over : 0 });
+      // waist line: 0.35 is the garment as it comes; up pulls the waist in, down lets it hang straight
+      const slim = clamp((5 - T.fit) / 7, 0, 1), cl = T.cling ?? .35;
+      const waist = Math.min(1 - slim, cl >= .35 ? (cl - .35) / .65 : -.5 * (.35 - cl) / .35);
+      const loose_waist = -loose * clamp((cl - .35) / .65, 0, 1);   // pulling the waist in also takes out the oversize room there
+      morph(M[topMesh], oj ? { slim, waist, loose_waist, loose_jeans: loose, ext_jeans: ext, over_jeans: 1 - loose - ext }
+        : { slim, waist, loose_waist, loose, ext, over_skirt: botMesh === 'skirt' ? over : 0 });
       U.uFit.value.set(clamp((T.fit - 26) * k * .5, 0, .04), clamp((T.sfit - 2) * k * .4, -.002, .03), Math.max(0, T.flare) * .05, 0);
       U.uFitH.value.set(toH(Y.waist), 0, 0, 0);
       U.uHem.value.set(Math.abs(U.uCutH.value - inf.lo0) > .01 || (T.hemOff || []).some(v => v) ? 1 : 0, Math.min(U.uSleeveCut.value.x, U.uSleeveCut.value.y) < inf.smax - .03 ? 1 : 0);
@@ -551,8 +555,12 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = uSock;`);
       U.uHemLeg.value = botMesh === 'jeans' ? legC() : 0;
       U.uHem.value.set(U.uCutH.value > inf.lo + .01 || (Bt.hemOff || []).some(v => v) ? 1 : 0, 0);
       if (botMesh === 'jeans') {
-        const avg = (Bt.thigh + Bt.knee + Bt.hemW) / 3;
-        morph(M.jeans, { slim: clamp((.42 - avg) / .32, 0, 1), wide: clamp((avg - .45) / .38, 0, 1) });
+        // thigh, knee and hem each shape their own part of the leg
+        const w = {};
+        for (const [z, v] of [['thigh', Bt.thigh], ['knee', Bt.knee], ['hem', Bt.hemW]]) {
+          w['slim_' + z] = clamp((.42 - v) / .32, 0, 1); w['wide_' + z] = clamp((v - .45) / .38, 0, 1);
+        }
+        morph(M.jeans, w);
         U.uFit.value.set(0, 0, 0, 0);
         U.uFitH.value.set(0, toH(Y.knee), toH(Y.ankle), Math.max(0, Bt.hemW - Bt.knee - .1) * 39 * k * .6);
         U.uBand.value.set(inf.hi - .042, inf.hi, A.kind === 'm' ? 1 : 0);
