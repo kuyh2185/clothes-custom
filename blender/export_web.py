@@ -21,11 +21,14 @@ import common as C  # noqa: E402
 HEIGHT = {"f": 1.77, "m": 1.88}
 # site garment id → MPFB asset (":lower" keeps the trousers of a combined suit)
 GARMENTS = {
-    "f": {"tee": "joepal_crude_t-shirt_female", "long": "toigo_fisherman_sweater", "jeans": "female_casualsuit01:lower",
+    "f": {"tee": "joepal_crude_t-shirt_female", "long": "toigo_fisherman_sweater", "shirt": "female_elegantsuit01:upper",
+          "hoodie": "elvs_hooded_sweat_jacket1:upper", "jeans": "female_casualsuit01:lower",
           "skirt": "toigo_long_full_skirt", "shoes": "shoes05"},
-    "m": {"tee": "elvs_crude_t-shirt_male", "long": "toigo_fisherman_sweater", "jeans": "male_casualsuit06:lower",
+    "m": {"tee": "elvs_crude_t-shirt_male", "long": "toigo_fisherman_sweater", "shirt": "male_casualsuit03:upper",
+          "hoodie": "elvs_hooded_sweat_jacket1:upper", "jeans": "male_casualsuit06:lower",
           "skirt": "toigo_long_full_skirt", "shoes": "shoes05"},
 }
+TOPS = ("tee", "long", "shirt", "hoodie")   # hoodie: Elvaerwyn, CC-BY (credited on the site)
 CLOTHES_DIR = os.path.expanduser("~/tools/blender-4.5.14-windows-x64/portable/extensions/.user/user_default/mpfb/data/clothes")
 
 a = C.args()
@@ -68,8 +71,11 @@ def keep_part(ob, which):
                     stack.append(o)
         parts.append(comp)
     parts.sort(key=lambda c: sum(v.co.z for v in c) / len(c))
-    keep = parts[-1] if which == "upper" else parts[0]
-    bmesh.ops.delete(bm, geom=[v for c in parts if c is not keep for v in c], context="VERTS")
+    # every piece on the chosen side of the split (a shirt's collar can be its own piece); tiny bits (zip pulls) dropped
+    split = HEIGHT[kind] * 0.58
+    keep = [c for c in parts if ((sum(v.co.z for v in c) / len(c) > split) == (which == "upper")) and len(c) > 150]
+    keep = keep or [parts[-1] if which == "upper" else parts[0]]
+    bmesh.ops.delete(bm, geom=[v for c in parts if not any(c is k for k in keep) for v in c], context="VERTS")
     bm.to_mesh(ob.data)
     bm.free()
 
@@ -345,35 +351,220 @@ def extend_hem(ob):
     return set(ids)
 
 
+def boundary_loops(bm):
+    bound = [e for e in bm.edges if e.is_boundary]
+    adj = {}
+    for e in bound:
+        for v in e.verts:
+            adj.setdefault(v, []).append(e)
+    seen, loops = set(), []
+    for e in bound:
+        if e in seen:
+            continue
+        comp, stack = [], [e]
+        seen.add(e)
+        while stack:
+            x = stack.pop()
+            comp.append(x)
+            for v in x.verts:
+                for y in adj[v]:
+                    if y not in seen:
+                        seen.add(y)
+                        stack.append(y)
+        loops.append(comp)
+    return loops
+
+
+def extend_sleeves(ob, rings=16):
+    """Continue each short sleeve down the arm to the wrist (shoulder→elbow→wrist path, the opening's shape carried along
+    and narrowing toward the wrist), texture continuing, weights moving over to the forearm/hand. Returns new vertex ids."""
+    from mathutils import kdtree
+    bm = bmesh.new()
+    bm.from_mesh(ob.data)
+    bm.verts.ensure_lookup_table()
+    uvl = bm.loops.layers.uv.active
+    cuffs = []
+    for c in boundary_loops(bm):
+        vs = list({v for e in c for v in e.verts})
+        cx = sum(v.co.x for v in vs) / len(vs)
+        if abs(cx) > 0.12:
+            cuffs.append((c, vs))
+    new_all, kfrac = [], {}
+    for hem, ring0 in cuffs:
+        C0 = sum((v.co for v in ring0), Vector()) / len(ring0)
+        side = "l" if C0.x > 0 else "r"
+        sh, el, wr = ARMS[side][0], ARMS[side][1], ARMS[side][2]
+        wr = wr + (wr - el).normalized() * 0.01
+        path = [C0, el, wr]
+        segs = [(path[i], path[i + 1]) for i in range(2)]
+        L = sum((b - a).length for a, b in segs)
+        a0 = (el - sh).normalized()
+
+        def at(sv):
+            for a, b in segs:
+                d = (b - a).length
+                if sv <= d or b is segs[-1][1]:
+                    t = min(1.0, sv / max(d, 1e-6))
+                    return a.lerp(b, t), (b - a).normalized()
+                sv -= d
+        off = {v: v.co - C0 for v in ring0}
+        uvinfo = {}
+        for v in ring0:
+            l0 = v.link_loops[0]
+            uv0 = l0[uvl].uv.copy()
+            ups = [e.other_vert(v) for e in v.link_edges if not e.is_boundary]
+            p = max(ups, key=lambda u: (u.co - C0).dot(-a0)) if ups else None
+            duv = uv0 * 0
+            if p is not None:
+                lp = next((l for l in p.link_loops if l.face.index == l0.face.index), p.link_loops[0])
+                duv = (uv0 - lp[uvl].uv) / max((v.co - p.co).length, 1e-4)
+            uvinfo[v] = (uv0, duv)
+        hem_faces = list({f for e in hem for f in e.link_faces})
+        origin, ring = {v: v for v in ring0}, {v: 0 for v in ring0}
+        cur, cur_edges, new_faces = set(ring0), hem, []
+        for k in range(1, rings + 1):
+            sv = L * k / rings
+            pos, dirn = at(sv)
+            q = a0.rotation_difference(dirn)
+            scale = 1.0 + (0.55 - 1.0) * (k / rings)
+            res = bmesh.ops.extrude_edge_only(bm, edges=cur_edges)
+            nv = [g for g in res["geom"] if isinstance(g, bmesh.types.BMVert)]
+            nset = set(nv)
+            for v in nv:
+                src = next(e.other_vert(v) for e in v.link_edges if e.other_vert(v) in cur)
+                o = origin[src]
+                origin[v], ring[v] = o, k
+                v.co = pos + q @ (off[o] * scale)
+                kfrac[v] = k / rings
+            new_all += nv
+            new_faces += [g for g in res["geom"] if isinstance(g, bmesh.types.BMFace)]
+            cur_edges = [g for g in res["geom"] if isinstance(g, bmesh.types.BMEdge) and all(x in nset for x in g.verts)]
+            cur = nset
+        step = L / rings
+        for f in new_faces:
+            f.smooth = True
+            for l in f.loops:
+                uv0, duv = uvinfo[origin[l.vert]]
+                l[uvl].uv = uv0 + duv * (ring[l.vert] * step)
+        bm.normal_update()
+        before = {f: f.normal.copy() for f in hem_faces}
+        bmesh.ops.recalc_face_normals(bm, faces=new_faces + hem_faces)
+        bm.normal_update()
+        if sum(1 for f in hem_faces if f.normal.dot(before[f]) < 0) > len(hem_faces) / 2:
+            bmesh.ops.reverse_faces(bm, faces=new_faces + hem_faces)
+    bm.to_mesh(ob.data)
+    ids = [v.index for v in new_all]
+    frac = {v.index: kfrac[v] for v in new_all}
+    bm.free()
+    if not ids:
+        return set()
+    vg = ob.vertex_groups.new(name="_sext")
+    vg.add(ids, 1.0, "REPLACE")
+    m = ob.modifiers.new("sleeve_out", "SHRINKWRAP")
+    m.target, m.wrap_method, m.wrap_mode, m.offset, m.vertex_group = body, "NEAREST_SURFACEPOINT", "OUTSIDE", 0.006, "_sext"
+    apply_first(ob, m)
+    # weights: from the upper arm at the old cuff over to the forearm / hand (nearest body points)
+    bones = {b.name for b in rig.data.bones}
+    kd = kdtree.KDTree(len(body.data.vertices))
+    for v in body.data.vertices:
+        kd.insert(v.co, v.index)
+    kd.balance()
+    bname = {g.index: g.name for g in body.vertex_groups if g.name in bones}
+    for i in ids:
+        v = ob.data.vertices[i]
+        t = min(1.0, 1.5 * frac[i])
+        new = {ob.vertex_groups[g.group].name: g.weight * (1 - t) for g in v.groups if ob.vertex_groups[g.group].name in bones}
+        bw = {}
+        for _, j, d in kd.find_n(v.co, 4):
+            for g in body.data.vertices[j].groups:
+                if g.group in bname:
+                    bw[bname[g.group]] = bw.get(bname[g.group], 0) + g.weight / 4
+        for nme, w in bw.items():
+            new[nme] = new.get(nme, 0) + w * t
+        tot = sum(new.values()) or 1
+        for g in list(v.groups):
+            if ob.vertex_groups[g.group].name in bones:
+                ob.vertex_groups[g.group].remove([i])
+        for nme, w in new.items():
+            if w / tot > 0.01:
+                (ob.vertex_groups.get(nme) or ob.vertex_groups.new(name=nme)).add([i], w / tot, "REPLACE")
+    print("SLEEVES", ob.name, len(ids))
+    return set(ids)
+
+
+def mark_collar(ob, gid):
+    """Shirt collar: the band standing round the neck. Hood: the fabric lying on the upper back and round the neck,
+    away from the body (the body panel itself sits close to it)."""
+    from mathutils.bvhtree import BVHTree
+    neck = rig.matrix_world @ rig.data.bones["neck_01"].head_local
+    dg = bpy.context.evaluated_depsgraph_get()
+    body_tree = BVHTree.FromObject(body.evaluated_get(dg), dg)
+    bm = bmesh.new()
+    bm.from_mesh(ob.data)
+    self_tree = BVHTree.FromBMesh(bm)
+    bm.free()
+    out = set()
+    for v in ob.data.vertices:
+        r = ((v.co.x - neck.x) ** 2 + (v.co.y - neck.y) ** 2) ** 0.5
+        if gid == "shirt":
+            if v.co.z > neck.z - 0.045 and r < 0.095:
+                out.add(v.index)
+        elif v.co.z > neck.z - 0.03 and r < 0.13:   # the hood round the neck
+            out.add(v.index)
+        elif v.co.z > neck.z - 0.35 and (v.co.y > 0 or abs(v.co.x) > 0.08):   # back, and the hood's ends on the front shoulders (not the zip)
+            # the hood lying on the back: the hoodie's own back panel is between it and the body
+            near = body_tree.find_nearest(v.co)
+            if near and near[0] is not None:
+                d = (near[0] - v.co)
+                hit = self_tree.ray_cast(v.co + d.normalized() * 0.002, d.normalized(), d.length)
+                if hit and hit[0] is not None:
+                    out.add(v.index)
+    return out
+
+
 EXTENDED = {}
 for gid, (ob, name) in garments.items():
     mesh = ob.data
     for m in list(ob.modifiers):
+        if m.type == "SUBSURF" and gid == "hoodie":   # already dense (10k vertices): no subdivision
+            ob.modifiers.remove(m)
+            continue
         if m.type == "SUBSURF":   # MPFB leaves the viewport level at 0: subdivide for real (cloth bakes need the final mesh)
             m.show_viewport = True
             m.levels = max(1, m.render_levels)
             bpy.context.view_layer.objects.active = ob
             bpy.ops.object.modifier_apply(modifier=m.name)
-    ext = extend_hem(ob) if gid in ("tee", "long") else set()
-    if gid in ("tee", "long"):   # nothing of the top inside the body (the bust showed through the knit)
+    ext = extend_hem(ob) if gid in TOPS else set()
+    sleeve_ext = extend_sleeves(ob) if gid == "tee" else set()   # one T-shirt from sleeveless to long sleeves
+    if gid in TOPS:   # nothing of the top inside the body (the bust showed through the knit)
         m = ob.modifiers.new("clear_body", "SHRINKWRAP")
         m.target, m.wrap_method, m.wrap_mode, m.offset = body, "NEAREST_SURFACEPOINT", "OUTSIDE", 0.004
         apply_first(ob, m)
     EXTENDED[gid] = ext
     ah = mesh.attributes.new("_h", "FLOAT", "POINT")
     asl = mesh.attributes.new("_s", "FLOAT", "POINT")
-    if gid in ("tee", "long"):
+    if gid in TOPS:
         axt = mesh.attributes.new("_x", "FLOAT", "POINT")
-        for i in ext:
+        for i in ext | sleeve_ext:
             axt.data[i].value = 1.0
-        ob.vertex_groups.remove(ob.vertex_groups["_ext"])
+        for g in ("_ext", "_sext"):
+            if ob.vertex_groups.get(g):
+                ob.vertex_groups.remove(ob.vertex_groups[g])
+        # collar (shirt) / hood (hoodie): kept out of the neckline, and the hood can be taken off
+        ac = mesh.attributes.new("_c", "FLOAT", "POINT")
+        if gid in ("shirt", "hoodie"):
+            n = mark_collar(ob, gid)
+            for i in n:
+                ac.data[i].value = 1.0
+            print("COLLAR", gid, len(n))
     gidx = {vg.index: vg.name for vg in ob.vertex_groups}
+    ah, asl = mesh.attributes["_h"], mesh.attributes["_s"]   # fetch again: adding attributes invalidates older handles
     for v in mesh.vertices:
         w = sum(g.weight for g in v.groups if gidx.get(g.group) in ARM_GROUPS)
         co = ob.matrix_world @ v.co
         ah.data[v.index].value = co.z
         side = "l" if co.x > 0 else "r"
-        asl.data[v.index].value = arm_param(co, side) if w > 0.5 and gid in ("tee", "long") else 0.0
+        asl.data[v.index].value = arm_param(co, side) if w > 0.5 and gid in TOPS else 0.0
     for p in mesh.polygons:
         p.use_smooth = True
     # a second UV map without overlaps (MakeHuman UVs mirror left/right): the site paints and cuts in it
@@ -598,7 +789,7 @@ for gid, (ob, name) in garments.items():
     zs = [v.co.z for v in ob.data.vertices]
     top, bot = max(zs), min(zs)
     keys = {}
-    if gid in ("tee", "long"):
+    if gid in TOPS:
         # the bake happens in the A-pose: sleeves are held almost in shape (pinned) so they don't sag sideways,
         # which would point upward once the arms come down; the body panel drapes freely from the shoulders
         gidx = {vg.index: vg.name for vg in ob.vertex_groups}
@@ -644,7 +835,7 @@ for gid, (ob, name) in garments.items():
 # the body panel of a top should follow the torso, not the arms: MPFB's interpolated weights let the hem near the
 # hands ride along with the arm (it crumples in the hand-on-hip pose)
 shoulder_z = max((rig.matrix_world @ rig.data.bones["upperarm_l"].head_local).z, 0)
-for gid in ("tee", "long"):
+for gid in TOPS:
     ob = garments[gid][0]
     arm_ids = {vg.index for vg in ob.vertex_groups if vg.name in ARM_GROUPS}
     spine = ob.vertex_groups.get("spine_01") or ob.vertex_groups.new(name="spine_01")

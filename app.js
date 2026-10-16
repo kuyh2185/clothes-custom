@@ -204,14 +204,16 @@ const DEF = {
   tee:    { kind: 'tee',    neckD: 12, neckW: 20, neckV: 0, len: 372, sleeve: 234, fit: 5, sfit: 2, drop: 3, flare: 0, cling: .35, fill: SOLID('#f3f1ec'), dmg: [], print: null, rawHem: false, rawSleeve: false },
   crop:   { kind: 'crop',   neckD: 11, neckW: 20, neckV: 0, len: 262, sleeve: 232, fit: 7, sfit: 3, drop: 4, flare: 1, cling: 0, fill: SOLID('#1c1c1c'), dmg: [], print: null, rawHem: false, rawSleeve: false },
   fitted: { kind: 'fitted', neckD: 10, neckW: 18, neckV: 0, len: 360, sleeve: 228, fit: -2, sfit: -2, drop: 0, flare: -2, cling: 1, fill: SOLID('#e8b4b8'), dmg: [], print: null, rawHem: false, rawSleeve: false },
+  shirt:  { kind: 'shirt',  neckD: 8, neckW: 18, neckV: 0, len: 380, sleeve: 398, fit: 5, sfit: 3, drop: 2, flare: 0, cling: .35, fill: SOLID('#dfe7ef'), dmg: [], print: null, rawHem: false, rawSleeve: false },
+  hoodie: { kind: 'hoodie', neckD: 8, neckW: 20, neckV: 0, len: 380, sleeve: 398, fit: 6, sfit: 4, drop: 3, flare: 0, cling: .35, fill: SOLID('#8a8f96'), dmg: [], print: null, rawHem: false, rawSleeve: false, hoodOff: false },
   long:   { kind: 'long',   neckD: 10, neckW: 19, neckV: 0, len: 380, sleeve: 398, fit: 3, sfit: 1, drop: 2, flare: 0, cling: .3, fill: { type: 'stripe', c1: '#f3f1ec', c2: '#24324a', scale: 1 }, dmg: [], print: null, rawHem: false, rawSleeve: false },
   // jeans: thigh / knee / hem width, 0..1 each
   jeans: { kind: 'jeans', len: 732, thigh: .32, knee: .33, hemW: .36, fill: { type: 'solid', c1: '#4a6787', c2: '#f3f1ec', scale: 1 }, dmg: [], print: null, rawHem: false },
   // skirt: hip = ease over the hips, fit = hem flare, 0..1 each
   skirt: { kind: 'skirt', len: 476, hip: .06, fit: 0.3, fill: { type: 'solid', c1: '#c7b299', c2: '#3b3b3b', scale: 1 }, dmg: [], print: null, rawHem: false },
 };
-const SLOT = { tee: 'top', crop: 'top', fitted: 'top', long: 'top', jeans: 'bottom', skirt: 'bottom' };
-const NAME = { tee: '반팔 티', crop: '크롭 티', fitted: '딱 붙는 티', long: '긴팔 티', jeans: '청바지', skirt: '치마' };
+const SLOT = { tee: 'top', crop: 'top', fitted: 'top', long: 'top', shirt: 'top', hoodie: 'top', jeans: 'bottom', skirt: 'bottom' };
+const NAME = { tee: '티셔츠', crop: '크롭 티', fitted: '딱 붙는 티', long: '니트', shirt: '셔츠', hoodie: '후드 집업', jeans: '청바지', skirt: '치마' };
 const SLEEVE_EASE = { tee: 9, crop: 9, fitted: 2.5, long: 3 };
 const SLEEVELESS = 200;
 const LIMIT = {
@@ -1027,9 +1029,9 @@ function iconSVGRaw(kind) {
   const d = kind === 'jeans' ? jeansGeo(g).d : skirtGeo(g).d;
   return `<svg viewBox="${kind === 'jeans' ? '118 284 164 462' : '108 280 184 220'}" aria-hidden="true"><path d="${d}" fill="${c}" ${st}/></svg>`;
 }
-const NAME_EN = { tee: 'T-shirt', crop: 'Crop tee', fitted: 'Fitted tee', long: 'Long sleeve', jeans: 'Denim', skirt: 'Skirt' };
+const NAME_EN = { tee: 'T-shirt', crop: 'Crop tee', fitted: 'Fitted tee', long: 'Knit', shirt: 'Shirt', hoodie: 'Zip hoodie', jeans: 'Denim', skirt: 'Skirt' };
 function renderCards() {
-  [['top', ['tee', 'crop', 'fitted', 'long']], ['bottom', ['jeans', 'skirt']]].forEach(([slot, kinds]) => {
+  [['top', ['tee', 'crop', 'fitted', 'shirt', 'hoodie', 'long']], ['bottom', ['jeans', 'skirt']]].forEach(([slot, kinds]) => {
     $('#cards-' + slot).innerHTML = kinds.map(k => `<button type="button" class="card" data-kind="${k}" aria-pressed="${state[slot]?.kind === k}">${iconSVG(k)}<span class="nm">${NAME[k]}</span><span class="en">${NAME_EN[k]}</span></button>`).join('');
   });
   $('#w-count').textContent = Object.keys(DEF).length + '벌';
@@ -1232,6 +1234,7 @@ function panelHTML() {
       if (is3d()) return `<p class="hint">가운데 <b>동그란 점</b>은 깊이, 사이 점은 곡선, 양끝 <b>네모 점</b>은 넓이예요. 점을 누른 채 끌면 옷이 반투명해지고 원래 선이 점선으로 남아요. <b>뒤</b>에서 보면 뒷목선 점이 나와요.</p>
         <div class="seg2" role="group" aria-label="좌우 대칭"><button type="button" class="chip" data-ui-sym="1">좌우 대칭</button><button type="button" class="chip" data-ui-sym="0">따로따로</button></div>
         <div class="seg2" role="group" aria-label="앞목선 모양"><button type="button" class="chip" data-neckv="0">둥글게</button><button type="button" class="chip" data-neckv="1">뾰족하게 (V)</button></div>
+        ${T.kind === 'hoodie' ? `<div class="seg2" role="group" aria-label="후드"><button type="button" class="chip" data-hood="0">후드 달기</button><button type="button" class="chip" data-hood="1">후드 떼기</button></div>` : ''}
         <span class="label-sm">빠른 모양</span>
         <div class="chips" style="margin-bottom:14px">${Object.entries(PRESETS).map(([id, p]) => `<button type="button" class="chip" data-preset3="${id}">${p[0]}</button>`).join('')}<button type="button" class="chip" data-act="neck-reset">원래대로</button></div>`;
       return (is3d() ? `<p class="hint"><b>모양 버튼</b>을 누르거나 막대로 깊이·넓이·U↔V를 바꿔요. 마네킹을 끌면 돌려 볼 수 있어요.</p>`
@@ -1341,6 +1344,7 @@ function syncPanel() {
   }
   P.querySelectorAll('[data-cutmode]').forEach(b => b.setAttribute('aria-pressed', b.dataset.cutmode === ui.cutMode));
   P.querySelectorAll('[data-ui-sym]').forEach(b => b.setAttribute('aria-pressed', (b.dataset.uiSym === '1') === ui.neckSym));
+  P.querySelectorAll('[data-hood]').forEach(b => b.setAttribute('aria-pressed', (b.dataset.hood === '1') === !!(state.top && state.top.hoodOff)));
   P.querySelectorAll('[data-neckv]').forEach(b => b.setAttribute('aria-pressed', (b.dataset.neckv === '1') === !!(state.top && state.top.neckV)));
   P.querySelectorAll('[data-paint]').forEach(b => b.setAttribute('aria-pressed', b.dataset.paint === (ui.paintOn ? (ui.paintErase ? 'erase' : 'on') : 'off')));
   P.querySelectorAll('[data-ui]').forEach(el => el.style.setProperty('--p', ((el.value - el.min) / (el.max - el.min) * 100).toFixed(1) + '%'));
@@ -1421,6 +1425,7 @@ P.addEventListener('click', e => {
   if (d.paint) { ui.paintOn = d.paint !== 'off'; ui.paintErase = d.paint === 'erase'; renderPanel(); return; }
   if (d.bc) { ui.brushColor = d.bc; renderPanel(); return; }
   if (d.preset3) { if (window.__s3) window.__s3.neckPreset(d.preset3); say(PRESETS[d.preset3][0]); return; }
+  if (d.hood && state.top) { state.top.hoodOff = d.hood === '1'; render(); commit(); syncPanel(); say(state.top.hoodOff ? '후드를 뗐어요' : '후드를 달았어요'); return; }
   if (d.neckv && state.top) { state.top.neckV = d.neckv === '1' ? 1 : 0; render(); commit(); syncPanel(); return; }
   if (d.act === 'neck-reset') { state.top.neckF = state.top.neckB = null; state.top.neckV = 0; render(); commit(); say('목선을 원래대로 돌렸어요'); return; }
   if (d.act === 'hem-reset') { [state.top, state.bottom].forEach(x => { if (x) { x.hemOff = null; x.sleeveAdj = null; } }); render(); commit(); say('밑단·소매 모양을 처음으로 돌렸어요'); return; }
@@ -1521,7 +1526,7 @@ window.__cc = {
   get state() { return state; }, get prefs() { return prefs; }, get images() { return images; }, get geo() { return geo; },
   get BODY() { return BODY; }, ui, get Y() { return Y; }, get LEG() { return LEG; }, get tool() { return tool; }, get dmgMode() { return dmgMode; },
   table, bodyHalf, armO, armI, neckY, legMid, shade, warp: (p, ctx) => warp(p, ctx), tucked,
-  LIMIT, SLEEVELESS, bottomLenLimit, sleeveName, topLenName, bottomLenName, NAME,
+  LIMIT, SLEEVELESS, bottomLenLimit, sleeveName, topLenName, bottomLenName, NAME, DEF,
   applyCut: c => applyCut(c, null), render, commit, say, renderPanel, renderLayers,
   setTarget(slot) { if (state[slot] && state.target !== slot) { state.target = slot; renderPanel(); renderLayers(); } },
   attach3D(s3) {

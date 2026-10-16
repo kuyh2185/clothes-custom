@@ -227,6 +227,8 @@ input[type=range].hue::-moz-range-thumb{width:8px;height:20px;border-radius:4px;
 .panel .note{margin:10px 0 0}
 
 /* ---------- status bar ---------- */
+.credit{margin:14px 16px 0;font-size:11px;line-height:1.5;color:var(--muted)}
+.credit a{color:inherit}
 .foot{height:var(--foot);display:flex;align-items:center;gap:14px;padding:0 14px;background:var(--panel);border-top:1px solid var(--line);font-size:11.5px;color:var(--muted);white-space:nowrap;overflow:hidden}
 .foot .cur{color:var(--text-2);overflow:hidden;text-overflow:ellipsis}
 .foot .cur b{color:var(--accent);font-weight:600;margin-right:6px}
@@ -307,6 +309,7 @@ input[type=range].hue::-moz-range-thumb{width:8px;height:20px;border-radius:4px;
     <p class="note">누르면 바로 입혀져요. 입은 옷을 한 번 더 누르면 벗어요.</p>
     <p class="group-label">입은 옷 · Layers</p>
     <ul class="layers" id="layers"></ul>
+    <p class="credit">3D 마네킹·옷: MakeHuman (CC0) · 후드 집업: Elvaerwyn (<a href="https://creativecommons.org/licenses/by/4.0/deed.ko" target="_blank" rel="noopener">CC BY</a>)</p>
   </aside>
 
   <section class="stage-wrap" aria-label="마네킹">
@@ -337,8 +340,8 @@ input[type=range].hue::-moz-range-thumb{width:8px;height:20px;border-radius:4px;
   <span class="cur" id="foot-hint"></span>
   <span class="keys"><span><kbd>1</kbd>–<kbd>5</kbd> 도구</span><span><kbd>H</kbd> 점 숨기기</span><span><kbd>Ctrl</kbd>+<kbd>Z</kbd> 되돌리기</span></span>
 </footer>
-<script src="app.js?v=15"></script>
+<script src="app.js?v=16"></script>
 <script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"}}</script>
-<script type="module" src="stage3d.js?v=40"></script>
+<script type="module" src="stage3d.js?v=41"></script>
 </body>
 </html>

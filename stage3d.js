@@ -16,8 +16,9 @@ const cc = window.__cc;
 const PI = Math.PI, TAU = PI * 2;
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const lerp = (a, b, t) => a + (b - a) * t;
-const VER = 12;   // bump with the assets
-const GARMENTS = ['tee', 'long', 'jeans', 'skirt'];
+const VER = 13;   // bump with the assets
+const GARMENTS = ['tee', 'long', 'shirt', 'hoodie', 'jeans', 'skirt'];
+const TOPS = new Set(['tee', 'long', 'shirt', 'hoodie']);
 const NP = 17, NO = 17, NC = 5, HP = 8, MAXD = 16;
 const HANDS = [new THREE.Vector4(), new THREE.Vector4()];   // hand centres (xyz) + radius (w), in the garments' bind space   // neckline: shader samples / garment outline samples / handles per side
 
@@ -117,23 +118,23 @@ function start() {
   // what each garment looks like at rest: its height range, sleeve end, and its own neckline/shoulder outline
   // (front and back, as the highest point of the fabric at each x) — the free neckline starts on that outline
   function analyse(mesh, H) {
-    const g = mesh.geometry, P = g.attributes.position, h = g.attributes._h, s = g.attributes._s, x = g.attributes._x, n = P.count;
-    let lo = 1e9, hi = -1e9, smax = 0, lo0 = 1e9;
+    const g = mesh.geometry, P = g.attributes.position, h = g.attributes._h, s = g.attributes._s, x = g.attributes._x, cl = g.attributes._c, n = P.count;
+    let lo = 1e9, hi = -1e9, smax = 0, lo0 = 1e9, smax0 = 0;
     for (let i = 0; i < n; i++) {
       const v = h.getX(i); lo = Math.min(lo, v); hi = Math.max(hi, v); smax = Math.max(smax, s.getX(i));
-      if (!x || x.getX(i) < .5) lo0 = Math.min(lo0, v);
+      if (!x || x.getX(i) < .5) { lo0 = Math.min(lo0, v); smax0 = Math.max(smax0, s.getX(i)); }
     }
     const span = 0.19 * H / 1.77, xs = Array.from({ length: NO }, (_, i) => lerp(-span, span, i / (NO - 1)));   // out to the shoulder seam
     const outline = sgn => xs.map(x => {
       let best = -1e9;
       for (let i = 0; i < n; i++) {
-        if (s.getX(i) > 0.02) continue;
+        if (s.getX(i) > 0.02 || (cl && cl.getX(i) > .5)) continue;
         if (sgn * P.getZ(i) < 0.005 || Math.abs(P.getX(i) - x) > 0.009) continue;
         best = Math.max(best, P.getY(i));
       }
       return [x, best > -1e8 ? best : hi];
     });
-    return { lo, lo0, hi, smax, neckF: outline(1), neckB: outline(-1) };
+    return { lo, lo0, hi, smax, smax0, neckF: outline(1), neckB: outline(-1) };
   }
 
   /* ---------- materials ---------- */
@@ -161,17 +162,17 @@ function start() {
     const t = new THREE.CanvasTexture(c); t.flipY = false;
     return { c, x: c.getContext('2d'), t };
   };
-  function garmentMaterial(src, keepColour) {
+  function garmentMaterial(src, keepColour, detail) {
     const st = src.map ? texStats(src.map) : { avgC: new THREE.Vector3(.5, .5, .5), avgL: .5 };
     const mask = brushCanvas(), paint = brushCanvas();
     mask.t.colorSpace = THREE.NoColorSpace; paint.t.colorSpace = THREE.SRGBColorSpace;
     const U = {
       uC1: { value: new THREE.Color() }, uC2: { value: new THREE.Color() }, uPat: { value: 0 }, uScale: { value: 1 },
-      uAvg: { value: st.avgL }, uAvgC: { value: st.avgC }, uKeep: { value: keepColour ? 1 : 0 },
+      uAvg: { value: st.avgL }, uAvgC: { value: st.avgC }, uKeep: { value: keepColour ? 1 : 0 }, uDetail: { value: detail ?? 1 },
       uCutH: { value: -1 }, uSleeveCut: { value: new THREE.Vector2(2, 2) }, uRaw: { value: 0 }, uRawS: { value: 0 }, uTuckH: { value: -1 },
       uHemOff: { value: new Array(HP).fill(0) }, uHemLeg: { value: 0 },
       uNeckF: { value: Array.from({ length: NP }, () => new THREE.Vector2()) }, uNeckB: { value: Array.from({ length: NP }, () => new THREE.Vector2()) }, uNeckOn: { value: 0 },
-      uFit: { value: new THREE.Vector4() }, uFitH: { value: new THREE.Vector4() }, uSh: { value: new THREE.Vector2(9, 10) }, uHand: { value: HANDS }, uHandOn: { value: 0 },
+      uFit: { value: new THREE.Vector4() }, uFitH: { value: new THREE.Vector4() }, uSh: { value: new THREE.Vector2(9, 10) }, uHand: { value: HANDS }, uHandOn: { value: 0 }, uHoodOff: { value: 0 },
       uDmg: { value: Array.from({ length: MAXD }, () => new THREE.Vector4()) }, uDmgN: { value: 0 },
       uPrint: { value: null }, uPrintOn: { value: 0 }, uPrintBox: { value: new THREE.Vector4() },
       uHover: { value: -10 }, uBand: { value: new THREE.Vector3() }, uHem: { value: new THREE.Vector2() }, uUnder: { value: 99 },
@@ -188,11 +189,11 @@ function start() {
       Object.assign(sh.uniforms, U);
       sh.vertexShader = sh.vertexShader
         .replace('#include <common>', `#include <common>
-attribute float _h; attribute float _s;
+attribute float _h; attribute float _s; attribute float _c;
 #ifndef USE_UV1
 attribute vec2 uv1;
 #endif
-varying vec3 vRest; varying float vH; varying float vS; varying vec2 vB;
+varying vec3 vRest; varying float vH; varying float vS; varying vec2 vB; varying float vC;
 uniform vec4 uFit; uniform vec4 uFitH; uniform vec2 uSh; uniform vec4 uHand[2]; uniform float uHandOn;`)
         .replace('#include <skinning_vertex>', `#include <skinning_vertex>
 // a hand never goes into the cloth: whatever is inside its sphere is pushed out round it
@@ -201,15 +202,16 @@ if (uHandOn > 0.5) for (int i = 0; i < 2; i++) {
   if (uHand[i].w > 0.0 && r < uHand[i].w) transformed = uHand[i].xyz + d / max(r, 1e-4) * uHand[i].w;
 }`)
         .replace('#include <begin_vertex>', `#include <begin_vertex>
-vRest = position; vH = _h; vS = _s; vB = uv1;
+vRest = position; vH = _h; vS = _s; vB = uv1; vC = _c;
 float off = (vS > 0.01 ? uFit.y : uFit.x * (1.0 - smoothstep(uSh.y, uSh.x, _h)));   // no push at the shoulders: a big top hangs from them
 off += uFit.z * max(0.0, uFitH.x - _h);
 if (uFitH.y > 0.0) { float t = clamp((uFitH.y - _h) / max(0.01, uFitH.y - uFitH.z), 0.0, 1.0); off += mix(uFit.w, uFitH.w, t); }
 transformed += objectNormal * off;`);
       sh.fragmentShader = sh.fragmentShader
         .replace('#include <common>', `#include <common>
-varying vec3 vRest; varying float vH; varying float vS; varying vec2 vB;
-uniform vec3 uC1; uniform vec3 uC2; uniform float uPat; uniform float uScale; uniform float uAvg; uniform vec3 uAvgC; uniform float uKeep;
+varying vec3 vRest; varying float vH; varying float vS; varying vec2 vB; varying float vC;
+uniform float uHoodOff;
+uniform vec3 uC1; uniform vec3 uC2; uniform float uPat; uniform float uScale; uniform float uAvg; uniform vec3 uAvgC; uniform float uKeep; uniform float uDetail;
 uniform float uCutH; uniform vec2 uSleeveCut; uniform float uRaw; uniform float uRawS; uniform float uTuckH;
 uniform float uHemOff[${HP}]; uniform float uHemLeg;
 uniform vec2 uNeckF[${NP}]; uniform vec2 uNeckB[${NP}]; uniform float uNeckOn;
@@ -251,7 +253,8 @@ float frs = uRawS > 0.5 ? noise1(vRest.y * 900.0 + vRest.z * 600.0) * 0.03 : 0.0
 if (vS > 0.01 && vS > sc - frs) discard;
 if (uTuckH > 0.0 && vS < 0.01 && vH < uTuckH) discard;
 if (vH > uUnder) discard;   // waistband and belt loops under a top worn out over them
-if (uNeckOn > 0.5 && vS < 0.01) {
+if (uHoodOff > 0.5 && vC > 0.5) discard;   // hood taken off
+if (uNeckOn > 0.5 && vS < 0.01 && vC < 0.5) {   // the collar / hood stays: the neckline is cut below it
   if (vRest.z > 0.0 && aboveNeck(uNeckF, vRest.x, vRest.y)) discard;
   if (vRest.z <= 0.0 && aboveNeck(uNeckB, vRest.x, vRest.y)) discard;
 }
@@ -271,7 +274,7 @@ vec3 blurTex = texture2D(map, vMapUv, 6.5).rgb;
 #else
 vec3 blurTex = vec3(uAvg);
 #endif
-float detail = clamp(dot(blurTex, vec3(0.2126, 0.7152, 0.0722)) / uAvg, 0.5, 1.3);
+float detail = mix(1.0, clamp(dot(blurTex, vec3(0.2126, 0.7152, 0.0722)) / uAvg, 0.5, 1.3), uDetail);   // some textures carry baked shading: keep only a little
 vec3 base = uC1;
 float s = uScale;
 float side = abs(vRest.z) > abs(vRest.x) ? vRest.x : vRest.z;
@@ -319,7 +322,7 @@ if (abs(vH - uHover) < 0.0016 && vS < 0.01 && fract((vRest.x + vRest.z) * 40.0) 
     return m;
   }
   function bodyMaterial() {
-    const U = { uWear: { value: new THREE.Vector4() }, uShoes: { value: 1 } };
+    const U = { uWear: { value: new THREE.Vector4() }, uWear2: { value: new THREE.Vector2() }, uShoes: { value: 1 } };
     const m = new THREE.MeshPhysicalMaterial({ roughness: .55, clearcoat: .1, clearcoatRoughness: .5 });
     m.userData.U = U;
     m.onBeforeCompile = sh => {
@@ -327,9 +330,10 @@ if (abs(vH - uHover) < 0.0016 && vS < 0.01 && fract((vRest.x + vRest.z) * 40.0) 
       sh.vertexShader = sh.vertexShader
         .replace('#include <common>', `#include <common>
 attribute float _m_tee; attribute float _m_long; attribute float _m_jeans; attribute float _m_skirt; attribute float _m_shoes;
-uniform vec4 uWear; uniform float uShoes;`)
+attribute float _m_shirt; attribute float _m_hoodie;
+uniform vec4 uWear; uniform vec2 uWear2; uniform float uShoes;`)
         .replace('#include <begin_vertex>', `#include <begin_vertex>
-float cover = max(max(_m_tee * uWear.x, _m_long * uWear.y), max(max(_m_jeans * uWear.z, _m_skirt * uWear.w), _m_shoes * uShoes));
+float cover = max(max(max(_m_tee * uWear.x, _m_long * uWear.y), max(_m_shirt * uWear2.x, _m_hoodie * uWear2.y)), max(max(_m_jeans * uWear.z, _m_skirt * uWear.w), _m_shoes * uShoes));
 transformed -= objectNormal * 0.007 * cover;`);
     };
     m.customProgramCacheKey = () => 'body-v' + VER;
@@ -338,7 +342,7 @@ transformed -= objectNormal * 0.007 * cover;`);
   function setupMaterials(asset) {
     const M = asset.meshes;
     M.body.material = bodyMaterial();
-    for (const id of GARMENTS) if (M[id]) M[id].material = garmentMaterial(M[id].material, id === 'jeans');
+    for (const id of GARMENTS) if (M[id]) M[id].material = garmentMaterial(M[id].material, id === 'jeans', id === 'shirt' || id === 'hoodie' ? .12 : 1);
     if (M.shoes) {
       const sm = M.shoes.material, top = asset.H * 0.07;
       sm.side = THREE.FrontSide;
@@ -399,7 +403,7 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = uSock;`);
   }
   const PAT = { solid: 0, stripe: 1, check: 2, dot: 3 };
   let hoverCut = null;
-  const meshOf = (slot, g) => !g ? null : slot === 'top' ? (g.kind === 'long' ? 'long' : 'tee') : (g.kind === 'skirt' ? 'skirt' : 'jeans');
+  const meshOf = (slot, g) => !g ? null : slot === 'top' ? (TOPS.has(g.kind) ? g.kind : 'tee') : (g.kind === 'skirt' ? 'skirt' : 'jeans');
   const legC = () => 0.09 * A.H / 1.77;
   const r4 = v => Math.round(v * 1e4) / 1e4;
   /* top length (the editor's y, 750 = floor) ↔ cut height in metres. Up to TOP_FULL the top ends where the asset ends
@@ -481,6 +485,7 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = uSock;`);
     const topMesh = meshOf('top', T), botMesh = meshOf('bottom', Bt);
     for (const id of GARMENTS) if (M[id]) M[id].visible = id === topMesh || id === botMesh;
     M.body.material.userData.U.uWear.value.set(topMesh === 'tee' ? 1 : 0, topMesh === 'long' ? 1 : 0, botMesh === 'jeans' ? 1 : 0, botMesh === 'skirt' ? 1 : 0);
+    M.body.material.userData.U.uWear2.value.set(topMesh === 'shirt' ? 1 : 0, topMesh === 'hoodie' ? 1 : 0);
     const f = FIN[pr.finish] || FIN.white;
     M.body.material.color.set(f.color); M.body.material.roughness = f.roughness; M.body.material.clearcoat = f.clearcoat;
     if (M.shoes) M.shoes.material.userData.uSock.value.set(f.color);
@@ -515,7 +520,12 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = uSock;`);
       if (botMesh === 'skirt' && !T.tuck) U.uCutH.value = Math.max(U.uCutH.value, A.info.skirt.hi - .07);
       U.uSh.value.set(inf.hi - .06, inf.hi - .2);
       U.uRaw.value = T.rawHem ? 1 : 0;
-      const sb = T.sleeve <= cc.SLEEVELESS ? 0.02 : clamp((T.sleeve - B.st0[1]) / (wristY - B.st0[1]), 0.02, 2), adj = T.sleeveAdj || [0, 0];
+      const sp = v => (v - B.st0[1]) / (wristY - B.st0[1]), v0 = (cc.DEF[T.kind] || T).sleeve, vMax = cc.LIMIT['top.sleeve'][1];
+      let sb = T.sleeve <= cc.SLEEVELESS ? 0.02 : clamp(sp(T.sleeve), 0.02, 2);
+      if (inf.smax0 < inf.smax - .05) {   // this top has sleeve fabric added below its own cuff (the T-shirt)
+        sb = T.sleeve <= v0 ? Math.min(sb, inf.smax0) : inf.smax0 + (sp(T.sleeve) - sp(v0)) / Math.max(1e-3, sp(vMax) - sp(v0)) * (inf.smax - inf.smax0);
+      }
+      const adj = T.sleeveAdj || [0, 0];
       U.uSleeveCut.value.set(clamp(sb + adj[0], .02, 2), clamp(sb + adj[1], .02, 2));
       U.uRawS.value = T.rawSleeve ? 1 : 0;
       U.uTuckH.value = T.tuck && botMesh ? A.info[botMesh].hi - .025 : -1;   // tucked: ends just inside the waistband (jeans or skirt)
@@ -524,6 +534,7 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = uSock;`);
       const nf = neckCurve(T, topMesh, 'F'), nb = neckCurve(T, topMesh, 'B');
       nf.forEach((q, i) => U.uNeckF.value[i].set(q[0], q[1])); nb.forEach((q, i) => U.uNeckB.value[i].set(q[0], q[1]));
       U.uNeckOn.value = 1;
+      U.uHoodOff.value = T.hoodOff ? 1 : 0;
       // worn out (not tucked) over trousers or a skirt: the part below their waistband sits outside them
       const loose = clamp((T.fit - 5) / 21, 0, 1), over = !T.tuck ? 1 : 0;
       // lengthened: the old hem band lets go so the added length hangs on smoothly
@@ -547,7 +558,7 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = uSock;`);
       common(U, Bt, botMesh);
       U.uCutH.value = toH(Bt.len);
       U.uRaw.value = Bt.rawHem ? 1 : 0;
-      U.uSleeveCut.value.set(2, 2); U.uRawS.value = 0; U.uTuckH.value = -1; U.uNeckOn.value = 0;
+      U.uSleeveCut.value.set(2, 2); U.uRawS.value = 0; U.uTuckH.value = -1; U.uNeckOn.value = 0; U.uHoodOff.value = 0;
       // a top worn out over the bottom covers its waistband: hide that strip (unless the top has holes or brush cuts there)
       const tc = topMesh && M[topMesh].material.userData.U, holes = T && ((T.strokes || []).length || (T.dmg3 || []).length || (T.hemOff || []).some(v => v));
       U.uUnder.value = T && !T.tuck && tc && !holes && tc.uCutH.value < inf.hi - .05 ? inf.hi - .045 : 99;
@@ -679,7 +690,7 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = uSock;`);
       uvPerM = dm > 1e-6 ? du / dm : 1;
     }
     return {
-      mesh: o.name, slot: o.name === 'tee' || o.name === 'long' ? 'top' : 'bottom', rest: [ip(P, 0), ip(P, 1), ip(P, 2)],
+      mesh: o.name, slot: TOPS.has(o.name) ? 'top' : 'bottom', rest: [ip(P, 0), ip(P, 1), ip(P, 2)],
       h: g.attributes._h ? ip(g.attributes._h) : 0, s: g.attributes._s ? ip(g.attributes._s) : 0, point: h.point, uv: uv1 ? [ip(uv1, 0), ip(uv1, 1)] : null, uvPerM,
     };
   }
@@ -696,9 +707,9 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = uSock;`);
 
   /* ---------- edit points: neckline (9 front / 9 back), hem (8 around), sleeve ends ---------- */
   function nearestVertex(mesh, test) {
-    const P = mesh.geometry.attributes.position, h = mesh.geometry.attributes._h, s = mesh.geometry.attributes._s;
+    const P = mesh.geometry.attributes.position, h = mesh.geometry.attributes._h, s = mesh.geometry.attributes._s, c = mesh.geometry.attributes._c;
     let best = -1, bd = 1e9;
-    for (let i = 0; i < P.count; i++) { const d = test(P.getX(i), P.getY(i), P.getZ(i), h.getX(i), s.getX(i)); if (d < bd) { bd = d; best = i; } }
+    for (let i = 0; i < P.count; i++) { const d = test(P.getX(i), P.getY(i), P.getZ(i), h.getX(i), s.getX(i), c ? c.getX(i) : 0); if (d < bd) { bd = d; best = i; } }
     return best;
   }
   // which garment vertex an edit point sits on, worked out again whenever its value changes
@@ -707,7 +718,7 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = uSock;`);
     if (hd.kind === 'nf' || hd.kind === 'nb') {
       const c = neckCtrl(T, meshOf('top', T), hd.side)[hd.i];
       hd.pt = c;
-      hd.vi = nearestVertex(mesh, (vx, vy, vz, vh, vs) => vs > .02 || (hd.side === 'F' ? vz < 0 : vz > 0) ? 1e9 : (vx - c[0]) ** 2 + (vy - c[1]) ** 2);
+      hd.vi = nearestVertex(mesh, (vx, vy, vz, vh, vs, vc) => vs > .02 || vc > .5 || (hd.side === 'F' ? vz < 0 : vz > 0) ? 1e9 : (vx - c[0]) ** 2 + (vy - c[1]) ** 2);
     } else if (hd.kind === 'hem') {
       const g = st[hd.slot], id = mesh.name, U = mesh.material.userData.U, lc = id === 'jeans' ? legC() : 0;
       const a = hd.i / HP * TAU, ch = Math.max(U.uCutH.value, A.info[id].lo) + ((g.hemOff || [])[hd.i] || 0) * H;
