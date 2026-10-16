@@ -86,24 +86,15 @@ function start() {
   rim.position.set(2.5, 8, -9);
   scene.add(fill, rim);
 
-  // seamless paper cyclorama: floor sweeping up into the wall
+  // studio floor only (no back wall, so the view stays clear from every side); the background colour is the backdrop
   const BACK = { studio: '#e3e0da', grey: '#a8a59f', dark: '#363533' };
   const cycMat = new THREE.MeshStandardMaterial({ color: BACK.studio, roughness: 1 });
   {
-    const prof = [];
-    for (let i = 0; i <= 20; i++) prof.push([30 - i * 34 / 20, 0]);
-    for (let i = 1; i <= 24; i++) { const a = i / 24 * HALF; prof.push([-4 - 6 * Math.sin(a), 6 - 6 * Math.cos(a)]); }
-    for (let i = 1; i <= 8; i++) prof.push([-10, 6 + i * 4]);
-    const W = 90, pos = [], idx = [];
-    prof.forEach(([z, y]) => { pos.push(-W / 2, y - 0.07, z, W / 2, y - 0.07, z); });
-    for (let i = 0; i < prof.length - 1; i++) { const a = i * 2; idx.push(a, a + 2, a + 1, a + 1, a + 2, a + 3); }
-    const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-    g.setIndex(idx);
-    g.computeVertexNormals();
-    const cyc = new THREE.Mesh(g, cycMat);
-    cyc.receiveShadow = true;
-    scene.add(cyc);
+    const floor = new THREE.Mesh(new THREE.CircleGeometry(60, 96), cycMat);
+    floor.rotation.x = -HALF;
+    floor.position.y = -0.07;
+    floor.receiveShadow = true;
+    scene.add(floor);
   }
   // smoked-glass base plate
   const plate = new THREE.Mesh(new THREE.CylinderGeometry(0.62, 0.64, 0.07, 72),
@@ -725,6 +716,7 @@ function start() {
       const col = BACK[backKey] || BACK.studio;
       cycMat.color.set(col);
       scene.background = new THREE.Color(col);
+      scene.fog = new THREE.Fog(col, 26, 58);
       wrap.style.background = col;
     }
     const mk = [pr.body, pr.pose, pr.finish].join('|');
