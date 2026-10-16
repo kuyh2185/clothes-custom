@@ -36,8 +36,9 @@ const BODIES = {
     Y: { neck: 122, armpit: 198, bust: 212, waist: 272, hip: 350, crotch: 394, knee: 570, ankle: 722 },
     chest: 53, neckHalf: 14.5, st0: [137.5, 147], strapX: 152, sx: 150, rise: 24, hand: 1,
     torso: [[146, 63], [170, 57], [198, 52], [212, 52], [240, 47], [272, 42], [300, 47], [330, 54], [350, 58], [375, 58], [394, 57], [520, 57]],
-    armO: [[146, 137], [160, 131], [180, 129], [205, 129], [240, 127], [268, 124], [290, 123], [330, 120], [365, 117], [392, 115]],
-    armI: [[200, 149], [215, 148], [240, 147], [268, 146], [300, 144], [330, 140], [360, 136], [392, 133]],
+    elbow: 282,
+    armO: [[146, 137], [157, 131.5], [172, 128.3], [195, 127.4], [230, 126.6], [262, 125.4], [282, 124.8], [302, 124.6], [332, 124.4], [364, 123.6], [394, 123.6]],
+    armI: [[200, 149], [226, 150], [252, 149.8], [272, 148.4], [284, 147.2], [300, 148], [326, 146.6], [356, 143.6], [394, 139.6]],
     shoulder: [[-190, 118], [-185, 120], [-176, 127], [-160, 133], [-146, 139], [-137, 147], [-125, 156]],
     legO: [[394, 143], [430, 145], [480, 150], [530, 155], [565, 159], [595, 160], [630, 160.5], [670, 164], [705, 169.5], [722, 172]],
     legI: [[394, 200], [410, 198], [450, 195], [500, 193], [540, 192.5], [570, 192], [590, 191], [620, 191.5], [660, 190.5], [700, 189.5], [722, 190]],
@@ -49,8 +50,9 @@ const BODIES = {
     Y: { neck: 120, armpit: 202, bust: 216, waist: 282, hip: 352, crotch: 396, knee: 572, ankle: 722 },
     chest: 58, neckHalf: 18, st0: [121, 150], strapX: 146, sx: 140, rise: 18, hand: 1.12,
     torso: [[150, 79], [172, 71], [202, 59], [216, 59], [245, 55.5], [282, 51], [312, 53], [338, 56], [352, 57], [378, 56.5], [396, 56], [520, 56]],
-    armO: [[150, 121], [165, 115], [185, 113], [205, 113.5], [240, 113], [270, 111.5], [292, 111], [330, 109], [365, 106], [396, 104]],
-    armI: [[204, 142], [220, 141.5], [240, 140.5], [270, 139], [300, 136.5], [330, 132], [362, 127], [396, 123]],
+    elbow: 290,
+    armO: [[150, 121], [162, 114.6], [180, 111.4], [205, 110.4], [240, 109.6], [270, 109], [290, 108.6], [310, 109], [340, 109.6], [370, 110.2], [396, 111]],
+    armI: [[204, 142], [230, 141.6], [256, 141], [278, 139.6], [290, 137.8], [308, 139], [336, 137.4], [366, 134], [396, 131]],
     shoulder: [[-182, 112], [-176, 118], [-164, 126], [-148, 133], [-134, 140], [-126, 145], [-121, 150], [-110, 160]],
     legO: [[396, 145], [430, 146], [480, 150], [530, 155], [565, 158.5], [595, 159], [630, 160], [670, 163], [705, 168], [722, 170]],
     legI: [[396, 200], [410, 198.5], [450, 196], [500, 194], [540, 193], [572, 192.5], [590, 192], [620, 192], [660, 191], [700, 190.5], [722, 191]],
@@ -79,9 +81,9 @@ const legMid = y => (table(LEG_O, y) + table(LEG_I, y)) / 2;
    together and the clothes keep fitting. Angles are in screen degrees (positive = clockwise); legs [thigh, shin,
    foot drop], arms [upper arm, forearm, hand]. Weight leg = the left one on screen. */
 const POSES = {
-  relaxed: { name: '편하게', pelvis: 5, pShift: -9, chest: -3.5, cShift: -2.5, head: 2.5, legL: [-5.5, 0, 0], legR: [-4.5, -11, 4], armL: [4, 3, 0], armR: [-5, 11, 4] },
+  relaxed: { name: '편하게', pelvis: 5, pShift: -9, chest: -3.5, cShift: -2.5, head: 2.5, legL: [-5.5, 0, 0], legR: [-4.5, -11, 4], armL: [2.5, -1.5, 0], armR: [-1.5, 3.5, 3] },
   // hand on hip: elbow out at the waist, wrist resting on the hip bone (solved per body so the hand lands there)
-  hip: { name: '한 손 허리', pelvis: 5, pShift: -9, chest: -3.5, cShift: -2.5, head: -2, legL: [-5.5, 0, 0], legR: [-4.5, -11, 4], armL: [3, 4, 0], armR: { f: [-40, 87, -30], m: [-34, 85, -32] } },
+  hip: { name: '한 손 허리', pelvis: 5, pShift: -9, chest: -3.5, cShift: -2.5, head: -2, legL: [-5.5, 0, 0], legR: [-4.5, -11, 4], armL: [3, 4, 0], armR: { f: [-37.5, 87, -31], m: [-29.5, 80, -32] } },
   stand: { name: '차렷' },
 };
 const mulM = (m, n) => [m[0] * n[0] + m[2] * n[1], m[1] * n[0] + m[3] * n[1], m[0] * n[2] + m[2] * n[3], m[1] * n[2] + m[3] * n[3], m[0] * n[4] + m[2] * n[5] + m[4], m[1] * n[4] + m[3] * n[5] + m[5]];
@@ -92,7 +94,7 @@ const sstep = (a, b, v) => { const t = clamp((v - a) / (b - a), 0, 1); return t 
 let BONES = null, CTX = 'body', MIR = false, POSE_OFF = false, ELBOW = 270, WRIST = 392;
 function computePose(id) {
   const P = POSES[id] || POSES.relaxed;
-  ELBOW = Y.waist - 2; WRIST = ARM_O[ARM_O.length - 1][0];
+  ELBOW = BODY.elbow; WRIST = ARM_O[ARM_O.length - 1][0];
   if (!P.pelvis) { BONES = null; return; }
   const B = {};
   B.pelvis = mulM(trM(P.pShift, 0), rotAt(P.pelvis, [CX, Y.hip]));
@@ -122,7 +124,8 @@ function bonesAt(x, y, ctx) {
     return [[1 - u, B.chest], [u * (1 - f), B['uarm' + sd]], [u * f * (1 - h), B['farm' + sd]], [u * f * h, B['hand' + sd]]];
   }
   const hd = 1 - sstep(Y.neck - 20, Y.neck - 4, y), c = 1 - sstep(Y.waist - 24, Y.waist + 36, y);
-  let l = sstep(Y.crotch - 34, Y.crotch + 20, y) * clamp(Math.abs(x - CX) / 8, 0, 1), k = sstep(Y.knee - 34, Y.knee + 26, y);
+  // right at the crotch the centre line belongs to the pelvis; lower down every point belongs to its leg
+  let l = sstep(Y.crotch - 34, Y.crotch + 20, y) * clamp(Math.abs(x - CX) / 8 + sstep(Y.crotch + 8, Y.crotch + 50, y), 0, 1), k = sstep(Y.knee - 34, Y.knee + 26, y);
   if (ctx === 'skirt') { l *= .45; k = 0; }
   const r = (1 - hd) * (1 - c);
   return [[hd, B.head], [(1 - hd) * c, B.chest], [r * (1 - l), B.pelvis], [r * l * (1 - k), B['thigh' + sd]], [r * l * k, B['shin' + sd]]];
@@ -477,10 +480,10 @@ function drawMannequin() {
   const head = symD([CX, BODY.head[0][1]], crSegs(BODY.head));
   // arm: deltoid → elbow → wrist, a relaxed hand against the thigh, back up the inside
   const wo = [ARM_O[ARM_O.length - 1][1], ARM_O[ARM_O.length - 1][0]], wi = ARM_I[ARM_I.length - 1][1];
-  const hs = BODY.hand, hw = (wi - wo[0]) / 18, hp = ([dx, dy]) => [wo[0] + dx * hw, wo[1] + dy * hs];
-  const HAND = [[[-2, 13], [-5, 29], [-4, 44]], [[-3, 55], [1, 63], [6, 63]], [[11, 63], [14, 55], [15, 45]], [[17, 29], [18, 12], [18, 0]]];
+  const hs = BODY.hand, hw = (wi - wo[0]) / 16, hp = ([dx, dy]) => [wo[0] + dx * hw, wo[1] + dy * hs];
+  const HAND = [[0, 0], [-2.2, 12], [-3.4, 26], [-2.6, 40], [0, 50], [4.4, 57], [9.6, 59], [14, 55.5], [16.6, 47], [17.8, 37], [19.6, 29], [20.6, 20], [19, 9], [16, 0]];
   const ai0 = [ARM_I[0][1], ARM_I[0][0]], ao0 = [ARM_O[0][1], ARM_O[0][0]];
-  const armSegs = [...crSegs(xy(ARM_O)), ...HAND.map(([a, b, p]) => ({ t: 'C', a: hp(a), b: hp(b), p: hp(p) })), ...crSegs(xy(ARM_I).reverse())];
+  const armSegs = [...crSegs(xy(ARM_O)), ...crSegs(HAND.map(hp)).slice(0), ...crSegs(xy(ARM_I).reverse())];
   const armClose = [...armSegs, { t: 'C', a: [ai0[0] + 3, ai0[1] - 18], b: [ao0[0] + 10, ao0[1] + 7], p: ao0 }];
   const [armL, armR, edgeL, edgeR] = inCtx('arm', () => [pathD(ao0, armClose), pathD(mir(ao0), armClose.map(mirSeg)), pathD(ao0, armSegs, false), pathD(mir(ao0), armSegs.map(mirSeg), false)]);
   const part = (id, d) => `<clipPath id="mc-${id}"><path d="${d}"/></clipPath><g clip-path="url(#mc-${id})"><path d="${d}" fill="${F.base}"/>${rim(d, F.k, F.hi, F.rim)}</g>`;
@@ -499,7 +502,9 @@ function drawMannequin() {
   L('man').innerHTML = plate + part('torso', torso) + part('head', head) + details +
     `<g fill="none" stroke="${F.line}" stroke-width="1.1" stroke-opacity=".55"><path d="${torso}"/><path d="${head}"/></g>`;
   // shoulder and wrist joints, as on a display mannequin's detachable arms
-  const armJoint = m => `<path d="M${pt(m([armO(sY) + 1, sY]))}Q${pt(m([(armO(sY) + ai0[0]) / 2, sY + 5]))} ${pt(m(ai0))}" ${seam}/>` +
+  const handLines = m => `<path d="M${pt(m(hp([18.6, 8])))}C${pt(m(hp([12, 18])))} ${pt(m(hp([11, 30])))} ${pt(m(hp([15.6, 38])))}M${pt(m(hp([3, 47])))}Q${pt(m(hp([7, 51])))} ${pt(m(hp([11.5, 50])))}" ${seam}/>` +
+    `<path d="M${pt(m([armI(BODY.elbow) - 4, BODY.elbow - 3]))}Q${pt(m([armI(BODY.elbow) - 7, BODY.elbow - 1]))} ${pt(m([armI(BODY.elbow) - 10, BODY.elbow - 2]))}" ${seam} stroke-opacity=".4"/>`;
+  const armJoint = m => handLines(m) + `<path d="M${pt(m([armO(sY) + 1, sY]))}Q${pt(m([(armO(sY) + ai0[0]) / 2, sY + 5]))} ${pt(m(ai0))}" ${seam}/>` +
     `<path d="M${pt(m([armO(rY) + .5, rY]))}Q${pt(m([(armO(rY) + armI(rY)) / 2, rY + 3]))} ${pt(m([armI(rY) - .5, rY]))}" ${seam}/>`;
   const edge = `fill="none" stroke="${F.line}" stroke-width="1.1" stroke-opacity=".7"`;
   L('arms').innerHTML = part('arml', armL) + part('armr', armR) + inCtx('arm', () => armJoint(p => p) + armJoint(mir)) +
