@@ -398,7 +398,7 @@ let images = {};
 const blobUrls = {};
 // look of the studio, kept apart from the undo history
 const PREFS = 'clothes-custom:prefs';
-let prefs = { body: 'f', pose: 'relaxed', finish: 'white', backdrop: 'studio', guides: true };
+let prefs = { body: 'f', pose: 'relaxed', finish: 'black', backdrop: 'studio', guides: true };   // black: light clothes show up on it
 try {
   const s = JSON.parse(localStorage.getItem(STORE) || 'null');
   if (s) { state.top = upgrade(s.top ?? null); state.bottom = upgrade(s.bottom ?? null); images = s.images || {}; }
@@ -1139,7 +1139,13 @@ $('#toolbar').addEventListener('click', e => { const b = e.target.closest('[data
 function setTool(id) {
   tool = id; hover = null; svg.dataset.tool = id; svg.style.cursor = '';
   document.querySelectorAll('.tool').forEach(b => b.setAttribute('aria-pressed', b.dataset.tool === id));
-  const h3 = { neck: '모양 버튼과 막대로 넥라인을 바꿔요 · 끌면 회전', fit: '막대와 빠른 버튼으로 핏을 바꿔요 · 끌면 회전' };
+  const h3 = {
+    neck: '목선 점을 끌어 모양을 그려요 · 뒤에서 보면 뒷목선 · 빈 곳을 끌면 회전',
+    cut: '밑단·소매 끝 점을 끌거나 브러시로 잘라요 · 빈 곳을 끌면 회전',
+    dmg: '옷을 누를수록 워싱 → 해짐 → 찢어짐 · 빈 곳을 끌면 회전',
+    fit: '막대와 빠른 버튼으로 핏을 바꿔요 · 끌면 회전',
+    color: '색·무늬를 고르거나 브러시로 옷에 직접 칠해요 · 빈 곳을 끌면 회전',
+  };
   $('#foot-hint').innerHTML = `<b>${TOOLS.find(t => t[0] === id)[1]}</b>${(is3d() && h3[id]) || TOOL_HINT[id]}`;
   renderPanel(); renderOverlay();
 }

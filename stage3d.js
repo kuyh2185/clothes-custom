@@ -514,11 +514,14 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = vec3(0.88);`);
       nf.forEach((q, i) => U.uNeckF.value[i].set(q[0], q[1])); nb.forEach((q, i) => U.uNeckB.value[i].set(q[0], q[1]));
       U.uNeckOn.value = 1;
       // worn out (not tucked) over trousers or a skirt: the part below their waistband sits outside them
-      const loose = clamp((T.fit - 5) / 21, 0, 1), over = !T.tuck ? 1 - loose * .6 : 0;
+      const loose = clamp((T.fit - 5) / 21, 0, 1), over = !T.tuck ? 1 : 0;
       // lengthened: the old hem band lets go so the added length hangs on smoothly
       const ext = clamp((inf.lo0 - U.uCutH.value) / .03, 0, 1);
-      const oj = botMesh === 'jeans' ? over : 0, ej = Math.min(ext, oj);   // both at once has its own baked shape
-      morph(M[topMesh], { slim: clamp((5 - T.fit) / 7, 0, 1), loose, ext: ext - ej, ext_jeans: ej, over_jeans: oj - ej, over_skirt: botMesh === 'skirt' ? over : 0 });
+      // over jeans, oversized and lengthened each have a shape baked together with "over jeans":
+      // use those and take "over jeans" itself out as many extra times as it was counted (it can go negative)
+      const oj = botMesh === 'jeans' ? over : 0;
+      morph(M[topMesh], oj ? { slim: clamp((5 - T.fit) / 7, 0, 1), loose_jeans: loose, ext_jeans: ext, over_jeans: 1 - loose - ext }
+        : { slim: clamp((5 - T.fit) / 7, 0, 1), loose, ext, over_skirt: botMesh === 'skirt' ? over : 0 });
       U.uFit.value.set(clamp((T.fit - 26) * k * .5, 0, .04), clamp((T.sfit - 2) * k * .4, -.002, .03), Math.max(0, T.flare) * .05, 0);
       U.uFitH.value.set(toH(Y.waist), 0, 0, 0);
       U.uHem.value.set(Math.abs(U.uCutH.value - inf.lo0) > .01 || (T.hemOff || []).some(v => v) ? 1 : 0, Math.min(U.uSleeveCut.value.x, U.uSleeveCut.value.y) < inf.smax - .03 ? 1 : 0);
@@ -589,7 +592,8 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = vec3(0.88);`);
     camera.updateProjectionMatrix();
     const H = A ? A.H : 1.8, t = Math.tan(camera.fov * PI / 360);
     controls.target.set(0, H * 0.5, 0);
-    const d = Math.max((H * 0.5 + 0.28) / t, 0.55 / (t * camera.aspect));
+    const pad = w < 700 ? 0.5 : 0.28;   // phones: room for the bars above and below the mannequin
+    const d = Math.max((H * 0.5 + pad) / t, 0.55 / (t * camera.aspect));
     const dir = camera.position.clone().sub(controls.target).setY(0);
     if (dir.length() < .5) dir.set(0, 0, 1);
     dir.normalize();

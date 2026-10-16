@@ -175,13 +175,8 @@ def apply_first(ob, m):
 EXT, RINGS = 0.22, 9   # extra fabric below a top's own hem, so "longer" really gets longer
 
 
-def extend_hem(ob):
-    """Continue the body panel's hem straight down (rings of quads), texture continuing, weights copied from the hem,
-    then pushed just outside the body where the hips/thighs are in the way. Returns the new vertex indices."""
-    bm = bmesh.new()
-    bm.from_mesh(ob.data)
-    bm.verts.ensure_lookup_table()
-    uvl = bm.loops.layers.uv.active
+def torso_hem(bm):
+    """Boundary edges of the hem going round the torso (centred on x = 0, lowest; sleeve cuffs are off to the sides)."""
     bound = [e for e in bm.edges if e.is_boundary]
     adj = {}
     for e in bound:
@@ -202,12 +197,47 @@ def extend_hem(ob):
                         seen.add(y)
                         stack.append(y)
         loops.append(comp)
-    # the hem goes round the torso: centred on x = 0, lowest such loop (sleeve cuffs are off to the sides)
     def centre(c):
         vs = {v for e in c for v in e.verts}
         return sum(v.co.x for v in vs) / len(vs), sum(v.co.z for v in vs) / len(vs), max(v.co.x for v in vs) - min(v.co.x for v in vs)
     torso = [c for c in loops if abs(centre(c)[0]) < 0.04 and centre(c)[2] > 0.2]
-    hem = min(torso, key=lambda c: centre(c)[1])
+    return min(torso, key=lambda c: centre(c)[1])
+
+
+def trim_rib(ob, dense=0.012):
+    """A knitted rib hem is many rows packed into ~1 cm; the cloth sim and the stripes stretch it into a band.
+    Drop those packed rows (only when there are several), so the hem is ordinary fabric that the added length continues."""
+    bm = bmesh.new()
+    bm.from_mesh(ob.data)
+    hem = torso_hem(bm)
+    ring = {v: 0 for e in hem for v in e.verts}
+    cur, rings = list(ring), [list(ring)]
+    for k in range(1, 30):
+        nxt = {o for v in cur for e in v.link_edges for o in [e.other_vert(v)] if o not in ring}
+        if not nxt:
+            break
+        for v in nxt:
+            ring[v] = k
+        cur = list(nxt)
+        rings.append(cur)
+    z0 = sum(v.co.z for v in rings[0]) / len(rings[0])
+    R = next((k for k, r in enumerate(rings) if sum(v.co.z for v in r) / len(r) > z0 + dense), 0)
+    if R >= 3:
+        bmesh.ops.delete(bm, geom=[v for r in rings[:R] for v in r], context="VERTS")
+        bm.to_mesh(ob.data)
+        print("TRIM", ob.name, R, "rows")
+    bm.free()
+
+
+def extend_hem(ob):
+    """Continue the body panel's hem straight down (rings of quads), texture continuing, weights copied from the hem,
+    then pushed just outside the body where the hips/thighs are in the way. Returns the new vertex indices."""
+    trim_rib(ob)
+    bm = bmesh.new()
+    bm.from_mesh(ob.data)
+    bm.verts.ensure_lookup_table()
+    uvl = bm.loops.layers.uv.active
+    hem = torso_hem(bm)
     ring0 = list({v for e in hem for v in e.verts})
     hem_faces = list({f for e in hem for f in e.link_faces})
     cx = sum(v.co.x for v in ring0) / len(ring0)
@@ -323,6 +353,10 @@ for gid, (ob, name) in garments.items():
             bpy.context.view_layer.objects.active = ob
             bpy.ops.object.modifier_apply(modifier=m.name)
     ext = extend_hem(ob) if gid in ("tee", "long") else set()
+    if gid in ("tee", "long"):   # nothing of the top inside the body (the bust showed through the knit)
+        m = ob.modifiers.new("clear_body", "SHRINKWRAP")
+        m.target, m.wrap_method, m.wrap_mode, m.offset = body, "NEAREST_SURFACEPOINT", "OUTSIDE", 0.004
+        apply_first(ob, m)
     EXTENDED[gid] = ext
     ah = mesh.attributes.new("_h", "FLOAT", "POINT")
     asl = mesh.attributes.new("_s", "FLOAT", "POINT")
@@ -433,7 +467,7 @@ def bake_cloth(ob, offset, pin, frames=40, bend=0.5, mass=0.22):
     return out
 
 
-def bake_over(ob, target, lift=0.11, start=None):
+def bake_over(ob, target, lift=0.16, start=None):
     ttop = max(v.co.z for v in target.data.vertices)
     orig = [v.co.copy() for v in ob.data.vertices]
     if start:   # start from another shape (a lengthened top) instead of the basis
@@ -458,13 +492,13 @@ def bake_over(ob, target, lift=0.11, start=None):
         nb[j].append(i)
     d0 = [o - b for o, b in zip(out, base)]
     d = d0[:]
-    for _ in range(20):
+    for _ in range(160):   # long diffusion: the top rises over a wide waistband gradually, from well above it
         d = [sum((d[j] for j in nb[i]), d[i]) / (len(nb[i]) + 1) for i in range(len(d))]
         d = [x if x.length >= y.length else y for x, y in zip(d, d0)]
     return [b + x for b, x in zip(base, d)]
 
 
-def bake_relax(ob, ext, band=0.10):
+def bake_relax(ob, ext, band=0.14):
     """A lengthened top: the old hem band (often a tight rib) lets go, so the fabric hangs on smoothly into the added
     length instead of stepping out below the old hem. Smooths ~10 cm above the old hem plus the added part."""
     import heapq
@@ -518,6 +552,20 @@ def bake_relax(ob, ext, band=0.10):
     return [b.lerp(c, w.get(i, 0.0)) for i, (b, c) in enumerate(zip(base, out))]
 
 
+def smooth_delta(ob, base, out, weight, iters=14):
+    """Keep a simulated shape's drape but iron out its small crumples (tight rib rows fold up in the cloth sim)."""
+    nb = [[] for _ in base]
+    for e in ob.data.edges:
+        i, j = e.vertices
+        nb[i].append(j)
+        nb[j].append(i)
+    d = [o - b for o, b in zip(out, base)]
+    w = [weight(b) for b in base]
+    for _ in range(iters):
+        d = [d[i].lerp(sum((d[j] for j in nb[i]), d[i] * 0) / len(nb[i]), 0.6 * w[i]) if nb[i] else d[i] for i in range(len(d))]
+    return [b + x for b, x in zip(base, d)]
+
+
 def add_keys(ob, keys):
     ob.shape_key_add(name="Basis", from_mix=False)
     for name, coords in keys.items():
@@ -543,13 +591,16 @@ for gid, (ob, name) in garments.items():
         keys["slim"] = bake_shrink(ob, 0.8)
         # the shoulders stay on the body (pinned where they are); the extra room starts at the chest and grows down,
         # so an oversized top hangs from the shoulders instead of floating above them
-        keys["loose"] = bake_cloth(ob, lambda b: lerp(0.03 * sstep(top - 0.08, top - 0.24, b.z) + 0.012 * sstep(top - 0.3, bot, b.z), 0.009, aw(b)),
-                                   lambda b: max(sstep(top - 0.12, top - 0.05, b.z), 0.92 * aw(b)), bend=0.4)
+        loose = bake_cloth(ob, lambda b: lerp(0.03 * sstep(top - 0.08, top - 0.24, b.z) + 0.012 * sstep(top - 0.3, bot, b.z), 0.009, aw(b)),
+                           lambda b: max(sstep(top - 0.12, top - 0.05, b.z), 0.92 * aw(b)), bend=0.4)
+        base = [v.co.copy() for v in ob.data.vertices]
+        keys["loose"] = smooth_delta(ob, base, loose, lambda b: lerp(sstep(top - 0.2, top - 0.42, b.z), 0.25, aw(b)))
         # worn out over the trousers / skirt: everything below their waistband goes just outside them
         for low in ("jeans", "skirt"):
             keys["over_" + low] = bake_over(ob, garments[low][0])
         keys["ext"] = bake_relax(ob, EXTENDED[gid])
         keys["ext_jeans"] = bake_over(ob, garments["jeans"][0], start=keys["ext"])   # lengthened and worn out over jeans
+        keys["loose_jeans"] = bake_over(ob, garments["jeans"][0], start=keys["loose"])   # oversized and worn out over jeans
     elif gid == "jeans":
         keys["slim"] = bake_shrink(ob, 0.85, lambda z: sstep(L_CROTCH, L_CROTCH - 0.12, z))
         keys["wide"] = bake_cloth(ob, lambda b: 0.004 + 0.034 * sstep(L_CROTCH - 0.05, L_ANKLE, b.z),
