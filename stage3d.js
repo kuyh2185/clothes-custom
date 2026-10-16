@@ -18,7 +18,8 @@ const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const lerp = (a, b, t) => a + (b - a) * t;
 const VER = 11;   // bump with the assets
 const GARMENTS = ['tee', 'long', 'jeans', 'skirt'];
-const NP = 17, NO = 17, NC = 5, HP = 8, MAXD = 16;   // neckline: shader samples / garment outline samples / handles per side
+const NP = 17, NO = 17, NC = 5, HP = 8, MAXD = 16;
+const HANDS = [new THREE.Vector4(), new THREE.Vector4()];   // hand centres (xyz) + radius (w), in the garments' bind space   // neckline: shader samples / garment outline samples / handles per side
 
 let renderer = null;
 try { renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true }); } catch (e) { console.warn('고쳐 입기: WebGL 없음, 2D로 그려요', e); }
@@ -170,7 +171,7 @@ function start() {
       uCutH: { value: -1 }, uSleeveCut: { value: new THREE.Vector2(2, 2) }, uRaw: { value: 0 }, uRawS: { value: 0 }, uTuckH: { value: -1 },
       uHemOff: { value: new Array(HP).fill(0) }, uHemLeg: { value: 0 },
       uNeckF: { value: Array.from({ length: NP }, () => new THREE.Vector2()) }, uNeckB: { value: Array.from({ length: NP }, () => new THREE.Vector2()) }, uNeckOn: { value: 0 },
-      uFit: { value: new THREE.Vector4() }, uFitH: { value: new THREE.Vector4() }, uSh: { value: new THREE.Vector2(9, 10) },
+      uFit: { value: new THREE.Vector4() }, uFitH: { value: new THREE.Vector4() }, uSh: { value: new THREE.Vector2(9, 10) }, uHand: { value: HANDS }, uHandOn: { value: 0 },
       uDmg: { value: Array.from({ length: MAXD }, () => new THREE.Vector4()) }, uDmgN: { value: 0 },
       uPrint: { value: null }, uPrintOn: { value: 0 }, uPrintBox: { value: new THREE.Vector4() },
       uHover: { value: -10 }, uBand: { value: new THREE.Vector3() }, uHem: { value: new THREE.Vector2() }, uUnder: { value: 99 },
@@ -192,7 +193,13 @@ attribute float _h; attribute float _s;
 attribute vec2 uv1;
 #endif
 varying vec3 vRest; varying float vH; varying float vS; varying vec2 vB;
-uniform vec4 uFit; uniform vec4 uFitH; uniform vec2 uSh;`)
+uniform vec4 uFit; uniform vec4 uFitH; uniform vec2 uSh; uniform vec4 uHand[2]; uniform float uHandOn;`)
+        .replace('#include <skinning_vertex>', `#include <skinning_vertex>
+// a hand never goes into the cloth: whatever is inside its sphere is pushed out round it
+if (uHandOn > 0.5) for (int i = 0; i < 2; i++) {
+  vec3 d = transformed - uHand[i].xyz; float r = length(d);
+  if (uHand[i].w > 0.0 && r < uHand[i].w) transformed = uHand[i].xyz + d / max(r, 1e-4) * uHand[i].w;
+}`)
         .replace('#include <begin_vertex>', `#include <begin_vertex>
 vRest = position; vH = _h; vS = _s; vB = uv1;
 float off = (vS > 0.01 ? uFit.y : uFit.x * (1.0 - smoothstep(uSh.y, uSh.x, _h)));   // no push at the shoulders: a big top hangs from them
@@ -511,7 +518,8 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = uSock;`);
       const sb = T.sleeve <= cc.SLEEVELESS ? 0.02 : clamp((T.sleeve - B.st0[1]) / (wristY - B.st0[1]), 0.02, 2), adj = T.sleeveAdj || [0, 0];
       U.uSleeveCut.value.set(clamp(sb + adj[0], .02, 2), clamp(sb + adj[1], .02, 2));
       U.uRawS.value = T.rawSleeve ? 1 : 0;
-      U.uTuckH.value = T.tuck && botMesh === 'jeans' ? A.info.jeans.hi - .025 : -1;   // tucked: ends just inside the waistband
+      U.uTuckH.value = T.tuck && botMesh ? A.info[botMesh].hi - .025 : -1;   // tucked: ends just inside the waistband (jeans or skirt)
+      U.uHandOn.value = 1;
       U.uHemLeg.value = 0;
       const nf = neckCurve(T, topMesh, 'F'), nb = neckCurve(T, topMesh, 'B');
       nf.forEach((q, i) => U.uNeckF.value[i].set(q[0], q[1])); nb.forEach((q, i) => U.uNeckB.value[i].set(q[0], q[1]));
@@ -538,7 +546,8 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = uSock;`);
       U.uSleeveCut.value.set(2, 2); U.uRawS.value = 0; U.uTuckH.value = -1; U.uNeckOn.value = 0;
       // a top worn out over the bottom covers its waistband: hide that strip (unless the top has holes or brush cuts there)
       const tc = topMesh && M[topMesh].material.userData.U, holes = T && ((T.strokes || []).length || (T.dmg3 || []).length || (T.hemOff || []).some(v => v));
-      U.uUnder.value = T && !T.tuck && tc && !holes && tc.uCutH.value < inf.hi - .1 ? inf.hi - .045 : 99;
+      U.uUnder.value = T && !T.tuck && tc && !holes && tc.uCutH.value < inf.hi - .05 ? inf.hi - .045 : 99;
+      U.uHandOn.value = botMesh === 'skirt' ? 1 : 0;
       U.uHemLeg.value = botMesh === 'jeans' ? legC() : 0;
       U.uHem.value.set(U.uCutH.value > inf.lo + .01 || (Bt.hemOff || []).some(v => v) ? 1 : 0, 0);
       if (botMesh === 'jeans') {
@@ -609,10 +618,25 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = uSock;`);
   }
   new ResizeObserver(fit).observe(wrap);
   fit();
+  // hand centres for the cloth shaders: a bit past the wrist along the forearm
+  const hW = new THREE.Vector3(), aW = new THREE.Vector3();
+  function updateHands() {
+    if (!A) return;
+    A.root.updateMatrixWorld(true);
+    const ref = A.meshes.tee || A.meshes.skirt;
+    ['l', 'r'].forEach((s, i) => {
+      const hand = A.root.getObjectByName('hand_' + s), arm = A.root.getObjectByName('lowerarm_' + s);
+      if (!hand || !arm || !ref) { HANDS[i].w = 0; return; }
+      hand.getWorldPosition(hW); arm.getWorldPosition(aW);
+      hW.addScaledVector(hW.clone().sub(aW).normalize(), 0.06 * A.H / 1.77);
+      hW.applyMatrix4(ref.bindMatrixInverse);
+      HANDS[i].set(hW.x, hW.y, hW.z, 0.05 * A.H / 1.77);
+    });
+  }
   (function frame() {
     requestAnimationFrame(frame);
     if (dirty) { dirty = false; rebuild(); needs = true; }
-    if (controls.update() || needs) { needs = false; renderer.render(scene, camera); placeHandles(); }
+    if (controls.update() || needs) { needs = false; updateHands(); renderer.render(scene, camera); placeHandles(); }
   })();
   controls.addEventListener('change', () => { needs = true; });
 
