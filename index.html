@@ -128,6 +128,8 @@ kbd{font-family:var(--mono);font-size:10px;color:var(--muted);border:1px solid v
 .h3d-guide{position:absolute;inset:0;width:100%;height:100%;overflow:visible}
 .h3d{position:absolute;left:0;top:0;width:16px;height:16px;margin:-8px 0 0 -8px;border-radius:50%;background:#fff;border:2px solid #161616;box-shadow:0 1px 4px rgba(0,0,0,.35);pointer-events:auto;cursor:grab;touch-action:none;padding:0}
 .h3d:hover,.h3d:focus-visible{background:var(--accent);border-color:#fff}
+.h3d.h3d.on{width:22px;height:22px;margin:-11px 0 0 -11px;background:var(--accent);border-color:#fff;cursor:grabbing;box-shadow:0 0 0 6px rgba(255,255,255,.35),0 2px 8px rgba(0,0,0,.4)}
+.h3d.end{border-radius:4px}
 .h3d.nb{background:#d9d6d0;border-style:dashed}
 .h3d.hem{width:14px;height:14px;margin:-7px 0 0 -7px;border-radius:3px;transform-origin:center}
 .h3d.sl{background:#ffd7c8}
@@ -333,8 +335,8 @@ input[type=range].hue::-moz-range-thumb{width:8px;height:20px;border-radius:4px;
   <span class="cur" id="foot-hint"></span>
   <span class="keys"><span><kbd>1</kbd>–<kbd>5</kbd> 도구</span><span><kbd>H</kbd> 점 숨기기</span><span><kbd>Ctrl</kbd>+<kbd>Z</kbd> 되돌리기</span></span>
 </footer>
-<script src="app.js?v=12"></script>
+<script src="app.js?v=13"></script>
 <script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"}}</script>
-<script type="module" src="stage3d.js?v=32"></script>
+<script type="module" src="stage3d.js?v=33"></script>
 </body>
 </html>

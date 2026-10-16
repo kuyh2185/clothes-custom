@@ -1223,8 +1223,9 @@ function panelHTML() {
   switch (tool) {
     case 'neck':
       if (!T) return need('상의');
-      if (is3d()) return `<p class="hint">목선 위의 <b>점 9개</b>를 끌어서 목선을 마음대로 그려요. 앞에서 보면 앞목선, <b>뒤</b>에서 보면 뒷목선 점이 나와요. 양옆 점을 끌면 어깨까지 파낼 수도 있어요.</p>
+      if (is3d()) return `<p class="hint">가운데 <b>동그란 점</b>은 깊이, 사이 점은 곡선, 양끝 <b>네모 점</b>은 넓이예요. 점을 누른 채 끌면 옷이 반투명해지고 원래 선이 점선으로 남아요. <b>뒤</b>에서 보면 뒷목선 점이 나와요.</p>
         <div class="seg2" role="group" aria-label="좌우 대칭"><button type="button" class="chip" data-ui-sym="1">좌우 대칭</button><button type="button" class="chip" data-ui-sym="0">따로따로</button></div>
+        <div class="seg2" role="group" aria-label="앞목선 모양"><button type="button" class="chip" data-neckv="0">둥글게</button><button type="button" class="chip" data-neckv="1">뾰족하게 (V)</button></div>
         <span class="label-sm">빠른 모양</span>
         <div class="chips" style="margin-bottom:14px">${Object.entries(PRESETS).map(([id, p]) => `<button type="button" class="chip" data-preset3="${id}">${p[0]}</button>`).join('')}<button type="button" class="chip" data-act="neck-reset">원래대로</button></div>`;
       return (is3d() ? `<p class="hint"><b>모양 버튼</b>을 누르거나 막대로 깊이·넓이·U↔V를 바꿔요. 마네킹을 끌면 돌려 볼 수 있어요.</p>`
@@ -1334,6 +1335,7 @@ function syncPanel() {
   }
   P.querySelectorAll('[data-cutmode]').forEach(b => b.setAttribute('aria-pressed', b.dataset.cutmode === ui.cutMode));
   P.querySelectorAll('[data-ui-sym]').forEach(b => b.setAttribute('aria-pressed', (b.dataset.uiSym === '1') === ui.neckSym));
+  P.querySelectorAll('[data-neckv]').forEach(b => b.setAttribute('aria-pressed', (b.dataset.neckv === '1') === !!(state.top && state.top.neckV)));
   P.querySelectorAll('[data-paint]').forEach(b => b.setAttribute('aria-pressed', b.dataset.paint === (ui.paintOn ? (ui.paintErase ? 'erase' : 'on') : 'off')));
   P.querySelectorAll('[data-ui]').forEach(el => el.style.setProperty('--p', ((el.value - el.min) / (el.max - el.min) * 100).toFixed(1) + '%'));
   if (state.top) P.querySelectorAll('[data-preset]').forEach(b => { const p = PRESETS[b.dataset.preset]; b.setAttribute('aria-pressed', state.top.neckD === p[1] && state.top.neckW === p[2] && state.top.neckV === p[3]); });
@@ -1413,7 +1415,8 @@ P.addEventListener('click', e => {
   if (d.paint) { ui.paintOn = d.paint !== 'off'; ui.paintErase = d.paint === 'erase'; renderPanel(); return; }
   if (d.bc) { ui.brushColor = d.bc; renderPanel(); return; }
   if (d.preset3) { if (window.__s3) window.__s3.neckPreset(d.preset3); say(PRESETS[d.preset3][0]); return; }
-  if (d.act === 'neck-reset') { state.top.neckF = state.top.neckB = null; render(); commit(); say('목선을 원래대로 돌렸어요'); return; }
+  if (d.neckv && state.top) { state.top.neckV = d.neckv === '1' ? 1 : 0; render(); commit(); syncPanel(); return; }
+  if (d.act === 'neck-reset') { state.top.neckF = state.top.neckB = null; state.top.neckV = 0; render(); commit(); say('목선을 원래대로 돌렸어요'); return; }
   if (d.act === 'hem-reset') { [state.top, state.bottom].forEach(x => { if (x) { x.hemOff = null; x.sleeveAdj = null; } }); render(); commit(); say('밑단·소매 모양을 처음으로 돌렸어요'); return; }
   if (d.act === 'cuts-clear') { [state.top, state.bottom].forEach(x => { if (x && x.strokes) x.strokes = x.strokes.filter(k => k.t === 'paint' || k.t === 'erase'); }); render(); commit(); say('붓으로 자른 곳을 되살렸어요'); return; }
   if (d.act === 'paint-clear') { const g2 = state[state.target]; if (g2 && g2.strokes) g2.strokes = g2.strokes.filter(k => k.t === 'cut' || k.t === 'keep'); render(); commit(); say('칠한 것을 지웠어요'); return; }

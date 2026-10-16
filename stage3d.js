@@ -18,7 +18,7 @@ const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const lerp = (a, b, t) => a + (b - a) * t;
 const VER = 8;   // bump with the assets
 const GARMENTS = ['tee', 'long', 'jeans', 'skirt'];
-const NP = 9, HP = 8, MAXD = 16;
+const NP = 17, NO = 17, NC = 5, HP = 8, MAXD = 16;   // neckline: shader samples / garment outline samples / handles per side
 
 let renderer = null;
 try { renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true }); } catch (e) { console.warn('고쳐 입기: WebGL 없음, 2D로 그려요', e); }
@@ -119,7 +119,7 @@ function start() {
     const g = mesh.geometry, P = g.attributes.position, h = g.attributes._h, s = g.attributes._s, n = P.count;
     let lo = 1e9, hi = -1e9, smax = 0;
     for (let i = 0; i < n; i++) { const v = h.getX(i); lo = Math.min(lo, v); hi = Math.max(hi, v); smax = Math.max(smax, s.getX(i)); }
-    const span = 0.115 * H / 1.77, xs = Array.from({ length: NP }, (_, i) => lerp(-span, span, i / (NP - 1)));
+    const span = 0.19 * H / 1.77, xs = Array.from({ length: NO }, (_, i) => lerp(-span, span, i / (NO - 1)));   // out to the shoulder seam
     const outline = sgn => xs.map(x => {
       let best = -1e9;
       for (let i = 0; i < n; i++) {
@@ -389,10 +389,65 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = vec3(0.88);`);
   const meshOf = (slot, g) => !g ? null : slot === 'top' ? (g.kind === 'long' ? 'long' : 'tee') : (g.kind === 'skirt' ? 'skirt' : 'jeans');
   const legC = () => 0.09 * A.H / 1.77;
   const r4 = v => Math.round(v * 1e4) / 1e4;
-  // neckline points for the worn top: stored (in fractions of body height) or the garment's own outline
-  function neckPts(T, id, side) {
-    const own = A.info[id][side === 'F' ? 'neckF' : 'neckB'], st = T['neck' + side];
-    return st ? st.map(([x, y]) => [x * A.H, y * A.H]) : own.map(([x, y]) => [x, y + 0.004]);
+  /* neckline: 5 points per side (two ends on the shoulder line, two in between, one in the middle).
+     The cut follows a smooth curve through them (straight lines for a V) and never rises above the garment's own edge. */
+  const NSPAN = H => 0.115 * H / 1.77;
+  function ownY(id, side, x) {
+    const o = A.info[id][side === 'F' ? 'neckF' : 'neckB'];
+    if (x <= o[0][0]) return o[0][1];
+    for (let i = 0; i < NO - 1; i++) if (x <= o[i + 1][0]) return lerp(o[i][1], o[i + 1][1], (x - o[i][0]) / (o[i + 1][0] - o[i][0]));
+    return o[NO - 1][1];
+  }
+  const edgeY = (id, side, x) => ownY(id, side, x) + 0.004;
+  function neckCtrl(T, id, side) {
+    let st = T && T['neck' + side];
+    if (st && st.length === 9) st = [0, 2, 4, 6, 8].map(i => st[i]);   // saved before the 5-point version
+    if (st && st.length === NC) return st.map(([x, y]) => [x * A.H, y * A.H]);
+    const w = NSPAN(A.H);
+    return [-w, -w / 2, 0, w / 2, w].map(x => [x, edgeY(id, side, x)]);
+  }
+  function mono(P, x) {   // monotone cubic through points sorted by x: smooth, no overshoot
+    const n = P.length, d = [], m = [];
+    for (let i = 0; i < n - 1; i++) d[i] = (P[i + 1][1] - P[i][1]) / Math.max(1e-5, P[i + 1][0] - P[i][0]);
+    m[0] = d[0]; m[n - 1] = d[n - 2];
+    for (let i = 1; i < n - 1; i++) m[i] = d[i - 1] * d[i] <= 0 ? 0 : (d[i - 1] + d[i]) / 2;
+    for (let i = 0; i < n - 1; i++) {
+      if (!d[i]) { m[i] = m[i + 1] = 0; continue; }
+      const a = m[i] / d[i], b = m[i + 1] / d[i], q = a * a + b * b;
+      if (q > 9) { const t = 3 / Math.sqrt(q); m[i] = t * a * d[i]; m[i + 1] = t * b * d[i]; }
+    }
+    let i = 0;
+    while (i < n - 2 && x > P[i + 1][0]) i++;
+    const h = Math.max(1e-5, P[i + 1][0] - P[i][0]), t = clamp((x - P[i][0]) / h, 0, 1), t2 = t * t, t3 = t2 * t;
+    return (2 * t3 - 3 * t2 + 1) * P[i][1] + (t3 - 2 * t2 + t) * h * m[i] + (-2 * t3 + 3 * t2) * P[i + 1][1] + (t3 - t2) * h * m[i + 1];
+  }
+  function neckCurve(T, id, side) {
+    if (!T['neck' + side]) return A.info[id][side === 'F' ? 'neckF' : 'neckB'].map(([x, y]) => [x, y + 0.004]);
+    const c = neckCtrl(T, id, side).sort((a, b) => a[0] - b[0]), sharp = side === 'F' && T.neckV;
+    return Array.from({ length: NP }, (_, i) => {
+      const x = lerp(c[0][0], c[NC - 1][0], i / (NP - 1));
+      let y;
+      if (sharp) { let j = 0; while (j < NC - 2 && x > c[j + 1][0]) j++; y = lerp(c[j][1], c[j + 1][1], clamp((x - c[j][0]) / Math.max(1e-5, c[j + 1][0] - c[j][0]), 0, 1)); }
+      else y = mono(c, x);
+      return [x, Math.min(y, edgeY(id, side, x))];
+    });
+  }
+  // keep a dragged neckline point sensible: in order left to right, ends on the shoulder line, not too deep, never above the fabric
+  function fixCtrl(pts, i, id, side, sym) {
+    const H = A.H, gap = 0.012 * H / 1.77, wmax = 0.19 * H / 1.77, wmin = 0.03 * H / 1.77, mid = (NC - 1) / 2;
+    let x = pts[i][0], y = pts[i][1];
+    if (sym && i === mid) x = 0;
+    else {
+      let lo = i > 0 ? pts[i - 1][0] + gap : -wmax, hi = i < NC - 1 ? pts[i + 1][0] - gap : wmax;
+      if (sym) { if (i < mid) hi = Math.min(hi, -gap); else lo = Math.max(lo, gap); }
+      if (i === 0) hi = Math.min(hi, -wmin);
+      if (i === NC - 1) lo = Math.max(lo, wmin);
+      x = clamp(x, lo, hi);
+    }
+    const top = edgeY(id, side, x), deep = (side === 'F' ? 0.33 : 0.38) * H / 1.77;
+    y = i === 0 || i === NC - 1 ? top : clamp(y, edgeY(id, side, 0) - deep, top);
+    pts[i] = [x, y];
+    if (sym && i !== mid) pts[NC - 1 - i] = [-x, y];
   }
   function applyState() {
     const st = cc.state, pr = cc.prefs, Y = cc.Y, B = cc.BODY, H = A.H, k = H / 728;
@@ -436,7 +491,7 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = vec3(0.88);`);
       U.uRawS.value = T.rawSleeve ? 1 : 0;
       U.uTuckH.value = T.tuck && Bt && Bt.kind === 'jeans' ? toH(Y.waist + B.rise + 6) : -1;
       U.uHemLeg.value = 0;
-      const nf = neckPts(T, topMesh, 'F').sort((a, b) => a[0] - b[0]), nb = neckPts(T, topMesh, 'B').sort((a, b) => a[0] - b[0]);
+      const nf = neckCurve(T, topMesh, 'F'), nb = neckCurve(T, topMesh, 'B');
       nf.forEach((q, i) => U.uNeckF.value[i].set(q[0], q[1])); nb.forEach((q, i) => U.uNeckB.value[i].set(q[0], q[1]));
       U.uNeckOn.value = 1;
       morph(M[topMesh], { slim: clamp((5 - T.fit) / 7, 0, 1), loose: clamp((T.fit - 5) / 21, 0, 1) });
@@ -469,6 +524,13 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = vec3(0.88);`);
     const clip = A.clips[pr.pose] || A.clips.relaxed;
     if (A.pose !== clip) { A.mixer.stopAllAction(); A.mixer.clipAction(clip).play(); A.mixer.setTime(0); A.pose = clip; }
     if (!dragH) buildHandles();
+    else handles.filter(hd => hd.kind === dragH.kind && hd.slot === dragH.slot).forEach(locate);
+    // while a point is being dragged the garment turns see-through, so the body and the new line show clearly
+    for (const id of GARMENTS) {
+      const m = M[id] && M[id].material, see = !!dragH && (dragH.slot === 'top' ? id === topMesh : id === botMesh);
+      if (!m || m.transparent === see) continue;
+      m.transparent = see; m.opacity = see ? .5 : 1; m.depthWrite = !see;
+    }
   }
 
   /* ---------- frame loop ---------- */
@@ -552,7 +614,7 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = vec3(0.88);`);
     }
     return {
       mesh: o.name, slot: o.name === 'tee' || o.name === 'long' ? 'top' : 'bottom', rest: [ip(P, 0), ip(P, 1), ip(P, 2)],
-      h: ip(g.attributes._h), s: ip(g.attributes._s), point: h.point, uv: uv1 ? [ip(uv1, 0), ip(uv1, 1)] : null, uvPerM,
+      h: g.attributes._h ? ip(g.attributes._h) : 0, s: g.attributes._s ? ip(g.attributes._s) : 0, point: h.point, uv: uv1 ? [ip(uv1, 0), ip(uv1, 1)] : null, uvPerM,
     };
   }
   // metres per screen pixel at a world point (for dragging edit points and sizing the brush ring)
@@ -573,48 +635,58 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = vec3(0.88);`);
     for (let i = 0; i < P.count; i++) { const d = test(P.getX(i), P.getY(i), P.getZ(i), h.getX(i), s.getX(i)); if (d < bd) { bd = d; best = i; } }
     return best;
   }
+  // which garment vertex an edit point sits on, worked out again whenever its value changes
+  function locate(hd) {
+    const st = cc.state, T = st.top, H = A.H, mesh = hd.mesh;
+    if (hd.kind === 'nf' || hd.kind === 'nb') {
+      const c = neckCtrl(T, meshOf('top', T), hd.side)[hd.i];
+      hd.pt = c;
+      hd.vi = nearestVertex(mesh, (vx, vy, vz, vh, vs) => vs > .02 || (hd.side === 'F' ? vz < 0 : vz > 0) ? 1e9 : (vx - c[0]) ** 2 + (vy - c[1]) ** 2);
+    } else if (hd.kind === 'hem') {
+      const g = st[hd.slot], id = mesh.name, U = mesh.material.userData.U, lc = id === 'jeans' ? legC() : 0;
+      const a = hd.i / HP * TAU, ch = Math.max(U.uCutH.value, A.info[id].lo) + ((g.hemOff || [])[hd.i] || 0) * H;
+      hd.vi = nearestVertex(mesh, (vx, vy, vz, vh, vs) => {
+        if (vs > .02 || (lc && vx < 0)) return 1e9;   // trousers: points round the left leg (the right one mirrors it)
+        const ax = lc ? Math.abs(vx) - lc : vx, ang = Math.atan2(ax, vz), da = Math.atan2(Math.sin(ang - a), Math.cos(ang - a));
+        return da * da * 0.02 + Math.max(0, ch - vh) ** 2 * 400 + (vh - ch) ** 2 * 40;
+      });
+    } else {
+      const sc = mesh.material.userData.U.uSleeveCut.value, sx = hd.side === 0 ? 1 : -1;
+      const target = Math.min(hd.side === 0 ? sc.x : sc.y, A.info[mesh.name].smax) - .01;
+      hd.vi = nearestVertex(mesh, (vx, vy, vz, vh, vs) => vs < .02 || Math.sign(vx) !== sx ? 1e9 : (vs - target) ** 2 * 50 + vz * vz * .2);
+    }
+  }
   function buildHandles() {
     handles.forEach(hd => hd.el.remove());
     handles = [];
     if (!A) return;
-    const tool = cc.tool, st = cc.state, T = st.top, Bt = st.bottom, H = A.H;
-    const add = (kind, mesh, vi, extra) => {
-      if (vi < 0) return;
+    const tool = cc.tool, st = cc.state, T = st.top, Bt = st.bottom;
+    const add = (kind, mesh, extra) => {
       const el = document.createElement('button');
       el.type = 'button';
       el.className = 'h3d ' + kind;
       el.setAttribute('aria-label', { nf: '앞 목선 점', nb: '뒤 목선 점', hem: '밑단 점', sl: '소매 끝 점' }[kind]);
       layer.appendChild(el);
-      const hd = { kind, mesh, vi, el, ...extra };
+      const hd = { kind, mesh, el, ...extra };
+      if (kind === 'nf' || kind === 'nb') el.classList.toggle('end', extra.i === 0 || extra.i === NC - 1);
       el.addEventListener('pointerdown', e => startDrag(e, hd));
+      locate(hd);
+      if (hd.vi < 0) { el.remove(); return; }
       handles.push(hd);
     };
     if (tool === 'neck' && T) {
-      const id = meshOf('top', T), mesh = A.meshes[id];
-      for (const side of ['F', 'B']) {
-        neckPts(T, id, side).forEach(([x, y], i) => add(side === 'F' ? 'nf' : 'nb', mesh,
-          nearestVertex(mesh, (vx, vy, vz, vh, vs) => vs > .02 || (side === 'F' ? vz < 0 : vz > 0) ? 1e9 : (vx - x) ** 2 + (vy - y) ** 2), { side, i }));
-      }
+      const mesh = A.meshes[meshOf('top', T)];
+      for (const side of ['F', 'B']) for (let i = 0; i < NC; i++) add(side === 'F' ? 'nf' : 'nb', mesh, { side, i, slot: 'top' });
     }
     if (tool === 'cut' && cc.ui.cutMode === 'line') {
       for (const [slot, g] of [['top', T], ['bottom', Bt]]) {
         if (!g) continue;
-        const id = meshOf(slot, g), mesh = A.meshes[id], U = mesh.material.userData.U, lc = id === 'jeans' ? legC() : 0;
-        for (let i = 0; i < HP; i++) {
-          const a = i / HP * TAU, ch = Math.max(U.uCutH.value, A.info[id].lo) + ((g.hemOff || [])[i] || 0) * H;
-          add('hem', mesh, nearestVertex(mesh, (vx, vy, vz, vh, vs) => {
-            if (vs > .02 || (lc && vx < 0)) return 1e9;   // trousers: points round the left leg (the right one mirrors it)
-            const ax = lc ? Math.abs(vx) - lc : vx, ang = Math.atan2(ax, vz), da = Math.atan2(Math.sin(ang - a), Math.cos(ang - a));
-            return da * da * 0.02 + Math.max(0, ch - vh) ** 2 * 400 + (vh - ch) ** 2 * 40;
-          }), { slot, i });
-        }
+        const mesh = A.meshes[meshOf(slot, g)];
+        for (let i = 0; i < HP; i++) add('hem', mesh, { slot, i });
       }
       if (T && T.sleeve > cc.SLEEVELESS) {
-        const id = meshOf('top', T), mesh = A.meshes[id], sc = mesh.material.userData.U.uSleeveCut.value;
-        [[1, sc.x, 0], [-1, sc.y, 1]].forEach(([sx, s, side]) => {
-          const target = Math.min(s, A.info[id].smax) - .01;
-          add('sl', mesh, nearestVertex(mesh, (vx, vy, vz, vh, vs) => vs < .02 || Math.sign(vx) !== sx ? 1e9 : (vs - target) ** 2 * 50 + vz * vz * .2), { side });
-        });
+        const mesh = A.meshes[meshOf('top', T)];
+        for (const side of [0, 1]) add('sl', mesh, { side, slot: 'top' });
       }
     }
     placeHandles();
@@ -622,8 +694,13 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = vec3(0.88);`);
   function placeHandles() {
     if (!handles.length) { guide.innerHTML = ''; return; }
     const camDir = new THREE.Vector3().subVectors(camera.position, controls.target).setY(0).normalize();
+    const P0 = new THREE.Vector3();
     for (const hd of handles) {
       hd.mesh.getVertexPosition(hd.vi, tmp);
+      if (hd.pt) {   // neckline points sit exactly on their value, not just on the nearest vertex
+        P0.fromBufferAttribute(hd.mesh.geometry.attributes.position, hd.vi);
+        tmp.x += hd.pt[0] - P0.x; tmp.y += hd.pt[1] - P0.y;
+      }
       tmp.applyMatrix4(hd.mesh.matrixWorld);
       const world = tmp.clone();
       const out = new THREE.Vector3(world.x - controls.target.x, 0, world.z - controls.target.z);
@@ -631,30 +708,36 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = vec3(0.88);`);
       const [x, y] = project(world);
       hd.world = world;
       hd.el.style.transform = `translate(${x}px, ${y}px)`;
-      hd.el.hidden = !facing && hd !== dragH;
+      // a side's neckline points show only while you look at that side
+      const side = hd.kind === 'nf' ? 1 : hd.kind === 'nb' ? -1 : 0;
+      const look = !side || Math.abs(camDir.z) < .25 || Math.sign(camDir.z) === side;
+      hd.el.hidden = (!facing || !look) && hd !== dragH;
+      hd.el.classList.toggle('on', hd === dragH);
       hd.sx = x; hd.sy = y;
     }
-    // the neckline itself, front and back, as a dashed line through its points
-    let d = '';
-    for (const kind of ['nf', 'nb']) {
-      const pts = handles.filter(h => h.kind === kind && !h.el.hidden).sort((a, b) => a.i - b.i);
-      if (pts.length > 1) d += 'M' + pts.map(h => h.sx.toFixed(1) + ' ' + h.sy.toFixed(1)).join('L');
-    }
-    guide.innerHTML = d ? `<path d="${d}" fill="none" stroke="#fff" stroke-width="3" opacity=".8"/><path d="${d}" fill="none" stroke="#161616" stroke-width="1.4" stroke-dasharray="5 4"/>` : '';
+    // while dragging, the line as it was before stays as a faint dashed line
+    guide.innerHTML = dragH && dragH.before ? `<path d="${dragH.before}" fill="none" stroke="#fff" stroke-width="2.2" stroke-dasharray="4 4" opacity=".95"/>` : '';
   }
+  const pathOf = hd => {   // the line through the points of the garment being edited, as it was
+    const pts = handles.filter(h => h.kind === hd.kind && h.slot === hd.slot && !h.el.hidden).sort((a, b) => hd.kind === 'hem' ? a.sx - b.sx : a.i - b.i);
+    return hd.kind !== 'sl' && pts.length > 1 ? 'M' + pts.map(h => h.sx.toFixed(1) + ' ' + h.sy.toFixed(1)).join('L') : '';
+  };
   function startDrag(e, hd) {
     e.preventDefault(); e.stopPropagation();
     dragH = hd;
     hd.el.setPointerCapture(e.pointerId);
     hd.x0 = e.clientX; hd.y0 = e.clientY;
     const st = cc.state;
-    if (hd.kind === 'nf' || hd.kind === 'nb') hd.start = neckPts(st.top, meshOf('top', st.top), hd.side).map(p => p.slice());
+    hd.before = pathOf(hd);
+    const r = hd.el.getBoundingClientRect();
+    hd.gx = r.left + r.width / 2 - e.clientX; hd.gy = r.top + r.height / 2 - e.clientY;   // grab offset, so the point doesn't jump
+    if (hd.kind === 'nf' || hd.kind === 'nb') hd.start = neckCtrl(st.top, meshOf('top', st.top), hd.side).map(p => p.slice());
     else if (hd.kind === 'hem') hd.start = (st[hd.slot].hemOff || new Array(HP).fill(0)).slice();
     else hd.start = (st.top.sleeveAdj || [0, 0]).slice();
     hd.mpp = mPerPx(hd.world || controls.target);
     const move = ev => dragMove(ev, hd), up = () => {
       hd.el.removeEventListener('pointermove', move); hd.el.removeEventListener('pointerup', up); hd.el.removeEventListener('pointercancel', up);
-      dragH = null; cc.commit(); dirty = true;
+      hd.before = ''; dragH = null; cc.commit(); dirty = true;
     };
     hd.el.addEventListener('pointermove', move); hd.el.addEventListener('pointerup', up); hd.el.addEventListener('pointercancel', up);
   }
@@ -664,15 +747,21 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = vec3(0.88);`);
     const camSide = (camera.position.z - controls.target.z) >= 0 ? 1 : -1;
     const sym = cc.ui.neckSym;
     if (hd.kind === 'nf' || hd.kind === 'nb') {
-      const T = st.top, pts = hd.start.map(p => p.slice());
-      pts[hd.i] = [hd.start[hd.i][0] + dx * camSide, hd.start[hd.i][1] + dy];
-      if (sym) { const j = NP - 1 - hd.i; if (j !== hd.i) pts[j] = [-pts[hd.i][0], pts[hd.i][1]]; else pts[j][0] = 0; }
+      const T = st.top, id = meshOf('top', T), pts = hd.start.map(p => p.slice());
+      // the point goes where the pointer is on the body underneath (exact from any angle); off the body, by distance moved
+      const b = hit({ clientX: e.clientX + hd.gx, clientY: e.clientY + hd.gy }, ['body']);
+      pts[hd.i] = b ? [b.rest[0], b.rest[1]] : [hd.start[hd.i][0] + dx * camSide, hd.start[hd.i][1] + dy];
+      fixCtrl(pts, hd.i, id, hd.side, sym);
+      const mid = (NC - 1) / 2;
+      if (hd.i === mid) for (const j of [mid - 1, mid + 1]) {   // the points either side follow the middle part-way, so it deepens into a U, not a slit
+        pts[j] = [hd.start[j][0], hd.start[j][1] + (pts[mid][1] - hd.start[mid][1]) * .55];
+        fixCtrl(pts, j, id, hd.side, false);
+      }
       T['neck' + hd.side] = pts.map(([x, y]) => [r4(x / H), r4(y / H)]);
-      const other = hd.side === 'F' ? 'B' : 'F';
-      if (!T['neck' + other]) T['neck' + other] = neckPts(T, meshOf('top', T), other).map(([x, y]) => [r4(x / H), r4(y / H)]);
     } else if (hd.kind === 'hem') {
       const g = st[hd.slot], off = hd.start.slice();
-      off[hd.i] = r4(hd.start[hd.i] + dy / H);
+      const id = hd.mesh.name, base = Math.max(hd.mesh.material.userData.U.uCutH.value, A.info[id].lo);
+      off[hd.i] = r4(clamp(hd.start[hd.i] + dy / H, (A.info[id].lo - base) / H, (A.info[id].hi - .08 - base) / H));   // can't add fabric below the hem
       if (sym) { const j = (HP - hd.i) % HP; if (j !== hd.i) off[j] = off[hd.i]; }   // left ↔ right around the body
       g.hemOff = off;
     } else {
@@ -819,15 +908,16 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = vec3(0.88);`);
     neckPreset(id) {
       const T = cc.state.top;
       if (!T || !A) return;
-      const p = { round: [12, 20, 0], u: [62, 30, 0], v: [58, 22, 1], deepv: [112, 26, 1], boat: [10, 50, 0] }[id];
-      const mesh = meshOf('top', T), k = A.H / 728, H = A.H, inf = A.info[mesh];
-      const depth = p[0] * k, w = p[1] * k * 1.1, base = inf.neckF[(NP - 1) / 2][1] + 0.004;
-      T.neckF = inf.neckF.map(([x, y]) => {
-        const r = Math.abs(x) / w;
-        const cut = r < 1 ? base - depth * lerp(Math.sqrt(Math.max(0, 1 - r * r)), 1 - r, p[2]) : 9;
-        return [r4(x / H), r4(Math.min(y + .004, cut) / H)];
+      const p = { round: [12, 30, 0], u: [62, 36, 0], v: [58, 30, 1], deepv: [112, 32, 1], boat: [10, 62, 0] }[id];
+      const mesh = meshOf('top', T), k = A.H / 728, H = A.H;
+      const depth = p[0] * k, w = p[1] * k * 1.1, base = edgeY(mesh, 'F', 0);
+      const mk = (side, dep) => [-w, -w / 2, 0, w / 2, w].map((x, i) => {
+        const top = edgeY(mesh, side, x), y = i === 0 || i === 4 ? top : Math.min(top, edgeY(mesh, side, 0) - dep * (i === 2 ? 1 : p[2] ? .5 : .87));
+        return [r4(x / H), r4(y / H)];
       });
-      T.neckB = inf.neckB.map(([x, y]) => [r4(x / H), r4((id === 'boat' && Math.abs(x) < w ? Math.min(y + .004, base - .01) : y + .004) / H)]);
+      T.neckF = mk('F', depth);
+      T.neckB = id === 'boat' ? mk('B', .01) : null;
+      T.neckV = p[2] ? 1 : 0;
       cc.render(); cc.commit();
     },
     savePNG() {
