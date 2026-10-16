@@ -35,6 +35,10 @@ const BODIES = {
     name: '여성 모델', en: 'Female model', height: 177, bust: 86, waist: 61, hip: 88, sizeKr: '44–55',
     Y: { neck: 122, armpit: 198, bust: 212, waist: 272, hip: 350, crotch: 394, knee: 570, ankle: 722 },
     chest: 53, neckHalf: 14.5, st0: [137.5, 147], strapX: 152, sx: 150, rise: 24, hand: 1,
+    // 3D: torso half-depth [y, front, back], bust/seat lobes, foot scale
+    // side profile from real proportions (bust ~16.5cm deep, waist ~13.5cm, seat ~19cm), scaled to the slim front view
+    depth: [[96, 13.5, 14.5], [118, 15, 16], [128, 18, 19], [140, 20, 21], [147, 21, 22], [175, 27, 26], [198, 33, 28], [212, 34, 28], [240, 29, 27], [272, 27, 26], [300, 29, 30], [330, 30, 38], [350, 30, 42], [375, 30, 40], [394, 29, 36]],
+    bustBump: 6, seat: 4.5, foot: 1,
     torso: [[146, 63], [170, 57], [198, 52], [212, 52], [240, 47], [272, 42], [300, 47], [330, 54], [350, 58], [375, 58], [394, 57], [520, 57]],
     elbow: 282,
     armO: [[146, 137], [157, 131.5], [172, 128.3], [195, 127.4], [230, 126.6], [262, 125.4], [282, 124.8], [302, 124.6], [332, 124.4], [364, 123.6], [394, 123.6]],
@@ -49,6 +53,8 @@ const BODIES = {
     name: '남성 모델', en: 'Male model', height: 188, bust: 100, waist: 78, hip: 94, sizeKr: '100',
     Y: { neck: 120, armpit: 202, bust: 216, waist: 282, hip: 352, crotch: 396, knee: 572, ankle: 722 },
     chest: 58, neckHalf: 18, st0: [121, 150], strapX: 146, sx: 140, rise: 18, hand: 1.12,
+    depth: [[96, 17, 18], [112, 18.5, 19.5], [126, 21, 22], [140, 23, 24], [150, 24, 25], [180, 33, 32], [205, 37, 35], [216, 38, 35], [245, 35, 33], [282, 33, 31], [312, 33, 33], [338, 33, 38], [352, 33, 40], [378, 32, 38], [396, 31, 35]],
+    bustBump: 2.5, seat: 4, foot: 1.08,
     torso: [[150, 79], [172, 71], [202, 59], [216, 59], [245, 55.5], [282, 51], [312, 53], [338, 56], [352, 57], [378, 56.5], [396, 56], [520, 56]],
     elbow: 290,
     armO: [[150, 121], [162, 114.6], [180, 111.4], [205, 110.4], [240, 109.6], [270, 109], [290, 108.6], [310, 109], [340, 109.6], [370, 110.2], [396, 111]],
@@ -727,6 +733,7 @@ function render() {
   } else L('arms').removeAttribute('clip-path');
   renderOverlay();
   renderLayers();
+  if (window.__s3) window.__s3.update();
 }
 
 /* ---------- overlay: handles, cut line, brush ---------- */
@@ -1063,6 +1070,7 @@ document.querySelector('.wardrobe').addEventListener('click', e => {
 });
 
 /* ---------- studio: body, finish, backdrop, guides ---------- */
+const is3d = () => !!window.__s3;
 function renderStudio() {
   $('#bodybar').innerHTML = Object.entries(BODIES).map(([id, b]) =>
     `<button type="button" class="seg-b" role="radio" data-body="${id}" aria-checked="${prefs.body === id}">${b.name}</button>`).join('') +
@@ -1072,9 +1080,10 @@ function renderStudio() {
   $('#dock').innerHTML =
     `<span class="lbl">마네킹</span><span role="radiogroup" aria-label="마네킹 색" style="display:flex;gap:2px">${Object.entries(FINISH).map(([id, f]) => dot('finish', id, f.base, '마네킹 ' + f.name)).join('')}</span>` +
     `<span class="sep" aria-hidden="true"></span><span class="lbl">배경</span><span role="radiogroup" aria-label="배경" style="display:flex;gap:2px">${Object.entries(BACKDROP).map(([id, b]) => dot('backdrop', id, `radial-gradient(circle at 35% 35%,${b.c0},${b.c1})`, '배경 ' + b.name)).join('')}</span>` +
-    `<span class="sep" aria-hidden="true"></span><button type="button" class="ghost-b" data-guides aria-pressed="${prefs.guides}" title="조절 점 보이기/숨기기 (H)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${prefs.guides
+    (is3d() ? `<span class="sep" aria-hidden="true"></span><span role="group" aria-label="보는 방향" style="display:flex;gap:2px">${[['front', '앞'], ['side', '옆'], ['back', '뒤']].map(([v, n]) => `<button type="button" class="ghost-b" data-view="${v}" title="${n}에서 보기">${n}</button>`).join('')}</span>` : '') +
+    (is3d() ? '' : `<span class="sep" aria-hidden="true"></span><button type="button" class="ghost-b" data-guides aria-pressed="${prefs.guides}" title="조절 점 보이기/숨기기 (H)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${prefs.guides
       ? '<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>'
-      : '<path d="M3 3l18 18M10.6 5.1A10 10 0 0 1 12 5c6.4 0 10 7 10 7a17 17 0 0 1-3.2 4M6.6 6.6C3.8 8.4 2 12 2 12s3.6 7 10 7a9.7 9.7 0 0 0 5.4-1.6"/>'}</svg><span class="t">${prefs.guides ? '점 보기' : '점 숨김'}</span></button>`;
+      : '<path d="M3 3l18 18M10.6 5.1A10 10 0 0 1 12 5c6.4 0 10 7 10 7a17 17 0 0 1-3.2 4M6.6 6.6C3.8 8.4 2 12 2 12s3.6 7 10 7a9.7 9.7 0 0 0 5.4-1.6"/>'}</svg><span class="t">${prefs.guides ? '점 보기' : '점 숨김'}</span></button>`);
   const B = BODY;
   $('#spec').innerHTML = `<span class="k">${B.en}</span><span class="v">${B.name} · ${B.height}cm</span>` +
     `<dl><dt>가슴</dt><dd>${B.bust}</dd><dt>허리</dt><dd>${B.waist}</dd><dt>엉덩이</dt><dd>${B.hip}</dd><dt>사이즈</dt><dd>${B.sizeKr}</dd></dl>`;
@@ -1094,9 +1103,10 @@ function setPose(id) {
 }
 function toggleGuides() { prefs.guides = !prefs.guides; savePrefs(); renderStudio(); }
 $('.stage-wrap').addEventListener('click', e => {
-  const b = e.target.closest('[data-body],[data-pose],[data-finish],[data-backdrop],[data-guides]');
+  const b = e.target.closest('[data-body],[data-pose],[data-finish],[data-backdrop],[data-guides],[data-view]');
   if (!b) return;
   const d = b.dataset;
+  if (d.view) return window.__s3 && window.__s3.setView(d.view);
   if (d.body) return setBody(d.body);
   if (d.pose) return setPose(d.pose);
   if (d.finish) { prefs.finish = d.finish; drawMannequin(); render(); }
@@ -1127,7 +1137,8 @@ $('#toolbar').addEventListener('click', e => { const b = e.target.closest('[data
 function setTool(id) {
   tool = id; hover = null; svg.dataset.tool = id; svg.style.cursor = '';
   document.querySelectorAll('.tool').forEach(b => b.setAttribute('aria-pressed', b.dataset.tool === id));
-  $('#foot-hint').innerHTML = `<b>${TOOLS.find(t => t[0] === id)[1]}</b>${TOOL_HINT[id]}`;
+  const h3 = { neck: '모양 버튼과 막대로 넥라인을 바꿔요 · 끌면 회전', fit: '막대와 빠른 버튼으로 핏을 바꿔요 · 끌면 회전' };
+  $('#foot-hint').innerHTML = `<b>${TOOLS.find(t => t[0] === id)[1]}</b>${(is3d() && h3[id]) || TOOL_HINT[id]}`;
   renderPanel(); renderOverlay();
 }
 
@@ -1210,7 +1221,8 @@ function panelHTML() {
   switch (tool) {
     case 'neck':
       if (!T) return need('상의');
-      return `<p class="hint">목 아래 <b>동그란 점</b>을 아래로 끌면 깊어지고, 양옆 점은 넓어져요. <b>마름모 점</b>을 안쪽으로 끌면 V넥, 바깥으로 끌면 U넥이 돼요.</p>
+      return (is3d() ? `<p class="hint"><b>모양 버튼</b>을 누르거나 막대로 깊이·넓이·U↔V를 바꿔요. 마네킹을 끌면 돌려 볼 수 있어요.</p>`
+        : `<p class="hint">목 아래 <b>동그란 점</b>을 아래로 끌면 깊어지고, 양옆 점은 넓어져요. <b>마름모 점</b>을 안쪽으로 끌면 V넥, 바깥으로 끌면 U넥이 돼요.</p>`) + `
         <div class="chips" style="margin-bottom:18px">${Object.entries(PRESETS).map(([id, p]) => `<button type="button" class="chip" data-preset="${id}">${p[0]}</button>`).join('')}</div>
         ${slider('top.neckD', '깊이', ...LIMIT['top.neckD'], 1)}${slider('top.neckW', '넓이', ...LIMIT['top.neckW'], 1)}${slider('top.neckV', '모양 (U ↔ V)', 0, 1, .01)}`;
     case 'cut':
@@ -1225,7 +1237,8 @@ function panelHTML() {
         <div class="btn-row"><button type="button" class="chip" data-mode="paint">칠하기</button><button type="button" class="chip" data-mode="erase">지우개</button><button type="button" class="chip" data-act="clear-dmg">전부 지우기</button></div>`;
     case 'fit':
       if (!T && !B) return need('옷');
-      return `<p class="hint">부위마다 <b>점이 따로</b> 있어요. 바깥으로 끌면 넓어지고 안쪽으로 끌면 좁아져요. 조절하는 동안 옷이 <b>반투명</b>해지고 원래 모양이 점선으로 남아요.</p>
+      return (is3d() ? `<p class="hint">부위마다 <b>막대</b>로 품을 넓히거나 좁혀요. 빠른 버튼으로 핏을 한 번에 바꿀 수도 있어요. 마네킹을 끌면 돌려 볼 수 있어요.</p>`
+        : `<p class="hint">부위마다 <b>점이 따로</b> 있어요. 바깥으로 끌면 넓어지고 안쪽으로 끌면 좁아져요. 조절하는 동안 옷이 <b>반투명</b>해지고 원래 모양이 점선으로 남아요.</p>`) + `
         ${T ? `<span class="label-sm">상의 · ${NAME[T.kind]}</span>${fitChips('top', FIT_PRESETS.top)}
           ${B && T.len > Y.waist + BODY.rise + 10 ? `<div class="seg2" role="group" aria-label="입는 방법"><button type="button" class="chip" data-tuck="0">밖으로 빼 입기</button><button type="button" class="chip" data-tuck="1">넣어 입기</button></div>` : ''}
           ${slider('top.fit', '몸통 품', ...LIMIT['top.fit'], .5)}${slider('top.cling', '허리 라인 (일자 ↔ 붙게)', 0, 1, .01)}
@@ -1255,7 +1268,7 @@ function panelHTML() {
         <span class="label-sm">내 이미지 프린트</span>
         <div class="btn-row"><label class="file">${g.print ? '이미지 바꾸기' : '이미지 올리기'}<input type="file" accept="image/*" id="print-file"></label>
           ${g.print ? '<button type="button" class="chip" data-act="del-print">프린트 지우기</button>' : ''}</div>
-        ${g.print ? `<p class="note">프린트를 끌어서 옮길 수 있어요.</p><div style="margin-top:12px">${slider('cur.print.w', '프린트 크기', 24, 220, 1)}</div>` : ''}`;
+        ${g.print ? `<p class="note">${is3d() ? '옷을 누르면 그 자리로 프린트가 옮겨져요.' : '프린트를 끌어서 옮길 수 있어요.'}</p><div style="margin-top:12px">${slider('cur.print.w', '프린트 크기', 24, 220, 1)}</div>` : ''}`;
     }
   }
   return '';
@@ -1410,6 +1423,7 @@ $('#reset').addEventListener('click', () => {
 });
 $('#save').addEventListener('click', savePNG);
 function savePNG() {
+  if (window.__s3) return window.__s3.savePNG();
   const c = svg.cloneNode(true);
   c.querySelector('#L-ov').remove();
   c.removeAttribute('style');
@@ -1453,6 +1467,22 @@ $('#theme').addEventListener('click', () => {
 });
 
 function renderAll() { renderCards(); render(); renderPanel(); }
+
+/* ---------- bridge for the 3D stage (stage3d.js) ---------- */
+window.__cc = {
+  get state() { return state; }, get prefs() { return prefs; }, get images() { return images; }, get geo() { return geo; },
+  get BODY() { return BODY; }, get Y() { return Y; }, get LEG() { return LEG; }, get tool() { return tool; }, get dmgMode() { return dmgMode; },
+  table, bodyHalf, armO, armI, neckY, legMid, shade, warp: (p, ctx) => warp(p, ctx), tucked,
+  LIMIT, SLEEVELESS, bottomLenLimit, sleeveName, topLenName, bottomLenName, NAME,
+  applyCut: c => applyCut(c, null), render, commit, say, renderPanel, renderLayers,
+  setTarget(slot) { if (state[slot] && state.target !== slot) { state.target = slot; renderPanel(); renderLayers(); } },
+  attach3D(s3) {
+    window.__s3 = s3;
+    document.querySelector('.stage-wrap').classList.add('is3d');
+    document.querySelector('.foot .keys').innerHTML = '<span><kbd>1</kbd>–<kbd>5</kbd> 도구</span><span>끌어서 돌려 보기 · 휠로 확대</span><span><kbd>Ctrl</kbd>+<kbd>Z</kbd> 되돌리기</span>';
+    renderStudio(); setTool(tool); render();
+  },
+};
 drawBackdrop(); drawMannequin(); renderStudio();
 setTool('neck');
 renderAll();

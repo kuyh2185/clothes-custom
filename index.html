@@ -122,6 +122,10 @@ kbd{font-family:var(--mono);font-size:10px;color:var(--muted);border:1px solid v
 #stage [data-h]{cursor:grab}
 #stage.dragging,#stage.dragging [data-h]{cursor:grabbing}
 #stage.no-guides #L-ov{display:none}
+#stage3d{position:absolute;inset:0;width:100%;height:100%;display:block;touch-action:none;outline:none}
+.stage-wrap.is3d #stage{display:none}
+.tip3{position:absolute;z-index:3;pointer-events:none;padding:4px 8px;border-radius:6px;background:#161616;color:#fff;font-size:12px;font-weight:600;white-space:nowrap;opacity:0;transition:opacity .15s}
+.tip3.show{opacity:1}
 #L-back,#L-bottom,#L-topbody,#L-sleeves{transition:opacity .18s var(--ease)}
 #stage.adjusting #L-back,#stage.adjusting #L-bottom,#stage.adjusting #L-topbody,#stage.adjusting #L-sleeves{opacity:.5}
 .float{position:absolute;z-index:2;display:flex;align-items:center;gap:2px;padding:4px;border-radius:12px;background:color-mix(in srgb,var(--panel) 88%,transparent);border:1px solid var(--line);box-shadow:var(--shadow);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px)}
@@ -319,6 +323,8 @@ input[type=range].hue::-moz-range-thumb{width:8px;height:20px;border-radius:4px;
   <span class="cur" id="foot-hint"></span>
   <span class="keys"><span><kbd>1</kbd>–<kbd>5</kbd> 도구</span><span><kbd>H</kbd> 점 숨기기</span><span><kbd>Ctrl</kbd>+<kbd>Z</kbd> 되돌리기</span></span>
 </footer>
-<script src="app.js?v=8"></script>
+<script src="app.js?v=11"></script>
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"}}</script>
+<script type="module" src="stage3d.js?v=19"></script>
 </body>
 </html>
