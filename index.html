@@ -134,6 +134,7 @@ kbd{font-family:var(--mono);font-size:10px;color:var(--muted);border:1px solid v
 .h3d.hem{width:14px;height:14px;margin:-7px 0 0 -7px;border-radius:3px;transform-origin:center}
 .h3d.sl{background:#ffd7c8}
 .h3d[hidden]{display:none}
+@media (pointer:coarse){.h3d::before{content:"";position:absolute;inset:-15px;border-radius:50%}}   /* finger-sized grab area */
 .brush3d{position:absolute;left:0;top:0;border-radius:50%;border:1.5px solid #161616;box-shadow:0 0 0 1.5px rgba(255,255,255,.85);pointer-events:none;z-index:3;opacity:0}
 .brush3d.show{opacity:1}
 .tip3{position:absolute;z-index:3;pointer-events:none;padding:4px 8px;border-radius:6px;background:#161616;color:#fff;font-size:12px;font-weight:600;white-space:nowrap;opacity:0;transition:opacity .15s}
@@ -338,6 +339,6 @@ input[type=range].hue::-moz-range-thumb{width:8px;height:20px;border-radius:4px;
 </footer>
 <script src="app.js?v=14"></script>
 <script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"}}</script>
-<script type="module" src="stage3d.js?v=36"></script>
+<script type="module" src="stage3d.js?v=38"></script>
 </body>
 </html>

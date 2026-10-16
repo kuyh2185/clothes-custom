@@ -323,7 +323,9 @@ def extend_hem(ob):
     bname = {g.index: g.name for g in body.vertex_groups if g.name in bones}
     for i in ids:
         v = ob.data.vertices[i]
-        t = min(1.0, 1.6 * kring[i] / RINGS)
+        # front/back middle stays with the pelvis (between the legs it would be torn apart); the sides follow the legs
+        c = max(0.0, min(1.0, (abs(v.co.x) - 0.015) / 0.06))
+        t = min(1.0, 1.6 * kring[i] / RINGS) * c * c * (3 - 2 * c)
         new = {ob.vertex_groups[g.group].name: g.weight * (1 - t) for g in v.groups if ob.vertex_groups[g.group].name in bones}
         bw = {}
         for _, j, d in kd.find_n(v.co, 4):
@@ -467,8 +469,22 @@ def bake_cloth(ob, offset, pin, frames=40, bend=0.5, mass=0.22):
     return out
 
 
+def smooth_hull(target):
+    """A smoothed copy of a bottom: waistband, belt loops and pocket ridges ironed out, so a top laid over it
+    rises over the waist gradually instead of tracing every ridge (they are hidden under the top anyway)."""
+    dg = bpy.context.evaluated_depsgraph_get()
+    me = bpy.data.meshes.new_from_object(target.evaluated_get(dg))
+    hull = bpy.data.objects.new(target.name + "_hull", me)
+    bpy.context.collection.objects.link(hull)
+    hull.matrix_world = target.matrix_world.copy()
+    m = hull.modifiers.new("smooth", "SMOOTH")
+    m.factor, m.iterations = 1.0, 30
+    return hull
+
+
 def bake_over(ob, target, lift=0.16, start=None):
     ttop = max(v.co.z for v in target.data.vertices)
+    target = smooth_hull(target)
     orig = [v.co.copy() for v in ob.data.vertices]
     if start:   # start from another shape (a lengthened top) instead of the basis
         for v, c in zip(ob.data.vertices, start):
@@ -482,6 +498,7 @@ def bake_over(ob, target, lift=0.16, start=None):
     bpy.ops.object.modifier_move_to_index(modifier=m.name, index=0)
     out = [b.lerp(c, sstep(ttop + lift, ttop - 0.01, b.z)) for b, c in zip(base, evaluated_coords(ob))]
     ob.modifiers.remove(m)
+    bpy.data.objects.remove(target, do_unlink=True)
     for v, c in zip(ob.data.vertices, orig):
         v.co = c
     # spread the push out smoothly over the neighbours (no hard step at the waistband), never less than the push itself

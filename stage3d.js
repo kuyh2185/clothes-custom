@@ -16,7 +16,7 @@ const cc = window.__cc;
 const PI = Math.PI, TAU = PI * 2;
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const lerp = (a, b, t) => a + (b - a) * t;
-const VER = 10;   // bump with the assets
+const VER = 11;   // bump with the assets
 const GARMENTS = ['tee', 'long', 'jeans', 'skirt'];
 const NP = 17, NO = 17, NC = 5, HP = 8, MAXD = 16;   // neckline: shader samples / garment outline samples / handles per side
 
@@ -335,16 +335,18 @@ transformed -= objectNormal * 0.007 * cover;`);
     if (M.shoes) {
       const sm = M.shoes.material, top = asset.H * 0.07;
       sm.side = THREE.FrontSide;
+      sm.userData.uSock = { value: new THREE.Color() };   // above the shoe collar is the ankle: mannequin colour, not a white sock
       sm.onBeforeCompile = sh => {
+        sh.uniforms.uSock = sm.userData.uSock;
         sh.vertexShader = sh.vertexShader.replace('#include <common>', `#include <common>
 attribute float _h; varying float vH;`).replace('#include <begin_vertex>', `#include <begin_vertex>
 vH = _h;`);
         sh.fragmentShader = sh.fragmentShader.replace('#include <common>', `#include <common>
-varying float vH;`)
+varying float vH; uniform vec3 uSock;`)
           .replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>
 if (vH > ${top.toFixed(4)}) discard;`)
           .replace('#include <map_fragment>', `#include <map_fragment>
-if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = vec3(0.88);`);
+if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = uSock;`);
       };
       sm.customProgramCacheKey = () => 'shoes-v' + VER;
     }
@@ -474,6 +476,7 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = vec3(0.88);`);
     M.body.material.userData.U.uWear.value.set(topMesh === 'tee' ? 1 : 0, topMesh === 'long' ? 1 : 0, botMesh === 'jeans' ? 1 : 0, botMesh === 'skirt' ? 1 : 0);
     const f = FIN[pr.finish] || FIN.white;
     M.body.material.color.set(f.color); M.body.material.roughness = f.roughness; M.body.material.clearcoat = f.clearcoat;
+    if (M.shoes) M.shoes.material.userData.uSock.value.set(f.color);
     const morph = (mesh, w) => { const d = mesh.morphTargetDictionary, inf = mesh.morphTargetInfluences; if (d && inf) for (const n in d) inf[d[n]] = w[n] || 0; };
     const common = (U, g, id) => {
       const mat = M[id].material;
@@ -755,7 +758,17 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = vec3(0.88);`);
   };
   function startDrag(e, hd) {
     e.preventDefault(); e.stopPropagation();
+    // finger-sized grab areas overlap where points are close: take the point nearest the touch, not the one on top
+    const r0 = layer.getBoundingClientRect();
+    let best = hd, bd = 1e9;
+    for (const h of handles) {
+      if (h.el.hidden) continue;
+      const d = (h.sx + r0.left - e.clientX) ** 2 + (h.sy + r0.top - e.clientY) ** 2;
+      if (d < bd) { bd = d; best = h; }
+    }
+    hd = best;
     dragH = hd;
+    controls.enabled = false;   // a finger on a point must not also turn the view
     hd.el.setPointerCapture(e.pointerId);
     hd.x0 = e.clientX; hd.y0 = e.clientY;
     const st = cc.state;
@@ -768,7 +781,7 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = vec3(0.88);`);
     hd.mpp = mPerPx(hd.world || controls.target);
     const move = ev => dragMove(ev, hd), up = () => {
       hd.el.removeEventListener('pointermove', move); hd.el.removeEventListener('pointerup', up); hd.el.removeEventListener('pointercancel', up);
-      hd.before = ''; dragH = null; cc.commit(); dirty = true;
+      hd.before = ''; dragH = null; controls.enabled = true; cc.commit(); dirty = true;
     };
     hd.el.addEventListener('pointermove', move); hd.el.addEventListener('pointerup', up); hd.el.addEventListener('pointercancel', up);
   }
