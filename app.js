@@ -10,8 +10,9 @@ const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const lerp = (a, b, t) => a + (b - a) * t;
 const clone = o => JSON.parse(JSON.stringify(o));
 const r1 = n => Math.round(n * 10) / 10;
-const pt = p => r1(p[0]) + ' ' + r1(p[1]);
 const mir = p => [400 - p[0], p[1]];
+// every garment and mannequin point is written through pt(), which places it on the posed body (see "pose")
+const pt = p => { const q = at(p); return r1(q[0]) + ' ' + r1(q[1]); };
 const mix = (p, q, t) => [lerp(p[0], q[0], t), lerp(p[1], q[1], t)];
 
 /* ---------- body measurements: [y, value] tables ---------- */
@@ -69,6 +70,86 @@ const bodyHalf = y => table(TORSO, y);
 const armO = y => table(ARM_O, y), armI = y => table(ARM_I, y);
 const neckY = x => table(SHOULDER, -x);
 const legMid = y => (table(LEG_O, y) + table(LEG_I, y)) / 2;
+
+/* ---------- pose: 2D skinning ----------
+   Fashion snaps never stand at attention: weight sits on one leg (contrapposto), the pelvis tilts up on that side,
+   the shoulders tilt the other way, the free knee bends in and its foot turns out, arms hang loose or rest on a hip.
+   Like Spine/Live2D rigs, the body is split into bones (pelvis, chest, head, thighs, shins, upper arms, forearms,
+   hands); every point is moved by a smooth blend of the bones around it, so the mannequin and every garment bend
+   together and the clothes keep fitting. Angles are in screen degrees (positive = clockwise); legs [thigh, shin,
+   foot drop], arms [upper arm, forearm, hand]. Weight leg = the left one on screen. */
+const POSES = {
+  relaxed: { name: '편하게', pelvis: 5, pShift: -9, chest: -3.5, cShift: -2.5, head: 2.5, legL: [-5.5, 0, 0], legR: [-4.5, -11, 4], armL: [4, 3, 0], armR: [-5, 11, 4] },
+  // hand on hip: elbow out at the waist, wrist resting on the hip bone (solved per body so the hand lands there)
+  hip: { name: '한 손 허리', pelvis: 5, pShift: -9, chest: -3.5, cShift: -2.5, head: -2, legL: [-5.5, 0, 0], legR: [-4.5, -11, 4], armL: [3, 4, 0], armR: { f: [-40, 87, -30], m: [-34, 85, -32] } },
+  stand: { name: '차렷' },
+};
+const mulM = (m, n) => [m[0] * n[0] + m[2] * n[1], m[1] * n[0] + m[3] * n[1], m[0] * n[2] + m[2] * n[3], m[1] * n[2] + m[3] * n[3], m[0] * n[4] + m[2] * n[5] + m[4], m[1] * n[4] + m[3] * n[5] + m[5]];
+const rotAt = (deg, [px, py]) => { const r = deg * Math.PI / 180, c = Math.cos(r), s = Math.sin(r); return [c, s, -s, c, px - c * px + s * py, py - s * px - c * py]; };
+const trM = (dx, dy) => [1, 0, 0, 1, dx, dy];
+const applyM = (m, p) => [m[0] * p[0] + m[2] * p[1] + m[4], m[1] * p[0] + m[3] * p[1] + m[5]];
+const sstep = (a, b, v) => { const t = clamp((v - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
+let BONES = null, CTX = 'body', MIR = false, POSE_OFF = false, ELBOW = 270, WRIST = 392;
+function computePose(id) {
+  const P = POSES[id] || POSES.relaxed;
+  ELBOW = Y.waist - 2; WRIST = ARM_O[ARM_O.length - 1][0];
+  if (!P.pelvis) { BONES = null; return; }
+  const B = {};
+  B.pelvis = mulM(trM(P.pShift, 0), rotAt(P.pelvis, [CX, Y.hip]));
+  B.chest = mulM(trM(P.cShift, 0), rotAt(P.chest, [CX, Y.waist]));
+  B.head = mulM(B.chest, rotAt(P.head, [CX, Y.neck - 12]));
+  ['L', 'R'].forEach(sd => {
+    const mx = x => sd === 'L' ? x : 400 - x;
+    const H = [mx(legMid(Y.crotch)), Y.crotch - 28], K = [mx(legMid(Y.knee)), Y.knee], A = [mx(legMid(Y.ankle)), Y.ankle];
+    const [t, sh, drop] = P['leg' + sd];
+    const thigh = mulM(B.pelvis, rotAt(t, H));
+    let shin = mulM(thigh, rotAt(sh, K));
+    shin = mulM(trM(0, Y.ankle + drop - applyM(shin, A)[1]), shin);   // the foot stays on the floor
+    B['thigh' + sd] = thigh; B['shin' + sd] = shin;
+    const mid = y => mx((armO(y) + armI(Math.max(y, ARM_I[0][0]))) / 2);
+    const arm = P['arm' + sd], [u, f, h] = Array.isArray(arm) ? arm : arm[BODY === BODIES.m ? 'm' : 'f'];
+    B['uarm' + sd] = mulM(B.chest, rotAt(u, [mid(BODY.st0[1] + 12), BODY.st0[1] + 12]));
+    B['farm' + sd] = mulM(B['uarm' + sd], rotAt(f, [mid(ELBOW), ELBOW]));
+    B['hand' + sd] = mulM(B['farm' + sd], rotAt(h, [mid(WRIST), WRIST]));
+  });
+  BONES = B;
+}
+// which bones move a rest-pose point, and how much: 'arm' for arms and sleeves, 'skirt' hangs mostly from the hips
+function bonesAt(x, y, ctx) {
+  const B = BONES, sd = x < CX ? 'L' : 'R';
+  if (ctx === 'arm') {
+    const u = sstep(BODY.st0[1] + 2, BODY.st0[1] + 44, y), f = sstep(ELBOW - 16, ELBOW + 16, y), h = sstep(WRIST - 4, WRIST + 12, y);
+    return [[1 - u, B.chest], [u * (1 - f), B['uarm' + sd]], [u * f * (1 - h), B['farm' + sd]], [u * f * h, B['hand' + sd]]];
+  }
+  const hd = 1 - sstep(Y.neck - 20, Y.neck - 4, y), c = 1 - sstep(Y.waist - 24, Y.waist + 36, y);
+  let l = sstep(Y.crotch - 34, Y.crotch + 20, y) * clamp(Math.abs(x - CX) / 8, 0, 1), k = sstep(Y.knee - 34, Y.knee + 26, y);
+  if (ctx === 'skirt') { l *= .45; k = 0; }
+  const r = (1 - hd) * (1 - c);
+  return [[hd, B.head], [(1 - hd) * c, B.chest], [r * (1 - l), B.pelvis], [r * l * (1 - k), B['thigh' + sd]], [r * l * k, B['shin' + sd]]];
+}
+function warp(p, ctx = CTX) {
+  if (!BONES || POSE_OFF) return p;
+  let x = 0, y = 0;
+  for (const [w, m] of bonesAt(p[0], p[1], ctx)) if (w > 1e-5) { const q = applyM(m, p); x += w * q[0]; y += w * q[1]; }
+  return [x, y];
+}
+// MIR: building the right half inside a mirroring <g>, so place the real right-side point and mirror it back
+const at = p => MIR ? mir(warp(mir(p))) : warp(p);
+const inCtx = (ctx, fn) => { const o = CTX; CTX = ctx; try { return fn(); } finally { CTX = o; } };
+// screen point → rest pose (Newton steps with the blended bone rotation), for clicks and drags
+function unwarp(p, ctx = 'body') {
+  if (!BONES) return p;
+  let q = p.slice();
+  for (let i = 0; i < 8; i++) {
+    const w = warp(q, ctx), dx = p[0] - w[0], dy = p[1] - w[1];
+    if (Math.abs(dx) + Math.abs(dy) < .05) break;
+    let a = 0, b = 0, c = 0, d = 0;
+    for (const [wt, m] of bonesAt(q[0], q[1], ctx)) { a += wt * m[0]; b += wt * m[1]; c += wt * m[2]; d += wt * m[3]; }
+    const det = a * d - b * c || 1;
+    q = [q[0] + (d * dx - c * dy) / det, q[1] + (-b * dx + a * dy) / det];
+  }
+  return q;
+}
 
 /* ---------- path helpers ---------- */
 // segment: {t:'L',p} | {t:'Q',a,p} | {t:'C',a,b,p}
@@ -237,8 +318,7 @@ function topGeo(t, under = () => 0, tuck = null) {
     // the cuff wraps a cylinder seen from just above: a shallow downward arc, not a straight cut
     const cuff = { t: 'Q', a: [(SO[0] + SI[0]) / 2, sy + 2.5 + (SI[0] - SO[0]) * .05], p: SI };
     const segs = [...crSegs(outs), cuff, ...crSegs(ins), { t: 'C', a: sArm.b, b: sArm.a, p: ST }];
-    G.sleeveL = pathD(ST, segs);
-    G.sleeveR = pathD(mir(ST), segs.map(mirSeg));
+    inCtx('arm', () => { G.sleeveL = pathD(ST, segs); G.sleeveR = pathD(mir(ST), segs.map(mirSeg)); });
     G.se = se; G.si = si; G.SO = SO; G.SI = SI; G.AQ = AQ;
   }
   return G;
@@ -258,15 +338,18 @@ function jeansGeo(b) {
   const inX = y => cx(y) + lh(y);
   const WL = [CX - wh, wy];
   const outer = [WL, [CX - hipH(h1), h1], [CX - hipH(h2), h2]];
-  for (let y = 450; y < hy - 14; y += 50) outer.push([cx(y) - lh(y), y]);
-  const HO = [cx(hy) - lh(hy), hy], HI = [inX(hy), hy];
+  // real jeans hang from the widest point of the hip: never let the outer seam swell out again below it
+  const hipX = CX - hipH(h2), kneeX = cx(Y.knee) - lh(Y.knee);
+  const outX = y => y < Y.knee ? Math.max(cx(y) - lh(y), lerp(hipX, kneeX, (y - h2) / (Y.knee - h2))) : cx(y) - lh(y);
+  for (let y = 450; y < hy - 14; y += 50) outer.push([outX(y), y]);
+  const HO = [outX(hy), hy], HI = [inX(hy), hy];
   outer.push(HO);
   const inner = [HI];
   for (let y = hy - 50; y > 456; y -= 50) inner.push([inX(y), y]);
   if (hy > c0 + 34) inner.push([inX(c0 + 22), c0 + 22]);
   inner.push([CX, c0]);
   const d = symD([CX, wy], [{ t: 'L', p: WL }, ...crSegs(outer), { t: 'L', p: HI }, ...crSegs(inner)]);
-  return { d, wy, wh, hipH, cx, lh, inX, hy, c0, h1, h2, handle: [cx(hy - 12) - lh(hy - 12), hy - 12] };
+  return { d, wy, wh, hipH, cx, lh, inX, outX, hy, c0, h1, h2, handle: [outX(hy - 12), hy - 12] };
 }
 
 function skirtGeo(b) {
@@ -294,7 +377,7 @@ function skirtGeo(b) {
     segs.push({ t: 'C', a: [HL[0] + hemH * .4, baseY(HL[0] + hemH * .4)], b: [CX - hemH * .3, hy + drop], p: [CX, hy + drop] });
   }
   if (fl > .25 && hy > hipY + 40) [.36, .7].forEach(t => folds.push(lerp(HL[0], CX, t)));
-  return { d: symD([CX, wy], segs), wy, wh, hipY, hipH, hemH, hy, baseY, folds, handle: [HL[0] + 2, hy - 8] };
+  return { d: inCtx('skirt', () => symD([CX, wy], segs)), wy, wh, hipY, hipH, hemH, hy, baseY, folds, handle: [HL[0] + 2, hy - 8] };
 }
 
 /* ---------- state ---------- */
@@ -304,7 +387,7 @@ let images = {};
 const blobUrls = {};
 // look of the studio, kept apart from the undo history
 const PREFS = 'clothes-custom:prefs';
-let prefs = { body: 'f', finish: 'white', backdrop: 'studio', guides: true };
+let prefs = { body: 'f', pose: 'relaxed', finish: 'white', backdrop: 'studio', guides: true };
 try {
   const s = JSON.parse(localStorage.getItem(STORE) || 'null');
   if (s) { state.top = upgrade(s.top ?? null); state.bottom = upgrade(s.bottom ?? null); images = s.images || {}; }
@@ -312,6 +395,7 @@ try {
 } catch (e) { /* storage unavailable: start fresh */ }
 const savePrefs = () => { try { localStorage.setItem(PREFS, JSON.stringify(prefs)); } catch (e) { /* ignore */ } };
 useBody(prefs.body);
+computePose(prefs.pose);
 if (!state[state.target]) state.target = state.top ? 'top' : 'bottom';
 
 function dataURLtoBlob(u) {
@@ -355,7 +439,8 @@ const rim = (d, k, hi, dark = '#000') =>
 const crease = (d, o = .15, w = 3) => !d || o <= 0 ? '' :
   `<path d="${d}" fill="none" stroke="#000" stroke-opacity="${r1(o * 100) / 100}" stroke-width="${w}" stroke-linecap="round" filter="url(#b2)"/>` +
   `<path d="${d}" fill="none" stroke="#fff" stroke-opacity="${r1(o * 70) / 100}" stroke-width="${r1(w * .55)}" stroke-linecap="round" filter="url(#b1)" transform="translate(-1.6 -1.4)"/>`;
-const both = s => s ? s + `<g transform="matrix(-1 0 0 1 400 0)">${s}</g>` : '';
+const mirrored = fn => { MIR = true; try { return fn(); } finally { MIR = false; } };
+const both = fn => { const a = fn(); return a ? a + `<g transform="matrix(-1 0 0 1 400 0)">${mirrored(fn)}</g>` : ''; };
 
 function shadeMix(a, b, t) {
   const p = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
@@ -397,17 +482,16 @@ function drawMannequin() {
   const ai0 = [ARM_I[0][1], ARM_I[0][0]], ao0 = [ARM_O[0][1], ARM_O[0][0]];
   const armSegs = [...crSegs(xy(ARM_O)), ...HAND.map(([a, b, p]) => ({ t: 'C', a: hp(a), b: hp(b), p: hp(p) })), ...crSegs(xy(ARM_I).reverse())];
   const armClose = [...armSegs, { t: 'C', a: [ai0[0] + 3, ai0[1] - 18], b: [ao0[0] + 10, ao0[1] + 7], p: ao0 }];
-  const armL = pathD(ao0, armClose), armR = pathD(mir(ao0), armClose.map(mirSeg));
-  const edgeL = pathD(ao0, armSegs, false), edgeR = pathD(mir(ao0), armSegs.map(mirSeg), false);
+  const [armL, armR, edgeL, edgeR] = inCtx('arm', () => [pathD(ao0, armClose), pathD(mir(ao0), armClose.map(mirSeg)), pathD(ao0, armSegs, false), pathD(mir(ao0), armSegs.map(mirSeg), false)]);
   const part = (id, d) => `<clipPath id="mc-${id}"><path d="${d}"/></clipPath><g clip-path="url(#mc-${id})"><path d="${d}" fill="${F.base}"/>${rim(d, F.k, F.hi, F.rim)}</g>`;
   const seam = `stroke="${F.line}" stroke-opacity=".7" stroke-width=".8" fill="none" stroke-linecap="round"`;
   const wY = Y.waist + 14, kY = Y.knee - 4, sY = Y.armpit - 6, rY = wo[1] - 8;
   const details =
     // collarbones and knees (left side, mirrored), the neck joint and the detachable waist joint
-    both(`<path d="M${r1(nx + 1.5)} ${Y.neck + 6}C${r1(nx - 8)} ${Y.neck + 9} ${r1(st[0] + 25)} ${r1(neckY(st[0] + 25) + 1)} ${r1(st[0] + 13)} ${r1(neckY(st[0] + 13))}" ${seam}/>` +
-      `<path d="M${r1(legMid(kY) - 8.5)} ${kY}q8.5 6 17 0" ${seam}/>`) +
-    `<path d="M${r1(nx)} ${Y.neck - 13}Q${CX} ${Y.neck - 8} ${r1(CX + nh)} ${Y.neck - 13}" ${seam}/>` +
-    `<path d="M${r1(CX - bodyHalf(wY))} ${wY}Q${CX} ${wY + 6} ${r1(CX + bodyHalf(wY))} ${wY}" ${seam} stroke-opacity=".45"/>`;
+    both(() => `<path d="M${pt([nx + 1.5, Y.neck + 6])}C${pt([nx - 8, Y.neck + 9])} ${pt([st[0] + 25, neckY(st[0] + 25) + 1])} ${pt([st[0] + 13, neckY(st[0] + 13)])}" ${seam}/>` +
+      `<path d="M${pt([legMid(kY) - 8.5, kY])}Q${pt([legMid(kY), kY + 6])} ${pt([legMid(kY) + 8.5, kY])}" ${seam}/>`) +
+    `<path d="M${pt([nx, Y.neck - 13])}Q${pt([CX, Y.neck - 8])} ${pt([CX + nh, Y.neck - 13])}" ${seam}/>` +
+    `<path d="M${pt([CX - bodyHalf(wY), wY])}Q${pt([CX, wY + 6])} ${pt([CX + bodyHalf(wY), wY])}" ${seam} stroke-opacity=".45"/>`;
   // smoked-glass base plate and its floor shadow
   const plate = `<ellipse cx="200" cy="760" rx="96" ry="12" fill="#000" opacity=".28" filter="url(#b8)"/>` +
     `<path d="M140 750v5.5a60 8.5 0 0 0 120 0V750z" fill="#1a1a19"/><ellipse cx="200" cy="750" rx="60" ry="8.5" fill="url(#plate)"/>` +
@@ -418,7 +502,7 @@ function drawMannequin() {
   const armJoint = m => `<path d="M${pt(m([armO(sY) + 1, sY]))}Q${pt(m([(armO(sY) + ai0[0]) / 2, sY + 5]))} ${pt(m(ai0))}" ${seam}/>` +
     `<path d="M${pt(m([armO(rY) + .5, rY]))}Q${pt(m([(armO(rY) + armI(rY)) / 2, rY + 3]))} ${pt(m([armI(rY) - .5, rY]))}" ${seam}/>`;
   const edge = `fill="none" stroke="${F.line}" stroke-width="1.1" stroke-opacity=".7"`;
-  L('arms').innerHTML = part('arml', armL) + part('armr', armR) + armJoint(p => p) + armJoint(mir) +
+  L('arms').innerHTML = part('arml', armL) + part('armr', armR) + inCtx('arm', () => armJoint(p => p) + armJoint(mir)) +
     `<path d="${edgeL}" ${edge}/><path d="${edgeR}" ${edge}/>`;
 }
 
@@ -435,7 +519,7 @@ function patDef(g, f) {
 
 function dmgSVG(list) {
   return list.map(d => {
-    const r = rng(Math.round(d.x * 131 + d.y * 7)), x = r1(d.x), y = r1(d.y);
+    const r = rng(Math.round(d.x * 131 + d.y * 7)), [x, y] = inCtx(d.c || 'body', () => at([d.x, d.y])).map(r1);
     let s = `<ellipse cx="${x}" cy="${y}" rx="${14 + d.lv * 3}" ry="${19 + d.lv * 4}" fill="#fff" opacity="${.2 + .09 * d.lv}" filter="url(#soft)"/>`;
     if (d.lv >= 2) {
       let p = '';
@@ -458,14 +542,14 @@ function dmgSVG(list) {
 
 function frayD(x0, x1, y, seed) {
   const r = rng(seed); let d = '';
-  for (let x = x0 + 1; x < x1 - 1; x += 2.4) d += `M${r1(x)} ${r1(y - 1)}l${r1((r() - .5) * 2)} ${r1(2.5 + r() * 3.5)}`;
+  for (let x = x0 + 1; x < x1 - 1; x += 2.4) d += `M${pt([x, y - 1])}l${r1((r() - .5) * 2)} ${r1(2.5 + r() * 3.5)}`;
   return d;
 }
 
 function printSVG(p) {
   if (!p || !images[p.img]) return '';
-  const w = p.w, h = p.w * p.ar;
-  return `<image data-img="${p.img}" href="${imgURL(p.img)}" x="${r1(p.cx - w / 2)}" y="${r1(p.cy - h / 2)}" width="${r1(w)}" height="${r1(h)}" preserveAspectRatio="none"/>`;
+  const w = p.w, h = p.w * p.ar, [cx, cy] = at([p.cx, p.cy]);
+  return `<image data-img="${p.img}" href="${imgURL(p.img)}" x="${r1(cx - w / 2)}" y="${r1(cy - h / 2)}" width="${r1(w)}" height="${r1(h)}" preserveAspectRatio="none"/>`;
 }
 
 // pre: fabric detail, prints and creases (all shaded by the light pass); post: drawn over the light (washes, holes)
@@ -478,7 +562,8 @@ function piece(id, d, fill, pre, post, outer) {
 /* Creases where real fabric folds (Bridgman's fold types): drag lines from the armpit toward the bust,
    pulls at a fitted waist, long drop folds on loose bodies, gathered folds above a tuck,
    zigzags at the elbow and bunching at the wrist. Left side only; both() mirrors. */
-function topFolds(t, G) {
+function topFolds(t, G) { return both(() => topFoldsHalf(t, G)); }
+function topFoldsHalf(t, G) {
   const ease = t.fit, cl = t.cling ?? .35, { AP, hy, half, apY } = G;
   let s = '';
   if (!G.nl && hy > apY + 30) {
@@ -499,7 +584,7 @@ function topFolds(t, G) {
     const { wy, wh } = G.tuck;
     s += crease(`M${pt([CX - wh + 4, wy - 16])}q5 7 7 14M${pt([CX - wh + 17, wy - 20])}q3 9 4 18M${pt([CX - 18, wy - 14])}q1 7 2 12`, .16);
   }
-  return both(s);
+  return s;
 }
 function sleeveFolds(t, G) {
   if (G.nl) return '';
@@ -540,10 +625,10 @@ function renderTop() {
   L('topbody').innerHTML = piece('body', G.body, fill, pre + topFolds(t, G) + printSVG(t.print), dm, outer);
   if (G.nl) { L('sleeves').innerHTML = ''; return; }
   let sl = '';
-  const sf = sleeveFolds(t, G);
+  const prevCtx = CTX; CTX = 'arm';
   ['L', 'R'].forEach((side, i) => {
     const m = i ? mir : (p => p);
-    let spre = i ? `<g transform="matrix(-1 0 0 1 400 0)">${sf}</g>` : sf, sout = '';
+    let spre = i ? `<g transform="matrix(-1 0 0 1 400 0)">${mirrored(() => sleeveFolds(t, G))}</g>` : sleeveFolds(t, G), sout = '';
     if (t.rawSleeve) {
       const a = m(G.SO), b = m(G.SI);
       sout = `<path d="${frayD(Math.min(a[0], b[0]), Math.max(a[0], b[0]), G.sy + 1, G.sy + i)}" stroke="${shade(c, -.15)}" stroke-width=".9" fill="none"/>`;
@@ -556,6 +641,7 @@ function renderTop() {
     }
     sl += piece('s' + side.toLowerCase(), i ? G.sleeveR : G.sleeveL, fill, spre, dm, sout);
   });
+  CTX = prevCtx;
   L('sleeves').innerHTML = sl;
 }
 
@@ -585,23 +671,25 @@ function renderBottom() {
     const wh2 = bodyHalf(wy + 13) + 3;
     pre += `<rect x="0" y="0" width="400" height="780" fill="url(#twill)"/>`;
     // worn-in fade down the front of each thigh and shin, nudged toward the light
-    [[480, 70, .62], [Y.knee + 6, 46, .7]].forEach(([y, ry, k]) => {
-      if (hy > y - ry * .5) pre += both(`<ellipse cx="${r1(cx(y) - lh(y) * .12)}" cy="${y}" rx="${r1(lh(y) * k)}" ry="${ry}" fill="url(#fade)"/>`);
-    });
+    // a soft, long worn-in streak down the lit front of each leg (no round blobs: they read as bumps)
+    pre += both(() => { const y0 = c0 + 40, y1 = Math.min(hy - 20, Y.knee + 70); if (y1 < y0 + 40) return '';
+      const [x, y] = at([cx((y0 + y1) / 2) - lh((y0 + y1) / 2) * .18, (y0 + y1) / 2]);
+      return `<ellipse cx="${r1(x)}" cy="${r1(y)}" rx="${r1(lh(y) * .42)}" ry="${r1((y1 - y0) / 2)}" fill="url(#fade)" opacity=".7"/>`; });
     // whiskers fan out from the crotch
-    pre += `<path transform="translate(0 ${dc})" d="M181 412q-10 -4 -20 -12M185 422q-12 -3 -24 -11M219 412q10 -4 20 -12M215 422q12 -3 24 -11" stroke="#fff" stroke-opacity=".22" stroke-width="2" fill="none" stroke-linecap="round" filter="url(#soft)"/>`;
-    pre += both(jeansFolds(b, G));
+    pre += `<path d="M${pt([181, 412 + dc])}q-10 -4 -20 -12M${pt([185, 422 + dc])}q-12 -3 -24 -11M${pt([219, 412 + dc])}q10 -4 20 -12M${pt([215, 422 + dc])}q12 -3 24 -11" stroke="#fff" stroke-opacity=".2" stroke-width="2" fill="none" stroke-linecap="round" filter="url(#soft)"/>`;
+    pre += both(() => jeansFolds(b, G));
     pre += `<path d="M${pt([CX - wh, wy])}L${pt([CX + wh, wy])}L${pt([CX + wh2, wy + 13])}L${pt([CX - wh2, wy + 13])}Z" fill="${shade(c, -.1)}"/>`;
     pre += `<path d="M${pt([CX - wh, wy + 3])}L${pt([CX + wh, wy + 3])}M${pt([CX - wh2, wy + 10])}L${pt([CX + wh2, wy + 10])}" ${amber}/>`;
-    [-wh + 7, -31, 31, wh - 7].forEach(dx => { pre += `<rect x="${r1(CX + dx - 2)}" y="${wy - 1}" width="4" height="17" fill="${shade(c, -.2)}"/>`; });
-    pre += `<circle cx="200" cy="${wy + 6.5}" r="3.6" fill="#b08d57" stroke="#6f5530" stroke-width=".8"/>`;
-    pre += `<path d="M200 ${wy + 13}L200 ${c0 - 2}" stroke="#000" stroke-opacity=".3" stroke-width="1.1"/><path d="M209 ${wy + 14}L209 ${c0 - 46}Q209 ${c0 - 34} 200 ${c0 - 28}" ${amber}/>`;
-    pre += `<path d="M166 ${wy + 13}Q164 ${wy + 44} ${r1(CX - hipH(wy + 50) + 1)} ${wy + 50}M234 ${wy + 13}Q236 ${wy + 44} ${r1(CX + hipH(wy + 50) - 1)} ${wy + 50}" ${amber}/>`;
-    pre += `<path d="M226 ${wy + 16}L228 ${wy + 32}L241 ${wy + 30}L240 ${wy + 15}" ${amber}/>`;
-    const hemLegs = [[cx(hy) - lh(hy), inX(hy)], [400 - inX(hy), 400 - cx(hy) + lh(hy)]];
+    [-wh + 7, -31, 31, wh - 7].forEach(dx => { const x = CX + dx; pre += `<path d="M${pt([x - 2, wy - 1])}L${pt([x + 2, wy - 1])}L${pt([x + 2, wy + 16])}L${pt([x - 2, wy + 16])}Z" fill="${shade(c, -.2)}"/>`; });
+    const btn = at([CX, wy + 6.5]);
+    pre += `<circle cx="${r1(btn[0])}" cy="${r1(btn[1])}" r="3.6" fill="#b08d57" stroke="#6f5530" stroke-width=".8"/>`;
+    pre += `<path d="M${pt([CX, wy + 13])}L${pt([CX, c0 - 2])}" stroke="#000" stroke-opacity=".3" stroke-width="1.1"/><path d="M${pt([209, wy + 14])}L${pt([209, c0 - 46])}Q${pt([209, c0 - 34])} ${pt([CX, c0 - 28])}" ${amber}/>`;
+    pre += `<path d="M${pt([166, wy + 13])}Q${pt([164, wy + 44])} ${pt([CX - hipH(wy + 50) + 1, wy + 50])}M${pt([234, wy + 13])}Q${pt([236, wy + 44])} ${pt([CX + hipH(wy + 50) - 1, wy + 50])}" ${amber}/>`;
+    pre += `<path d="M${pt([226, wy + 16])}L${pt([228, wy + 32])}L${pt([241, wy + 30])}L${pt([240, wy + 15])}" ${amber}/>`;
+    const hemLegs = [[G.outX(hy), inX(hy)], [400 - inX(hy), 400 - G.outX(hy)]];
     hemLegs.forEach(([a, z], i) => {
       if (b.rawHem) outer += `<path d="${frayD(a, z, hy + 1, hy + i)}" stroke="${shade(c, .65)}" stroke-width="1" fill="none"/>`;
-      else pre += `<path d="M${r1(a + 1)} ${hy - 7}L${r1(z - 1)} ${hy - 7}" ${amber}/>`;
+      else pre += `<path d="M${pt([a + 1, hy - 7])}L${pt([z - 1, hy - 7])}" ${amber}/>`;
     });
     L('bottom').innerHTML = piece('bottom', G.d, fill, pre + printSVG(b.print), post, outer);
   } else {
@@ -612,10 +700,10 @@ function renderBottom() {
     G.folds.forEach(x => {
       const tx = CX - (CX - x) * (hipH / hemH) * .95;
       [[tx, x], [400 - tx, 400 - x]].forEach(([a, z]) => {
-        pre += `<path d="M${r1(a)} ${hipY + 6}L${r1(z)} ${r1(baseY(z) - 1)}" stroke="#000" stroke-opacity=".1" stroke-width="3.2" stroke-linecap="round" filter="url(#soft)"/>`;
+        pre += `<path d="M${inCtx('skirt', () => pt([a, hipY + 6]))}L${inCtx('skirt', () => pt([z, baseY(z) - 1]))}" stroke="#000" stroke-opacity=".1" stroke-width="3.2" stroke-linecap="round" filter="url(#soft)"/>`;
       });
     });
-    if (b.rawHem) outer += `<path d="${frayD(CX - hemH, CX + hemH, hy + 2, hy)}" stroke="${shade(c, -.15)}" stroke-width=".9" fill="none"/>`;
+    if (b.rawHem) outer += `<path d="${inCtx('skirt', () => frayD(CX - hemH, CX + hemH, hy + 2, hy))}" stroke="${shade(c, -.15)}" stroke-width=".9" fill="none"/>`;
     L('bottom').innerHTML = piece('bottom', G.d, fill, pre + printSVG(b.print), post, outer);
   }
 }
@@ -649,9 +737,9 @@ function endAdjust() {
   ghost = null; svg.classList.remove('adjusting');
   renderOverlay();
 }
-const adj = (p, key, scale, side) =>
+const adj = (p0, key, scale, side, p = at(p0)) =>
   `<g data-h="adj" data-key="${key}" data-scale="${r1(scale)}" data-side="${side}"><circle cx="${r1(p[0])}" cy="${r1(p[1])}" r="14" fill="transparent"/><circle cx="${r1(p[0])}" cy="${r1(p[1])}" r="7" fill="#fff" stroke="#161616" stroke-width="2"/></g>`;
-const handle = (p, h, side, shape) => shape === 'diamond'
+const handle = (p0, h, side, shape, p = at(p0)) => shape === 'diamond'
   ? `<g data-h="${h}" data-side="${side}"><circle cx="${r1(p[0])}" cy="${r1(p[1])}" r="16" fill="transparent"/><rect x="${r1(p[0] - 6)}" y="${r1(p[1] - 6)}" width="12" height="12" transform="rotate(45 ${r1(p[0])} ${r1(p[1])})" fill="#fff" stroke="#161616" stroke-width="2"/></g>`
   : `<g data-h="${h}" data-side="${side}"><circle cx="${r1(p[0])}" cy="${r1(p[1])}" r="17" fill="transparent"/><circle cx="${r1(p[0])}" cy="${r1(p[1])}" r="7.5" fill="#fff" stroke="#161616" stroke-width="2"/></g>`;
 const tag = (x, y, text, anchor = 'middle') =>
@@ -666,22 +754,25 @@ function renderOverlay() {
     s += `<path d="${G.bandD}" fill="none" stroke="#161616" stroke-width="1.2" stroke-dasharray="4 3" opacity=".6"/>`;
     s += handle(G.mid, 'neckV', -1, 'diamond') + handle(mir(G.mid), 'neckV', 1, 'diamond');
     s += handle(G.NL, 'neckW', -1) + handle(mir(G.NL), 'neckW', 1) + handle(G.C0, 'neckD', 0);
-    s += tag(CX, G.C0[1] + 26, neckName(T));
+    const tg = at([CX, G.C0[1] + 26]);
+    s += tag(tg[0], tg[1], neckName(T));
   }
   if (tool === 'fit') {
     // one pair of handles per body part; shoulder/sleeve labels sit on the left, body/hem/leg labels on the right
     const labels = [];
     const pair = (p, key, scale, text, labelSide) => {
       s += adj(p, key, scale, -1) + adj(mir(p), key, scale, 1);
-      const q = labelSide > 0 ? mir(p) : p;
+      const q = at(labelSide > 0 ? mir(p) : p);
       labels.push(tag(q[0] + 13 * labelSide, q[1] + 4, text, labelSide > 0 ? 'start' : 'end'));
     };
     if (T && geo.top) {
       const G = geo.top;
       if (!G.nl) {
-        pair(G.ST, 'top.drop', 1, '어깨 · ' + dropName(T.drop), -1);
-        const y = (G.ST[1] + G.sy) / 2;
-        pair([armO(y) - G.se, y], 'top.sfit', 1, '소매 · ' + sleeveFitName(T.sfit), -1);
+        inCtx('arm', () => {
+          pair(G.ST, 'top.drop', 1, '어깨 · ' + dropName(T.drop), -1);
+          const y = (G.ST[1] + G.sy) / 2;
+          pair([armO(y) - G.se, y], 'top.sfit', 1, '소매 · ' + sleeveFitName(T.sfit), -1);
+        });
       }
       const yb = (G.apY + G.hy) / 2, yh = G.hy - 6;
       pair([CX - G.half(yb), yb], 'top.fit', 1, '몸통 · ' + topFitName(T.fit), 1);
@@ -690,16 +781,18 @@ function renderOverlay() {
     if (B && geo.bottom) {
       const G = geo.bottom;
       if (B.kind === 'jeans') {
-        const at = y => [G.cx(y) - G.lh(y), y], yh = G.hy - 12;
-        if (G.hy > 490) pair(at(452), 'bottom.thigh', 17, '허벅지', 1);
+        const atY = y => [G.outX(y), y], yh = G.hy - 12;
+        if (G.hy > 490) pair(atY(452), 'bottom.thigh', 17, '허벅지', 1);
         if (G.hy > 620) {
-          pair(at(Y.knee), 'bottom.knee', 22, '무릎', 1);
-          pair(at(yh), 'bottom.hemW', Math.max(8, 39 * (yh - Y.knee) / (735 - Y.knee)), '밑단 · ' + bottomFitName(B), 1);
-        } else if (G.hy > 490) pair(at(yh), 'bottom.knee', Math.max(6, 22 * (yh - 450) / (Y.knee - 450)), '밑단 · ' + bottomFitName(B), 1);
-        else pair(at(yh), 'bottom.thigh', 17, '밑단 · ' + bottomFitName(B), 1);
+          pair(atY(Y.knee), 'bottom.knee', 22, '무릎', 1);
+          pair(atY(yh), 'bottom.hemW', Math.max(8, 39 * (yh - Y.knee) / (735 - Y.knee)), '밑단 · ' + bottomFitName(B), 1);
+        } else if (G.hy > 490) pair(atY(yh), 'bottom.knee', Math.max(6, 22 * (yh - 450) / (Y.knee - 450)), '밑단 · ' + bottomFitName(B), 1);
+        else pair(atY(yh), 'bottom.thigh', 17, '밑단 · ' + bottomFitName(B), 1);
       } else {
-        if (G.hy > G.hipY + 20) pair([CX - G.hipH, G.hipY], 'bottom.hip', 14, '엉덩이', 1);
-        pair(G.handle, 'bottom.fit', Math.max(10, (G.hy - G.hipY) * .6 + 8), '밑단 · ' + bottomFitName(B), 1);
+        inCtx('skirt', () => {
+          if (G.hy > G.hipY + 20) pair([CX - G.hipH, G.hipY], 'bottom.hip', 14, '엉덩이', 1);
+          pair(G.handle, 'bottom.fit', Math.max(10, (G.hy - G.hipY) * .6 + 8), '밑단 · ' + bottomFitName(B), 1);
+        });
       }
     }
     s += labels.join('');
@@ -718,8 +811,8 @@ function renderOverlay() {
   if (tool === 'color') {
     const g = state[state.target];
     if (g && g.print && images[g.print.img]) {
-      const p = g.print, w = p.w, h = p.w * p.ar;
-      s += `<rect x="${r1(p.cx - w / 2)}" y="${r1(p.cy - h / 2)}" width="${r1(w)}" height="${r1(h)}" fill="none" stroke="#161616" stroke-width="1.2" stroke-dasharray="4 3"/>`;
+      const p = g.print, w = p.w, h = p.w * p.ar, [pcx, pcy] = at([p.cx, p.cy]);
+      s += `<rect x="${r1(pcx - w / 2)}" y="${r1(pcy - h / 2)}" width="${r1(w)}" height="${r1(h)}" fill="none" stroke="#161616" stroke-width="1.2" stroke-dasharray="4 3"/>`;
     }
   }
   L('ov').innerHTML = s;
@@ -746,26 +839,28 @@ function svgPt(e) {
   return [q.x, q.y];
 }
 
+const ctxOf = id => id === 'sl' || id === 'sr' ? 'arm' : id === 'bottom' && state.bottom && state.bottom.kind === 'skirt' ? 'skirt' : 'body';
 function cutAt(p) {
   const id = pieceAt(p);
   if (!id) return null;
-  const y = p[1];
+  const y = unwarp(p, ctxOf(id))[1];
   if (id === 'sl' || id === 'sr') {
-    const T = state.top, ny = y <= 206 ? 190 : y;
+    const T = state.top, ny = y <= Y.armpit + 8 ? 190 : y;
     if (ny >= T.sleeve - 4) return null;
-    const ex = extent(id, Math.max(y, 150));
-    return ex && { key: 'sleeve', val: ny, x0: ex[0], x1: ex[1], y, label: sleeveName(ny) };
+    const ex = extent(id, Math.max(p[1], 150));
+    return ex && { key: 'sleeve', val: ny, x0: ex[0], x1: ex[1], y: p[1], label: sleeveName(ny) };
   }
+  // on screen the cut sits where the pointer is, shifted by however much the limit moved it
+  const line = (key, ny, label) => {
+    const sy = p[1] + ny - y, ex = extent(id, sy);
+    return ex && { key, val: ny, x0: ex[0], x1: ex[1], y: sy, label };
+  };
   if (id === 'body') {
     const T = state.top, ny = clamp(y, LIMIT['top.len'][0], T.len);
-    if (ny >= T.len - 4) return null;
-    const ex = extent('body', ny);
-    return ex && { key: 'topLen', val: ny, x0: ex[0], x1: ex[1], y: ny, label: topLenName(ny) };
+    return ny >= T.len - 4 ? null : line('topLen', ny, topLenName(ny));
   }
   const B = state.bottom, ny = clamp(y, bottomLenLimit(B)[0], B.len);
-  if (ny >= B.len - 4) return null;
-  const ex = extent('bottom', ny);
-  return ex && { key: 'bottomLen', val: ny, x0: ex[0], x1: ex[1], y: ny, label: bottomLenName(B, ny) };
+  return ny >= B.len - 4 ? null : line('bottomLen', ny, bottomLenName(B, ny));
 }
 
 /* ---------- pointer ---------- */
@@ -823,11 +918,11 @@ svg.addEventListener('pointermove', e => {
   const out = d.side < 0 ? d.p0[0] - p[0] : p[0] - d.p0[0];
   if (d.h === 'cut') { hover = { cut: cutAt(p) }; renderOverlay(); return; }
   switch (d.h) {
-    case 'neckD': T.neckD = clamp(p[1] - Y.neck, ...LIMIT['top.neckD']); break;
-    case 'neckW': T.neckW = clamp(d.side < 0 ? CX - p[0] : p[0] - CX, ...LIMIT['top.neckW']); break;
+    case 'neckD': T.neckD = clamp(unwarp(p)[1] - Y.neck, ...LIMIT['top.neckD']); break;
+    case 'neckW': { const q = unwarp(p); T.neckW = clamp(d.side < 0 ? CX - q[0] : q[0] - CX, ...LIMIT['top.neckW']); break; }
     case 'neckV': {
       // how far the handle sits from the straight NL→C0 line: on the line = V, at the round bulge = U
-      const G = geo.top, q = d.side > 0 ? mir(p) : p, A = G.NL, B = G.C0;
+      const G = geo.top, r = unwarp(p), q = d.side > 0 ? mir(r) : r, A = G.NL, B = G.C0;
       const u = [B[0] - A[0], B[1] - A[1]], n = Math.hypot(...u);
       const off = v => ((v[0] - A[0]) * u[1] - (v[1] - A[1]) * u[0]) / n;
       const bulge = off(G.Um);
@@ -864,11 +959,11 @@ svg.addEventListener('pointercancel', endDrag);
 svg.addEventListener('pointerleave', () => { if (!drag && hover) { hover = null; renderOverlay(); } });
 
 function paint(p, g, first) {
-  const list = state[g].dmg;
-  const near = list.reduce((best, d, i) => { const dist = Math.hypot(d.x - p[0], d.y - p[1]); return dist < (best ? best.dist : 16) ? { i, dist } : best; }, null);
+  const list = state[g].dmg, c = ctxOf(pieceAt(p)), q = unwarp(p, c);
+  const near = list.reduce((best, d, i) => { const dist = Math.hypot(d.x - q[0], d.y - q[1]); return dist < (best ? best.dist : 16) ? { i, dist } : best; }, null);
   if (dmgMode === 'erase') { if (near) list.splice(near.i, 1); }
   else if (near) { if (first) list[near.i].lv = Math.min(3, list[near.i].lv + 1); }
-  else list.push({ x: r1(p[0]), y: r1(p[1]), lv: 1 });
+  else list.push(c === 'body' ? { x: r1(q[0]), y: r1(q[1]), lv: 1 } : { x: r1(q[0]), y: r1(q[1]), lv: 1, c });
   hover = { p };
   render();
 }
@@ -907,7 +1002,8 @@ function say(msg) {
 }
 
 /* ---------- wardrobe ---------- */
-function iconSVG(kind) {
+function iconSVG(kind) { POSE_OFF = true; try { return iconSVGRaw(kind); } finally { POSE_OFF = false; } }
+function iconSVGRaw(kind) {
   const g = DEF[kind], c = g.fill.c1 === '#f3f1ec' ? '#fbfaf7' : g.fill.c1, st = 'stroke="currentColor" stroke-opacity=".5" stroke-width="2" stroke-linejoin="round"';
   if (SLOT[kind] === 'top') {
     const G = topGeo(g), f = kind === 'long' ? '#fbfaf7' : c;
@@ -964,7 +1060,9 @@ document.querySelector('.wardrobe').addEventListener('click', e => {
 /* ---------- studio: body, finish, backdrop, guides ---------- */
 function renderStudio() {
   $('#bodybar').innerHTML = Object.entries(BODIES).map(([id, b]) =>
-    `<button type="button" class="seg-b" role="radio" data-body="${id}" aria-checked="${prefs.body === id}">${b.name}</button>`).join('');
+    `<button type="button" class="seg-b" role="radio" data-body="${id}" aria-checked="${prefs.body === id}">${b.name}</button>`).join('') +
+    `<span class="sep" aria-hidden="true"></span>` + Object.entries(POSES).map(([id, p]) =>
+    `<button type="button" class="seg-b" role="radio" data-pose="${id}" aria-checked="${prefs.pose === id}" aria-label="자세: ${p.name}">${p.name}</button>`).join('');
   const dot = (attr, id, color, name) => `<button type="button" class="dot-b" role="radio" data-${attr}="${id}" aria-checked="${prefs[attr] === id}" aria-label="${name}" title="${name}"><i style="background:${color}"></i></button>`;
   $('#dock').innerHTML =
     `<span class="lbl">마네킹</span><span role="radiogroup" aria-label="마네킹 색" style="display:flex;gap:2px">${Object.entries(FINISH).map(([id, f]) => dot('finish', id, f.base, '마네킹 ' + f.name)).join('')}</span>` +
@@ -979,16 +1077,23 @@ function renderStudio() {
 }
 function setBody(id) {
   if (!BODIES[id] || id === prefs.body) return;
-  prefs.body = id; savePrefs(); useBody(id);
+  prefs.body = id; savePrefs(); useBody(id); computePose(prefs.pose);
   drawMannequin(); renderStudio(); renderAll();
   say(BODY.name + ' 체형으로 바꿨어요 — 옷이 새 몸에 맞춰져요');
 }
+function setPose(id) {
+  if (!POSES[id] || id === prefs.pose) return;
+  prefs.pose = id; savePrefs(); computePose(id);
+  drawMannequin(); renderStudio(); render();
+  say(POSES[id].name + ' 자세');
+}
 function toggleGuides() { prefs.guides = !prefs.guides; savePrefs(); renderStudio(); }
 $('.stage-wrap').addEventListener('click', e => {
-  const b = e.target.closest('[data-body],[data-finish],[data-backdrop],[data-guides]');
+  const b = e.target.closest('[data-body],[data-pose],[data-finish],[data-backdrop],[data-guides]');
   if (!b) return;
   const d = b.dataset;
   if (d.body) return setBody(d.body);
+  if (d.pose) return setPose(d.pose);
   if (d.finish) { prefs.finish = d.finish; drawMannequin(); render(); }
   else if (d.backdrop) { prefs.backdrop = d.backdrop; drawBackdrop(); }
   else return toggleGuides();
