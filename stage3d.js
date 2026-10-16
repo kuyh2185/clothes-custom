@@ -14,7 +14,7 @@ const cc = window.__cc;
 const PI = Math.PI;
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const lerp = (a, b, t) => a + (b - a) * t;
-const VER = 3;   // bump with the assets
+const VER = 6;   // bump with the assets
 
 let renderer = null;
 try { renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true }); } catch (e) { console.warn('고쳐 입기: WebGL 없음, 2D로 그려요', e); }
@@ -95,9 +95,17 @@ function start() {
         }
       });
       const box = new THREE.Box3().setFromObject(meshes.body);
+      const ext = {};
+      for (const [id, m] of Object.entries(meshes)) {
+        const h = m.geometry.attributes._h, sa = m.geometry.attributes._s;
+        if (!h) continue;
+        let lo = 1e9, hi = -1e9, smax = 0;
+        for (let i = 0; i < h.count; i++) { const v = h.getX(i); if (v < lo) lo = v; if (v > hi) hi = v; if (sa && sa.getX(i) > smax) smax = sa.getX(i); }
+        ext[id] = { lo, hi, smax };
+      }
       const mixer = new THREE.AnimationMixer(root), clips = {};
       g.animations.forEach(c => { clips[c.name] = c; });
-      const asset = { root, meshes, mixer, clips, H: box.max.y };
+      const asset = { root, meshes, mixer, clips, H: box.max.y, ext, kind };
       setupMaterials(asset);
       ASSETS[kind] = asset;
       res(asset);
@@ -146,6 +154,7 @@ function start() {
       uDmg: { value: Array.from({ length: MAXD }, () => new THREE.Vector4()) }, uDmgN: { value: 0 },
       uPrint: { value: null }, uPrintOn: { value: 0 }, uPrintBox: { value: new THREE.Vector4() },
       uHover: { value: -10 }, uHoverS: { value: -10 },
+      uBand: { value: new THREE.Vector3(0, 0, 0) }, uHem: { value: new THREE.Vector2(0, 0) },
     };
     const m = new THREE.MeshPhysicalMaterial({
       map: src.map || null, normalMap: src.normalMap || null, aoMap: src.aoMap || null,
@@ -177,6 +186,7 @@ uniform vec4 uNeck; uniform float uNeckY;
 uniform vec4 uDmg[${MAXD}]; uniform int uDmgN;
 uniform sampler2D uPrint; uniform float uPrintOn; uniform vec4 uPrintBox;
 uniform float uHover; uniform float uHoverS;
+uniform vec3 uBand; uniform vec2 uHem;
 float hash(float n) { return fract(sin(n) * 43758.5453); }
 float noise1(float x) { float i = floor(x), f = fract(x); return mix(hash(i), hash(i + 1.0), f * f * (3.0 - 2.0 * f)); }`)
         .replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>
@@ -206,7 +216,7 @@ for (int i = 0; i < ${MAXD}; i++) {
 // our colour over the fabric's own shading (its luminance relative to its average)
 // shading from a blurred look at the fabric texture: folds and shadows stay, printed motifs (florals, logos) go
 #ifdef USE_MAP
-vec3 blurTex = texture2D(map, vMapUv, 4.5).rgb;
+vec3 blurTex = texture2D(map, vMapUv, 6.5).rgb;
 #else
 vec3 blurTex = vec3(uAvg);
 #endif
@@ -244,6 +254,19 @@ if (uPrintOn > 0.5 && vRest.z > 0.0) {
   vec2 pu = (vRest.xy - uPrintBox.xy) / uPrintBox.zw + 0.5;
   if (pu.x > 0.0 && pu.x < 1.0 && pu.y > 0.0 && pu.y < 1.0) { vec4 pc = texture2D(uPrint, vec2(pu.x, pu.y)); diffuseColor.rgb = mix(diffuseColor.rgb, pc.rgb, pc.a); }
 }
+// waistband (x..y, on z): plain denim band with two rows of amber stitching
+if (uBand.z > 0.5 && vH > uBand.x && vS < 0.01) {
+  diffuseColor.rgb = uC1 * clamp(detail, 0.8, 1.1) * 0.92;
+  float st = min(abs(vH - (uBand.y - 0.007)), abs(vH - (uBand.x + 0.006)));
+  if (st < 0.0011 && fract((vRest.x + vRest.z) * 90.0) < 0.55) diffuseColor.rgb = vec3(0.78, 0.57, 0.23);
+  if (abs(vH - uBand.x) < 0.0012) diffuseColor.rgb *= 0.7;
+}
+// a neat folded hem where the scissors cut (not frayed): slightly darker band and a stitch line
+if (uHem.x > 0.5 && uRaw < 0.5 && vS < 0.01 && vH < uCutH + 0.02) {
+  diffuseColor.rgb *= 0.9;
+  if (abs(vH - (uCutH + 0.014)) < 0.0009 && fract((vRest.x + vRest.z) * 70.0) < 0.6) diffuseColor.rgb *= 0.6;
+}
+if (uHem.y > 0.5 && uRawS < 0.5 && vS > 0.01 && vS > uSleeveCut - 0.05) diffuseColor.rgb *= 0.9;
 // raw edge: lighter frayed band just above the cut
 if (uRaw > 0.5 && vS < 0.01 && vH < uCutH + 0.012) diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.95), 0.35);
 // scissors preview: dashed line where the cut would go
@@ -314,6 +337,12 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = vec3(0.92);`);
     bu.uWear.value.set(topMesh === 'tee' ? 1 : 0, topMesh === 'long' ? 1 : 0, botMesh === 'jeans' ? 1 : 0, botMesh === 'skirt' ? 1 : 0);
     const f = FIN[pr.finish] || FIN.white;
     M.body.material.color.set(f.color); M.body.material.roughness = f.roughness; M.body.material.clearcoat = f.clearcoat;
+    // fit variants baked with cloth simulation in Blender (morph targets), blended by the fit settings
+    const morph = (mesh, w) => {
+      const d = mesh.morphTargetDictionary, inf = mesh.morphTargetInfluences;
+      if (d && inf) for (const name in d) inf[d[name]] = w[name] || 0;
+    };
+    const ext = A.ext;
     const common = (U, g, id) => {
       U.uC1.value.set(g.fill.c1); U.uC2.value.set(g.fill.c2); U.uPat.value = PAT[g.fill.type] || 0; U.uScale.value = g.fill.scale || 1;
       const ds = (g.dmg3 || []).filter(d => d.g === id && d.p).slice(-MAXD);
@@ -341,9 +370,12 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = vec3(0.92);`);
       const carve = T.neckD > 16 || T.neckW > 24 || T.neckV > .25;
       U.uNeck.value.set(T.neckD * k, T.neckW * k, T.neckV, carve ? 1 : 0);
       U.uNeckY.value = toH(Y.neck) + 0.012;
-      const base = T.kind === 'fitted' ? -2 : 5;
-      U.uFit.value.set(clamp((T.fit - base) * k * .55, -.004, .06), clamp((T.sfit - 2) * k * .5, -.003, .04), Math.max(0, T.flare) * .06, 0);
+      // regular = the asset as made; tighter → the shrink-wrapped variant, looser → the draped (cloth-simulated) one
+      morph(M[topMesh], { slim: clamp((5 - T.fit) / 7, 0, 1), loose: clamp((T.fit - 5) / 21, 0, 1) });
+      U.uFit.value.set(clamp((T.fit - 26) * k * .5, 0, .04), clamp((T.sfit - 2) * k * .4, -.002, .03), Math.max(0, T.flare) * .05, 0);
       U.uFitH.value.set(toH(Y.waist), 0, 0, 0);
+      U.uHem.value.set(U.uCutH.value > ext[topMesh].lo + .01 ? 1 : 0, U.uSleeveCut.value < ext[topMesh].smax - .03 ? 1 : 0);
+      U.uBand.value.set(0, 0, 0);
     }
     if (botMesh) {
       const U = M[botMesh].material.userData.U;
@@ -351,14 +383,21 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = vec3(0.92);`);
       U.uCutH.value = toH(Bt.len);
       U.uRaw.value = Bt.rawHem ? 1 : 0;
       U.uSleeveCut.value = 2; U.uRawS.value = 0; U.uTuckH.value = -1; U.uNeck.value.set(0, 0, 0, 0);
+      U.uHem.value.set(U.uCutH.value > ext[botMesh].lo + .01 ? 1 : 0, 0);
       if (botMesh === 'jeans') {
-        // thigh / knee / hem widths, relative to the asset's slim cut, blended down the leg
-        const dT = (Bt.thigh - .3) * 17 * k * .8, dK = (Bt.knee - .25) * 22 * k * .8, dH = (Bt.hemW - .2) * 39 * k * .8;
-        U.uFit.value.set(clamp(dT * .5, -.004, .03), 0, 0, lerp(dT, dK, .5));
-        U.uFitH.value.set(0, toH(470), toH(Y.ankle), dH);
+        // skinny ← asset → wide-leg (cloth-simulated); a bootcut/flare hem adds a little at the bottom
+        const avg = (Bt.thigh + Bt.knee + Bt.hemW) / 3;
+        morph(M.jeans, { slim: clamp((.42 - avg) / .32, 0, 1), wide: clamp((avg - .45) / .38, 0, 1) });
+        const flareHem = Math.max(0, Bt.hemW - Bt.knee - .1) * 39 * k * .6;
+        U.uFit.value.set(0, 0, 0, 0);
+        U.uFitH.value.set(0, toH(Y.knee), toH(Y.ankle), flareHem);
+        // the men's jeans come from a suit whose waistband was hidden by the shirt: paint a proper one
+        U.uBand.value.set(ext.jeans.hi - .042, ext.jeans.hi, A.kind === 'm' ? 1 : 0);
       } else {
-        U.uFit.value.set(clamp(Bt.hip * .02, 0, .02), 0, (Bt.fit - .3) * .35, 0);
+        morph(M.skirt, { slim: clamp((.3 - Bt.fit) / .3, 0, 1), flare: clamp((Bt.fit - .3) / .6, 0, 1) });
+        U.uFit.value.set(clamp(Bt.hip * .02, 0, .02), 0, Math.max(0, Bt.fit - .9) * .3, 0);
         U.uFitH.value.set(toH(Y.hip), 0, 0, 0);
+        U.uBand.value.set(0, 0, 0);
       }
     }
     const clip = A.clips[pr.pose] || A.clips.relaxed;

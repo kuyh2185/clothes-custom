@@ -21,7 +21,7 @@ HEIGHT = {"f": 1.77, "m": 1.88}
 GARMENTS = {
     "f": {"tee": "joepal_crude_t-shirt_female", "long": "toigo_fisherman_sweater", "jeans": "female_casualsuit01:lower",
           "skirt": "toigo_long_full_skirt", "shoes": "shoes05"},
-    "m": {"tee": "elvs_crude_t-shirt_male", "long": "toigo_fisherman_sweater", "jeans": "female_casualsuit01:lower",
+    "m": {"tee": "elvs_crude_t-shirt_male", "long": "toigo_fisherman_sweater", "jeans": "male_casualsuit06:lower",
           "skirt": "toigo_long_full_skirt", "shoes": "shoes05"},
 }
 CLOTHES_DIR = os.path.expanduser("~/tools/blender-4.5.14-windows-x64/portable/extensions/.user/user_default/mpfb/data/clothes")
@@ -162,9 +162,11 @@ def arm_param(p, side):
 for gid, (ob, name) in garments.items():
     mesh = ob.data
     for m in list(ob.modifiers):
-        if m.type == "SUBSURF":   # MPFB leaves the viewport level at 0; the exporter applies viewport modifiers
+        if m.type == "SUBSURF":   # MPFB leaves the viewport level at 0: subdivide for real (cloth bakes need the final mesh)
             m.show_viewport = True
             m.levels = max(1, m.render_levels)
+            bpy.context.view_layer.objects.active = ob
+            bpy.ops.object.modifier_apply(modifier=m.name)
     ah = mesh.attributes.new("_h", "FLOAT", "POINT")
     asl = mesh.attributes.new("_s", "FLOAT", "POINT")
     gidx = {vg.index: vg.name for vg in ob.vertex_groups}
@@ -176,6 +178,140 @@ for gid, (ob, name) in garments.items():
         asl.data[v.index].value = arm_param(co, side) if w > 0.5 and gid in ("tee", "long") else 0.0
     for p in mesh.polygons:
         p.use_smooth = True
+
+# ---- fit variants as shape keys (morph targets), baked with Blender's cloth simulation ----
+# "slim" hugs the body (shrinkwrap), "loose"/"wide"/"flare" start from an inflated copy and let gravity drape it over the
+# body, pinned where the garment hangs from (shoulders, waistband) — so changing the fit changes the folds, not just the size.
+def lerp(a, b, t):
+    return a + (b - a) * t
+
+
+def sstep(a, b, x):
+    t = max(0.0, min(1.0, (x - a) / (b - a)))
+    return t * t * (3 - 2 * t)
+
+
+Hh = HEIGHT[kind]
+L_CROTCH, L_KNEE, L_ANKLE = Hh * 0.47, Hh * 0.28, Hh * 0.055
+body_sub = body.modifiers.get("smooth")
+coll = body.modifiers.new("collide", "COLLISION")
+body.collision.thickness_outer = 0.004
+body.collision.thickness_inner = 0.01
+body.collision.cloth_friction = 6
+if body_sub:
+    body_sub.show_viewport = False
+
+
+def evaluated_coords(ob):
+    bpy.context.view_layer.update()
+    ev = ob.evaluated_get(bpy.context.evaluated_depsgraph_get())
+    return [v.co.copy() for v in ev.data.vertices]
+
+
+def bake_shrink(ob, blend=0.8, where=lambda z: 1.0):
+    base = [v.co.copy() for v in ob.data.vertices]
+    m = ob.modifiers.new("shrink", "SHRINKWRAP")
+    m.target = body
+    m.wrap_method = "NEAREST_SURFACEPOINT"
+    m.wrap_mode = "OUTSIDE_SURFACE"
+    m.offset = 0.0035
+    out = [b.lerp(c, blend * where(b.z)) for b, c in zip(base, evaluated_coords(ob))]
+    ob.modifiers.remove(m)
+    return out
+
+
+def bake_cloth(ob, offset, pin, frames=40, bend=0.5, mass=0.22):
+    me = ob.data
+    base = [v.co.copy() for v in me.vertices]
+    nrm = [v.normal.copy() for v in me.vertices]
+    for v, b, n in zip(me.vertices, base, nrm):
+        v.co = b + n * offset(b)
+    vg = ob.vertex_groups.get("pin") or ob.vertex_groups.new(name="pin")
+    for v, b in zip(me.vertices, base):
+        vg.add([v.index], pin(b), "REPLACE")
+    m = ob.modifiers.new("cloth", "CLOTH")
+    cs = m.settings
+    cs.quality = 6
+    cs.mass = mass
+    cs.tension_stiffness = cs.compression_stiffness = 14
+    cs.shear_stiffness = 6
+    cs.bending_stiffness = bend
+    cs.air_damping = 1.5
+    cs.vertex_group_mass = "pin"
+    cs.pin_stiffness = 1
+    m.collision_settings.collision_quality = 3
+    m.collision_settings.distance_min = 0.004
+    m.collision_settings.use_self_collision = False
+    m.point_cache.frame_start, m.point_cache.frame_end = 1, frames
+    sc = bpy.context.scene
+    sc.frame_start, sc.frame_end = 1, frames
+    for f in range(1, frames + 1):
+        sc.frame_set(f)
+    out = evaluated_coords(ob)
+    sc.frame_set(1)
+    ob.modifiers.remove(m)
+    ob.vertex_groups.remove(vg)
+    for v, b in zip(me.vertices, base):
+        v.co = b
+    return out
+
+
+def add_keys(ob, keys):
+    ob.shape_key_add(name="Basis", from_mix=False)
+    for name, coords in keys.items():
+        k = ob.shape_key_add(name=name, from_mix=False)
+        for i, c in enumerate(coords):
+            k.data[i].co = c
+        print("KEY", ob.name, name)
+
+
+for gid, (ob, name) in garments.items():
+    if gid == "shoes":
+        continue
+    zs = [v.co.z for v in ob.data.vertices]
+    top, bot = max(zs), min(zs)
+    keys = {}
+    if gid in ("tee", "long"):
+        # the bake happens in the A-pose: sleeves are held almost in shape (pinned) so they don't sag sideways,
+        # which would point upward once the arms come down; the body panel drapes freely from the shoulders
+        gidx = {vg.index: vg.name for vg in ob.vertex_groups}
+        armw = {v.co.freeze() if False else v.index: min(1.0, sum(g.weight for g in v.groups if gidx.get(g.group) in ARM_GROUPS)) for v in ob.data.vertices}
+        co_idx = {tuple(round(c, 6) for c in v.co): v.index for v in ob.data.vertices}
+        aw = lambda b: armw.get(co_idx.get(tuple(round(c, 6) for c in b), -1), 0.0)
+        keys["slim"] = bake_shrink(ob, 0.8)
+        keys["loose"] = bake_cloth(ob, lambda b: lerp(0.022 + 0.014 * sstep(top - 0.25, bot, b.z), 0.009, aw(b)),
+                                   lambda b: max(sstep(top - 0.10, top - 0.03, b.z), 0.92 * aw(b)), bend=0.4)
+    elif gid == "jeans":
+        keys["slim"] = bake_shrink(ob, 0.85, lambda z: sstep(L_CROTCH, L_CROTCH - 0.12, z))
+        keys["wide"] = bake_cloth(ob, lambda b: 0.004 + 0.034 * sstep(L_CROTCH - 0.05, L_ANKLE, b.z),
+                                  lambda b: sstep(top - 0.16, top - 0.05, b.z), bend=1.2, mass=0.3)
+    elif gid == "skirt":
+        keys["slim"] = bake_shrink(ob, 0.7, lambda z: sstep(top - 0.12, top - 0.3, z))
+        keys["flare"] = bake_cloth(ob, lambda b: 0.07 * sstep(top - 0.12, bot, b.z),
+                                   lambda b: sstep(top - 0.07, top - 0.02, b.z), bend=0.3)
+    add_keys(ob, keys)
+
+# the body panel of a top should follow the torso, not the arms: MPFB's interpolated weights let the hem near the
+# hands ride along with the arm (it crumples in the hand-on-hip pose)
+shoulder_z = max((rig.matrix_world @ rig.data.bones["upperarm_l"].head_local).z, 0)
+for gid in ("tee", "long"):
+    ob = garments[gid][0]
+    arm_ids = {vg.index for vg in ob.vertex_groups if vg.name in ARM_GROUPS}
+    spine = ob.vertex_groups.get("spine_01") or ob.vertex_groups.new(name="spine_01")
+    fixed = 0
+    for v in ob.data.vertices:
+        aw = sum(g.weight for g in v.groups if g.group in arm_ids)
+        if aw < 0.5 and v.co.z < shoulder_z - 0.07 and aw > 0:
+            for gi in list(arm_ids):
+                ob.vertex_groups[gi].remove([v.index])
+            if not any(g.weight > 0 for g in v.groups):
+                spine.add([v.index], 1.0, "REPLACE")
+            fixed += 1
+    print("WEIGHTS", gid, fixed)
+
+body.modifiers.remove(coll)
+if body_sub:
+    body_sub.show_viewport = True
 
 # ---- poses as one-frame actions (rest stays the MPFB A-pose bind pose) ----
 bpy.context.view_layer.objects.active = rig
