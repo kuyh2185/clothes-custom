@@ -124,6 +124,16 @@ kbd{font-family:var(--mono);font-size:10px;color:var(--muted);border:1px solid v
 #stage.no-guides #L-ov{display:none}
 #stage3d{position:absolute;inset:0;width:100%;height:100%;display:block;touch-action:none;outline:none}
 .stage-wrap.is3d #stage{display:none}
+.h3d-layer{position:absolute;inset:0;pointer-events:none;z-index:2;overflow:hidden}
+.h3d-guide{position:absolute;inset:0;width:100%;height:100%;overflow:visible}
+.h3d{position:absolute;left:0;top:0;width:16px;height:16px;margin:-8px 0 0 -8px;border-radius:50%;background:#fff;border:2px solid #161616;box-shadow:0 1px 4px rgba(0,0,0,.35);pointer-events:auto;cursor:grab;touch-action:none;padding:0}
+.h3d:hover,.h3d:focus-visible{background:var(--accent);border-color:#fff}
+.h3d.nb{background:#d9d6d0;border-style:dashed}
+.h3d.hem{width:14px;height:14px;margin:-7px 0 0 -7px;border-radius:3px;transform-origin:center}
+.h3d.sl{background:#ffd7c8}
+.h3d[hidden]{display:none}
+.brush3d{position:absolute;left:0;top:0;border-radius:50%;border:1.5px solid #161616;box-shadow:0 0 0 1.5px rgba(255,255,255,.85);pointer-events:none;z-index:3;opacity:0}
+.brush3d.show{opacity:1}
 .tip3{position:absolute;z-index:3;pointer-events:none;padding:4px 8px;border-radius:6px;background:#161616;color:#fff;font-size:12px;font-weight:600;white-space:nowrap;opacity:0;transition:opacity .15s}
 .tip3.show{opacity:1}
 #L-back,#L-bottom,#L-topbody,#L-sleeves{transition:opacity .18s var(--ease)}
@@ -323,8 +333,8 @@ input[type=range].hue::-moz-range-thumb{width:8px;height:20px;border-radius:4px;
   <span class="cur" id="foot-hint"></span>
   <span class="keys"><span><kbd>1</kbd>–<kbd>5</kbd> 도구</span><span><kbd>H</kbd> 점 숨기기</span><span><kbd>Ctrl</kbd>+<kbd>Z</kbd> 되돌리기</span></span>
 </footer>
-<script src="app.js?v=11"></script>
+<script src="app.js?v=12"></script>
 <script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"}}</script>
-<script type="module" src="stage3d.js?v=28"></script>
+<script type="module" src="stage3d.js?v=32"></script>
 </body>
 </html>

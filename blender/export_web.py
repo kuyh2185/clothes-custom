@@ -178,6 +178,21 @@ for gid, (ob, name) in garments.items():
         asl.data[v.index].value = arm_param(co, side) if w > 0.5 and gid in ("tee", "long") else 0.0
     for p in mesh.polygons:
         p.use_smooth = True
+    # a second UV map without overlaps (MakeHuman UVs mirror left/right): the site paints and cuts in it
+    if gid != "shoes":
+        for o in bpy.context.selected_objects:
+            o.select_set(False)
+        bpy.context.view_layer.objects.active = ob
+        ob.select_set(True)
+        uv_paint = mesh.uv_layers.new(name="paint")
+        mesh.uv_layers.active = uv_paint
+        bpy.ops.object.mode_set(mode="EDIT")
+        bpy.ops.mesh.select_all(action="SELECT")
+        bpy.ops.uv.smart_project(angle_limit=math.radians(60), island_margin=0.012, area_weight=1.0, scale_to_bounds=True)
+        bpy.ops.object.mode_set(mode="OBJECT")
+        mesh.uv_layers.active = mesh.uv_layers[0]
+        mesh.uv_layers[0].active_render = True
+        ob.select_set(False)
 
 # ---- fit variants as shape keys (morph targets), baked with Blender's cloth simulation ----
 # "slim" hugs the body (shrinkwrap), "loose"/"wide"/"flare" start from an inflated copy and let gravity drape it over the
@@ -336,6 +351,24 @@ def rot(pb, axis, deg):
     bpy.context.view_layer.update()
 
 
+def upright():
+    """Bring the head back over the shoulders (MakeHuman carries it forward): tilt the neck back until the head's
+    base sits right above the neck base, then turn the head the other way so the face stays level."""
+    ax = Vector((1, 0, 0))
+    for _ in range(12):
+        bpy.context.view_layer.update()
+        err = P["head"].head.y - P["neck_01"].head.y - 0.004   # >0: head behind the neck base (MakeHuman faces -Y)
+        if abs(err) < 0.0015:
+            break
+        rot(P["neck_01"], ax, -SIGN * err * 220)               # degrees per metre of error, sign from the probe above
+    for _ in range(12):
+        bpy.context.view_layer.update()
+        d = (P["head"].tail - P["head"].head).normalized()
+        if abs(d.y) < 0.01:
+            break
+        rot(P["head"], ax, -SIGN * d.y * 50)
+
+
 def reset():
     for pb in P:
         pb.location = (0, 0, 0)
@@ -343,6 +376,7 @@ def reset():
         pb.rotation_euler = (0, 0, 0)
         pb.rotation_mode = "QUATERNION"
     bpy.context.view_layer.update()
+    upright()
 
 
 def arms_down(lean=(0.15, 0.04)):
@@ -364,6 +398,20 @@ def key(name):
     track.strips.new(name, 1, act)
     rig.animation_data.action = None
 
+
+# which way is "back" for an X rotation: the head tail should move toward +Y (MakeHuman faces -Y)
+for pb in P:
+    pb.rotation_mode = "QUATERNION"
+bpy.context.view_layer.update()
+y0 = P["head"].tail.y
+rot(P["neck_01"], Vector((1, 0, 0)), 5)
+SIGN = 1 if P["head"].tail.y > y0 else -1
+for pb in P:
+    pb.rotation_quaternion = (1, 0, 0, 0)
+bpy.context.view_layer.update()
+head_fwd = (P["head"].head.y - P["neck_01"].head.y)
+NECK_BACK, HEAD_BACK = SIGN * 9, SIGN * 5
+print("NECK", round(head_fwd, 3), SIGN)
 
 # MakeHuman stands with the feet apart: bring the legs in under the hips
 def legs_in(deg=2.6):

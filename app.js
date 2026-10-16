@@ -392,6 +392,8 @@ function skirtGeo(b) {
 /* ---------- state ---------- */
 let state = { top: clone(DEF.tee), bottom: clone(DEF.jeans), target: 'top' };
 let tool = 'neck', dmgMode = 'paint';
+// 3D free editing: scissors mode, brush size (cm), painting brush
+const ui = { cutMode: 'line', brushSize: 2.5, paintOn: false, paintErase: false, brushColor: '#b8382e', brushAlpha: 1, neckSym: true };
 let images = {};
 const blobUrls = {};
 // look of the studio, kept apart from the undo history
@@ -1221,12 +1223,24 @@ function panelHTML() {
   switch (tool) {
     case 'neck':
       if (!T) return need('상의');
+      if (is3d()) return `<p class="hint">목선 위의 <b>점 9개</b>를 끌어서 목선을 마음대로 그려요. 앞에서 보면 앞목선, <b>뒤</b>에서 보면 뒷목선 점이 나와요. 양옆 점을 끌면 어깨까지 파낼 수도 있어요.</p>
+        <div class="seg2" role="group" aria-label="좌우 대칭"><button type="button" class="chip" data-ui-sym="1">좌우 대칭</button><button type="button" class="chip" data-ui-sym="0">따로따로</button></div>
+        <span class="label-sm">빠른 모양</span>
+        <div class="chips" style="margin-bottom:14px">${Object.entries(PRESETS).map(([id, p]) => `<button type="button" class="chip" data-preset3="${id}">${p[0]}</button>`).join('')}<button type="button" class="chip" data-act="neck-reset">원래대로</button></div>`;
       return (is3d() ? `<p class="hint"><b>모양 버튼</b>을 누르거나 막대로 깊이·넓이·U↔V를 바꿔요. 마네킹을 끌면 돌려 볼 수 있어요.</p>`
         : `<p class="hint">목 아래 <b>동그란 점</b>을 아래로 끌면 깊어지고, 양옆 점은 넓어져요. <b>마름모 점</b>을 안쪽으로 끌면 V넥, 바깥으로 끌면 U넥이 돼요.</p>`) + `
         <div class="chips" style="margin-bottom:18px">${Object.entries(PRESETS).map(([id, p]) => `<button type="button" class="chip" data-preset="${id}">${p[0]}</button>`).join('')}</div>
         ${slider('top.neckD', '깊이', ...LIMIT['top.neckD'], 1)}${slider('top.neckW', '넓이', ...LIMIT['top.neckW'], 1)}${slider('top.neckV', '모양 (U ↔ V)', 0, 1, .01)}`;
     case 'cut':
       if (!T && !B) return need('옷');
+      if (is3d()) return `<div class="seg2" role="group" aria-label="가위 방법"><button type="button" class="chip" data-cutmode="line">가로로 자르기</button><button type="button" class="chip" data-cutmode="free">붓으로 자르기</button><button type="button" class="chip" data-cutmode="keep">되살리기</button></div>
+        <p class="hint">${ui.cutMode === 'line' ? '자를 높이에 대고 <b>클릭</b>하면 한 줄로 잘려요. 밑단과 소매 끝의 <b>점</b>을 끌면 밑단을 비대칭·곡선으로, 소매를 한쪽만 바꿀 수 있어요.'
+          : ui.cutMode === 'free' ? '옷 위를 <b>누른 채 문지르면</b> 그 자리가 잘려 나가요. 트임, 컷아웃, 구멍 무엇이든 돼요.' : '잘라 낸 곳을 <b>문지르면</b> 다시 붙어요.'}</p>
+        ${ui.cutMode !== 'line' ? `<label class="row"><span class="lab">붓 크기<b>${ui.brushSize.toFixed(1)}cm</b></span><input type="range" data-ui="brushSize" min="0.5" max="8" step="0.1" value="${ui.brushSize}"></label>` : ''}
+        ${T ? slider('top.len', '상의 기장', ...LIMIT['top.len'], 1) + slider('top.sleeve', '소매 기장', ...LIMIT['top.sleeve'], 1) : ''}
+        ${B ? slider('bottom.len', '하의 기장', ...bottomLenLimit(B), 1) : ''}
+        ${ui.cutMode === 'line' ? `<div class="seg2" role="group" aria-label="좌우 대칭"><button type="button" class="chip" data-ui-sym="1">좌우 대칭</button><button type="button" class="chip" data-ui-sym="0">따로따로</button></div>` : ''}
+        <div class="btn-row"><button type="button" class="chip" data-act="hem-reset">밑단·소매 모양 처음으로</button><button type="button" class="chip" data-act="cuts-clear">붓으로 자른 곳 전부 되살리기</button></div>`;
       return `<p class="hint">자르고 싶은 높이에 대고 <b>클릭</b>하세요. 소매에 대면 소매가 잘리고, 어깨 가까이 자르면 <b>민소매</b>가 돼요.</p>
         ${T ? slider('top.len', '상의 기장', ...LIMIT['top.len'], 1) + slider('top.sleeve', '소매 기장', ...LIMIT['top.sleeve'], 1) : ''}
         ${B ? slider('bottom.len', '하의 기장', ...bottomLenLimit(B), 1) : ''}
@@ -1265,6 +1279,14 @@ function panelHTML() {
           ${picker('c2', '무늬 색')}
           <div class="swatches">${COLORS.map(([n, c]) => `<button type="button" class="sw" data-c2="${c}" style="background:${c}" aria-label="무늬 ${n}" title="${n} ${c}"></button>`).join('')}</div>
           <div style="margin-top:14px">${slider('cur.fill.scale', '무늬 크기', .5, 2.5, .1)}</div>` : ''}
+        ${is3d() ? `<span class="label-sm">붓으로 칠하기</span>
+        <div class="seg2" role="group" aria-label="붓"><button type="button" class="chip" data-paint="off">끄기</button><button type="button" class="chip" data-paint="on">칠하기</button><button type="button" class="chip" data-paint="erase">지우개</button></div>
+        ${ui.paintOn ? `<p class="note" style="margin:0 0 8px">옷 위를 누른 채 문지르면 칠해져요. 마네킹 돌리기는 붓을 끄고 하세요.</p>
+          <div class="swatches" style="margin-bottom:10px">${COLORS.map(([n, c]) => `<button type="button" class="sw" data-bc="${c}" style="background:${c}" aria-label="붓 ${n}" title="붓 ${n} ${c}" aria-pressed="${ui.brushColor === c}"></button>`).join('')}</div>
+          <div class="hexrow"><span class="prev" style="background:${ui.brushColor}"></span><input type="text" class="hex" data-bchex maxlength="7" value="${ui.brushColor}" aria-label="붓 색 코드"><span class="note" style="margin:0">붓 색</span></div>
+          <label class="row"><span class="lab">붓 크기<b>${ui.brushSize.toFixed(1)}cm</b></span><input type="range" data-ui="brushSize" min="0.5" max="8" step="0.1" value="${ui.brushSize}"></label>
+          <label class="row"><span class="lab">진하기<b>${Math.round(ui.brushAlpha * 100)}%</b></span><input type="range" data-ui="brushAlpha" min="0.1" max="1" step="0.05" value="${ui.brushAlpha}"></label>
+          <div class="btn-row"><button type="button" class="chip" data-act="paint-clear">칠한 것 전부 지우기</button></div>` : ''}` : ''}
         <span class="label-sm">내 이미지 프린트</span>
         <div class="btn-row"><label class="file">${g.print ? '이미지 바꾸기' : '이미지 올리기'}<input type="file" accept="image/*" id="print-file"></label>
           ${g.print ? '<button type="button" class="chip" data-act="del-print">프린트 지우기</button>' : ''}</div>
@@ -1274,6 +1296,7 @@ function panelHTML() {
   return '';
 }
 function renderPanel() {
+  if (window.__s3) window.__s3.update();
   const name = TOOLS.find(t => t[0] === tool)[1];
   $('#panel-title').textContent = name;
   $('#panel').innerHTML = panelHTML();
@@ -1309,6 +1332,10 @@ function syncPanel() {
     P.querySelectorAll('[data-c1]').forEach(b => b.setAttribute('aria-pressed', b.dataset.c1 === g.fill.c1));
     P.querySelectorAll('[data-c2]').forEach(b => b.setAttribute('aria-pressed', b.dataset.c2 === g.fill.c2));
   }
+  P.querySelectorAll('[data-cutmode]').forEach(b => b.setAttribute('aria-pressed', b.dataset.cutmode === ui.cutMode));
+  P.querySelectorAll('[data-ui-sym]').forEach(b => b.setAttribute('aria-pressed', (b.dataset.uiSym === '1') === ui.neckSym));
+  P.querySelectorAll('[data-paint]').forEach(b => b.setAttribute('aria-pressed', b.dataset.paint === (ui.paintOn ? (ui.paintErase ? 'erase' : 'on') : 'off')));
+  P.querySelectorAll('[data-ui]').forEach(el => el.style.setProperty('--p', ((el.value - el.min) / (el.max - el.min) * 100).toFixed(1) + '%'));
   if (state.top) P.querySelectorAll('[data-preset]').forEach(b => { const p = PRESETS[b.dataset.preset]; b.setAttribute('aria-pressed', state.top.neckD === p[1] && state.top.neckW === p[2] && state.top.neckV === p[3]); });
 }
 const P = $('#panel');
@@ -1345,6 +1372,9 @@ P.addEventListener('keydown', e => {
 document.addEventListener('pointerup', () => { if (sliderAdjust) { sliderAdjust = false; endAdjust(); } });
 document.addEventListener('pointercancel', () => { if (sliderAdjust) { sliderAdjust = false; endAdjust(); } });
 P.addEventListener('input', e => {
+  const u = e.target.closest('[data-ui]');
+  if (u) { ui[u.dataset.ui] = +u.value; const b = u.closest('.row').querySelector('.lab b'); if (b) b.textContent = u.dataset.ui === 'brushAlpha' ? Math.round(ui.brushAlpha * 100) + '%' : ui.brushSize.toFixed(1) + 'cm'; syncPanel(); return; }
+  if (e.target.matches('[data-bchex]')) { const v = parseHex(e.target.value); e.target.classList.toggle('bad', !v); if (v) { ui.brushColor = v; e.target.previousElementSibling.style.background = v; } return; }
   const hue = e.target.closest('[data-hue]');
   if (hue) { const c = hue.dataset.hue; setHSV(c, { ...getHSV(c), h: +hue.value }); return; }
   const hx = e.target.closest('[data-hex]');
@@ -1378,6 +1408,15 @@ P.addEventListener('click', e => {
   const b = e.target.closest('button');
   if (!b || b.disabled) return;
   const g = state[state.target], d = b.dataset;
+  if (d.cutmode) { ui.cutMode = d.cutmode; renderPanel(); return; }
+  if (d.uiSym) { ui.neckSym = d.uiSym === '1'; syncPanel(); return; }
+  if (d.paint) { ui.paintOn = d.paint !== 'off'; ui.paintErase = d.paint === 'erase'; renderPanel(); return; }
+  if (d.bc) { ui.brushColor = d.bc; renderPanel(); return; }
+  if (d.preset3) { if (window.__s3) window.__s3.neckPreset(d.preset3); say(PRESETS[d.preset3][0]); return; }
+  if (d.act === 'neck-reset') { state.top.neckF = state.top.neckB = null; render(); commit(); say('목선을 원래대로 돌렸어요'); return; }
+  if (d.act === 'hem-reset') { [state.top, state.bottom].forEach(x => { if (x) { x.hemOff = null; x.sleeveAdj = null; } }); render(); commit(); say('밑단·소매 모양을 처음으로 돌렸어요'); return; }
+  if (d.act === 'cuts-clear') { [state.top, state.bottom].forEach(x => { if (x && x.strokes) x.strokes = x.strokes.filter(k => k.t === 'paint' || k.t === 'erase'); }); render(); commit(); say('붓으로 자른 곳을 되살렸어요'); return; }
+  if (d.act === 'paint-clear') { const g2 = state[state.target]; if (g2 && g2.strokes) g2.strokes = g2.strokes.filter(k => k.t === 'cut' || k.t === 'keep'); render(); commit(); say('칠한 것을 지웠어요'); return; }
   if (d.tuck) { state.top.tuck = d.tuck === '1'; say(state.top.tuck ? '상의를 하의 안에 넣었어요' : '상의를 밖으로 뺐어요'); }
   else if (d.preset) { const p = PRESETS[d.preset]; Object.assign(state.top, { neckD: p[1], neckW: p[2], neckV: p[3] }); }
   else if (d.fitp) { const [slot, i] = d.fitp.split(':'); Object.assign(state[slot === 'top' ? 'top' : 'bottom'], FIT_PRESETS[slot][+i][1]); }
@@ -1471,7 +1510,7 @@ function renderAll() { renderCards(); render(); renderPanel(); }
 /* ---------- bridge for the 3D stage (stage3d.js) ---------- */
 window.__cc = {
   get state() { return state; }, get prefs() { return prefs; }, get images() { return images; }, get geo() { return geo; },
-  get BODY() { return BODY; }, get Y() { return Y; }, get LEG() { return LEG; }, get tool() { return tool; }, get dmgMode() { return dmgMode; },
+  get BODY() { return BODY; }, ui, get Y() { return Y; }, get LEG() { return LEG; }, get tool() { return tool; }, get dmgMode() { return dmgMode; },
   table, bodyHalf, armO, armI, neckY, legMid, shade, warp: (p, ctx) => warp(p, ctx), tucked,
   LIMIT, SLEEVELESS, bottomLenLimit, sleeveName, topLenName, bottomLenName, NAME,
   applyCut: c => applyCut(c, null), render, commit, say, renderPanel, renderLayers,
