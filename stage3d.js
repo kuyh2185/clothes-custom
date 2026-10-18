@@ -222,18 +222,33 @@ function start() {
     for (const id of GARMENTS) {
       const m = meshes[id];
       if (!m) continue;
-      const P = m.geometry.attributes.position, out = new Float32Array(P.count);
+      const P = m.geometry.attributes.position, out = new Float32Array(P.count), toBody = new Float32Array(P.count * 3);
       for (let i = 0; i < P.count; i++) {
         const x = P.getX(i), y = P.getY(i), z = P.getZ(i), gx = Math.floor(x / cs), gy = Math.floor(y / cs), gz = Math.floor(z / cs);
-        let best = 1e9;
+        let best = 1e9, bj = -1;
         for (let r = 1; r <= 2 && best > 1e8; r++)
           for (let a = -r; a <= r; a++) for (let b = -r; b <= r; b++) for (let c = -r; c <= r; c++) {
             const L = grid.get(key(gx + a, gy + b, gz + c));
-            if (L) for (const j of L) { const d = (B.getX(j) - x) ** 2 + (B.getY(j) - y) ** 2 + (B.getZ(j) - z) ** 2; if (d < best) best = d; }
+            if (L) for (const j of L) { const d = (B.getX(j) - x) ** 2 + (B.getY(j) - y) ** 2 + (B.getZ(j) - z) ** 2; if (d < best) { best = d; bj = j; } }
           }
         out[i] = best > 1e8 ? .06 : Math.sqrt(best);
+        if (bj >= 0) {   // towards the body: an average over the body vertices nearly as close (one vertex alone makes it bumpy)
+          const lim = (Math.sqrt(best) + .012) ** 2;
+          let sx = 0, sy = 0, sz = 0, sw = 0;
+          for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) for (let c = -1; c <= 1; c++) {
+            const L = grid.get(key(gx + a, gy + b, gz + c));
+            if (L) for (const j of L) {
+              const d = (B.getX(j) - x) ** 2 + (B.getY(j) - y) ** 2 + (B.getZ(j) - z) ** 2;
+              if (d > lim) continue;
+              const wt = 1 / (Math.sqrt(d) + .004);
+              sx += (B.getX(j) - x) * wt; sy += (B.getY(j) - y) * wt; sz += (B.getZ(j) - z) * wt; sw += wt;
+            }
+          }
+          if (sw) { toBody[i * 3] = sx / sw; toBody[i * 3 + 1] = sy / sw; toBody[i * 3 + 2] = sz / sw; }
+        }
       }
       m.geometry.setAttribute('_cl', new THREE.BufferAttribute(out, 1));
+      m.geometry.setAttribute('_cn', new THREE.BufferAttribute(toBody, 3));
       // trousers: which leg each vertex belongs to, from its skin weights (+1 left leg bones, −1 right, 0 the hips) —
       // in the rest pose the knees nearly touch, so position alone can't tell
       const lg = new Float32Array(P.count), SI = m.geometry.attributes.skinIndex, SW = m.geometry.attributes.skinWeight;
@@ -307,6 +322,7 @@ function start() {
       uSlC: { value: [new THREE.Vector3(), new THREE.Vector3()] }, uSlD: { value: [new THREE.Vector3(0, -1, 0), new THREE.Vector3(0, -1, 0)] },
       uSlO: { value: [new THREE.Vector3(1, 0, 0), new THREE.Vector3(-1, 0, 0)] }, uSlL: { value: new THREE.Vector2(.6, .6) },
       uArmF: { value: Array.from({ length: NA }, () => new THREE.Vector2()) }, uArmB: { value: Array.from({ length: NA }, () => new THREE.Vector2()) }, uArmOn: { value: 0 },
+      uStrapY: { value: 99 }, uZone: { value: new THREE.Vector4() }, uZoneOn: { value: 0 },
       uHover: { value: -10 }, uBand: { value: new THREE.Vector3() }, uHem: { value: new THREE.Vector2() }, uUnder: { value: 99 },
       uMask: { value: mask.t }, uPaint: { value: paint.t }, uBrushOn: { value: 0 },
     };
@@ -321,11 +337,12 @@ function start() {
       Object.assign(sh.uniforms, U);
       sh.vertexShader = sh.vertexShader
         .replace('#include <common>', `#include <common>
-attribute float _h; attribute float _s; attribute float _c; attribute float _cl; attribute float _lg;
+attribute float _h; attribute float _s; attribute float _c; attribute float _cl; attribute float _lg; attribute vec3 _cn;
 #ifndef USE_UV1
 attribute vec2 uv1;
 #endif
-varying vec3 vRest; varying float vH; varying float vS; varying vec2 vB; varying float vC; varying vec3 vRN;
+varying vec3 vRest; varying float vH; varying float vS; varying vec2 vB; varying float vC; varying vec3 vRN; varying vec3 vPart;
+uniform float uStrapY;
 uniform vec4 uFit; uniform vec4 uFitH; uniform vec2 uSh; uniform vec4 uHand[2]; uniform float uHandOn;
 uniform sampler2D uShape; uniform float uShapeOn; uniform vec4 uFr; uniform float uWaist;
 uniform vec3 uSlC[2]; uniform vec3 uSlD[2]; uniform vec3 uSlO[2]; uniform vec2 uSlL; uniform vec2 uLeg[${NL}];
@@ -347,6 +364,21 @@ float shapeCell(int r, float v, float range, float a) {
 }
 // the cloth moves straight out from the middle of its part (not along the vertex normal, which differs on either
 // side of a seam and would tear it open). Angle round a sleeve: 0 = its outside; the right one mirrors the left
+// which part a point is on, how far along it and the angle round it (the same as regionOf() in JS) — for the hover band
+vec3 partCoord(vec3 p, float s, float lg) {
+  if (uFr.w < 0.5 && s > 0.01) {
+    int i = p.x > 0.0 ? 0 : 1;
+    vec3 d = normalize(uSlD[i]), q = p - (uSlC[i] + uSlD[i] * (s - 0.1));
+    q -= d * dot(q, d);
+    vec3 o = uSlO[i], b = cross(d, o) * (i == 0 ? 1.0 : -1.0);
+    return vec3(float(1 + i), s * (i == 0 ? uSlL.x : uSlL.y), atan(dot(q, b), dot(q, o)));
+  }
+  if (uFr.w > 0.5 && uFr.w < 1.5) {
+    vec2 lc = legCentre(p.y);
+    return lg >= 0.0 ? vec3(3.0, p.y, atan(p.x - lc.x, p.z - lc.y)) : vec3(4.0, p.y, atan(p.x + lc.x, p.z - lc.y));
+  }
+  return vec3(0.0, p.y, atan(p.x, p.z - uFr.x));
+}
 vec4 shapeOff(vec3 p, float s, float lg) {
   if (uFr.w < 0.5 && s > 0.01) {
     int i = p.x > 0.0 ? 0 : 1;
@@ -372,19 +404,21 @@ if (uHandOn > 0.5) for (int i = 0; i < 2; i++) {
   if (uHand[i].w > 0.0 && r < uHand[i].w) transformed = uHand[i].xyz + d / max(r, 1e-4) * uHand[i].w;
 }`)
         .replace('#include <begin_vertex>', `#include <begin_vertex>
-vRest = position; vH = _h; vS = _s; vB = uv1; vC = _c; vRN = normal;
+vRest = position; vH = _h; vS = _s; vB = uv1; vC = _c; vRN = normal; vPart = partCoord(position, _s, _lg);
 float off = (vS > 0.01 ? uFit.y : uFit.x * (1.0 - smoothstep(uSh.y, uSh.x, _h)));   // no push at the shoulders: a big top hangs from them
 off += uFit.z * max(0.0, uFitH.x - _h);
 if (uFitH.y > 0.0) { float t = clamp((uFitH.y - _h) / max(0.01, uFitH.y - uFitH.z), 0.0, 1.0); off += mix(uFit.w, uFitH.w, t); }
 transformed += objectNormal * off;
 // pulled out / pushed in by hand, never into the body
 if (uShapeOn > 0.5) { vec4 so = shapeOff(position, _s, _lg); transformed += so.xyz * max(so.w, 0.003 - _cl); }
+// sleeveless: what is left above the armpit (shoulders, straps) lies on the body
+if (_s < 0.01 && position.y > uStrapY) { float L = length(_cn); transformed += _cn * max(0.0, 1.0 - 0.004 / max(L, 1e-4)) * smoothstep(uStrapY, uStrapY + 0.05, position.y); }
 // a waistband sits on the body instead of standing off it (drawn in towards the middle)
 if (uWaist > 0.0) transformed -= normalize(vec3(position.x, 0.0, position.z - uFr.x) + 1e-6) * max(0.0, _cl - 0.004) * smoothstep(uWaist - 0.08, uWaist - 0.025, _h);`);
       sh.fragmentShader = sh.fragmentShader
         .replace('#include <common>', `#include <common>
-varying vec3 vRest; varying float vH; varying float vS; varying vec2 vB; varying float vC; varying vec3 vRN;
-uniform float uHoodOff;
+varying vec3 vRest; varying float vH; varying float vS; varying vec2 vB; varying float vC; varying vec3 vRN; varying vec3 vPart;
+uniform float uHoodOff; uniform vec4 uZone; uniform float uZoneOn;
 uniform vec3 uC1; uniform vec3 uC2; uniform float uPat; uniform float uScale; uniform float uAvg; uniform vec3 uAvgC; uniform float uKeep; uniform float uDetail;
 uniform float uCutH; uniform vec2 uSleeveCut; uniform float uRaw; uniform float uRawS; uniform float uTuckH;
 uniform float uHemOff[${HP}]; uniform float uHemLeg;
@@ -528,7 +562,14 @@ if (uHem.x > 0.5 && uRaw < 0.5 && vS < 0.01 && vH < cutH + 0.02) {
 }
 if (uHem.y > 0.5 && uRawS < 0.5 && vS > 0.01 && vS > sc - 0.05) diffuseColor.rgb *= 0.9;
 if (uRaw > 0.5 && vS < 0.01 && vH < cutH + 0.012) diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.92), 0.35);
-if (abs(vH - uHover) < 0.0016 && vS < 0.01 && fract((vRest.x + vRest.z) * 40.0) < 0.6) diffuseColor.rgb = vec3(0.05);`);
+if (abs(vH - uHover) < 0.0016 && vS < 0.01 && fract((vRest.x + vRest.z) * 40.0) < 0.6) diffuseColor.rgb = vec3(0.05);
+// shape tool: the part under the pointer glows (hover), orange while it is being pulled
+if (uZoneOn > 0.5 && abs(vPart.x - uZone.x) < 0.5) {
+  float band = 1.0 - smoothstep(uZone.z * 0.55, uZone.z, abs(vPart.y - uZone.y));
+  float sw = pow(max(0.0, cos(vPart.z - uZone.w * 1.5707963)), 2.0);
+  float k = band * sw;
+  diffuseColor.rgb = uZoneOn > 1.5 ? mix(diffuseColor.rgb, vec3(0.86, 0.2, 0.06), k * 0.5) : mix(diffuseColor.rgb, vec3(1.0), k * 0.4);
+}`);
     };
     m.customProgramCacheKey = () => 'garment-v' + VER;
     return m;
@@ -810,8 +851,8 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = uSock;`);
     const inf = A.info[id], step = SLEEVE(rg) ? .07 : TOPS.has(id) ? .07 : .08, out = [];
     let v0, v1;
     if (SLEEVE(rg)) { const sl = inf.sl[rg === 1 ? 'lsl' : 'rsl']; v0 = .12 * sl.L; v1 = (inf.smax - .03) * sl.L; }
-    else if (TOPS.has(id)) { v0 = Math.max(U.uCutH.value, inf.lo) + .03; v1 = (inf.arm ? inf.arm[NC - 1][1] : inf.hi - .25) - .02; }
-    else { v0 = Math.max(U.uCutH.value, inf.lo) + .03; v1 = inf.hi - .1; }
+    else if (TOPS.has(id)) { v0 = inf.lo + .03; v1 = (inf.arm ? inf.arm[NC - 1][1] : inf.hi - .25) - .02; }
+    else { v0 = inf.lo + .03; v1 = inf.hi - .1; }
     for (let v = v0; v <= v1 + 1e-6; v += step) out.push(v);
     return out;
   }
@@ -827,11 +868,19 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = uSock;`);
     });
   }
   /* armhole (sleeveless): 5 points per side, shoulder → armpit, as (half-width, height); kept in order, inside the old seam */
+  // shoulder straps (T.strap 1 wide, 2 thin): where the strap sits and how wide it is (m)
+  const STRAP = { 1: .045, 2: .011 };
+  const strapX = () => .088 * A.H / 1.77;
   function armCtrl(T, id, side) {
     const st = T && T['arm' + side];
     if (st && st.length === NC) return st.map(([x, y]) => [x * A.H, y * A.H]);
     const d = A.info[id].arm;
-    return d ? d.map(p => p.slice()) : null;
+    if (!d) return null;
+    if (!(T && STRAP[T.strap])) return d.map(p => p.slice());
+    // strap: straight down at the same width from the shoulder to just above the bust, then round out to the armpit
+    const w = STRAP[T.strap] * A.H / 1.77, xs = strapX() + w / 2, [xa, ya] = d[NC - 1];
+    const ys = Math.max(ownY(id, 'F', xs), ownY(id, 'B', xs)) + .01, yb = ya + .07;
+    return [[xs, ys], [xs, (ys + yb) / 2], [xs + .002, yb], [xs + (xa - xs) * .72, ya + (yb - ya) * .35], [xa, ya]];
   }
   function armCurve(T, id, side) {
     const c = armCtrl(T, id, side).slice().sort((a, b) => a[1] - b[1]), y0 = c[0][1], y1 = c[NC - 1][1];
@@ -919,6 +968,7 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = uSock;`);
       U.uNeckOn.value = 1;
       U.uHoodOff.value = T.hoodOff ? 1 : 0;
       U.uArmOn.value = T.sleeve <= cc.SLEEVELESS && inf.arm ? 1 : 0;
+      U.uStrapY.value = U.uArmOn.value ? inf.arm[NC - 1][1] + .02 : 99;
       if (U.uArmOn.value) {
         U.uSleeveCut.value.set(0, 0);   // no sleeve fabric at all: the armhole is the edge
         armCurve(T, topMesh, 'F').forEach((q, i) => U.uArmF.value[i].set(q[0], q[1]));
@@ -947,7 +997,7 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = uSock;`);
       common(U, Bt, botMesh);
       U.uCutH.value = toH(Bt.len);
       U.uRaw.value = Bt.rawHem ? 1 : 0;
-      U.uSleeveCut.value.set(2, 2); U.uRawS.value = 0; U.uTuckH.value = -1; U.uNeckOn.value = 0; U.uHoodOff.value = 0; U.uArmOn.value = 0;
+      U.uSleeveCut.value.set(2, 2); U.uRawS.value = 0; U.uTuckH.value = -1; U.uNeckOn.value = 0; U.uHoodOff.value = 0; U.uArmOn.value = 0; U.uStrapY.value = 99;
       // a top worn out over the bottom covers its waistband: hide that strip (unless the top has holes or brush cuts there)
       const tc = topMesh && M[topMesh].material.userData.U, holes = T && ((T.strokes || []).length || (T.dmg3 || []).length || (T.hemOff || []).some(v => v));
       U.uUnder.value = T && !T.tuck && tc && !holes && tc.uCutH.value < inf.hi - .05 ? inf.hi - .045 : 99;
@@ -1163,7 +1213,7 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = uSock;`);
       const mesh = A.meshes[meshOf('top', T)];
       for (const side of ['F', 'B']) for (let i = 0; i < NC; i++) add(side === 'F' ? 'nf' : 'nb', mesh, { side, i, slot: 'top' });
     }
-    if (tool === 'fit') {
+    if (tool === 'fit' && cc.ui.shapeFine) {
       // outline points: on each side of every part, at its outermost edge as seen from here
       const R = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0), rx = R.x, rz = R.z, rl = Math.hypot(rx, rz) || 1;
       shAz = Math.atan2(rx, rz);
@@ -1221,14 +1271,8 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = uSock;`);
         P0.fromBufferAttribute(hd.mesh.geometry.attributes.position, hd.vi);
         tmp.x += hd.pt[0] - P0.x; tmp.y += hd.pt[1] - P0.y;
       }
-      if (hd.kind === 'sh') {
-        const m = hd.mesh, P = m.geometry.attributes.position, reg = regionTable(m), k = hd.vi;
-        const rest = [P.getX(k), P.getY(k), P.getZ(k)], r = regionOf(m.name, rest, m.geometry.attributes._s.getX(k), m.geometry.attributes._lg ? m.geometry.attributes._lg.getX(k) : null);
-        const d = Math.max(gridAt(m, hd.rg, reg.v[k], reg.a[k]), .003 - m.geometry.attributes._cl.getX(k));
-        const a0 = m.applyBoneTransform(k, new THREE.Vector3(...rest)), a1 = m.applyBoneTransform(k, new THREE.Vector3(...rest).addScaledVector(r.dir, d));
-        tmp.add(a1.sub(a0));
-      }
-      tmp.applyMatrix4(hd.mesh.matrixWorld);
+      if (hd.kind === 'sh') tmp.copy(shWorld(hd));
+      else tmp.applyMatrix4(hd.mesh.matrixWorld);
       const world = tmp.clone();
       const out = new THREE.Vector3(world.x - controls.target.x, 0, world.z - controls.target.z);
       const facing = hd.kind === 'sh' || out.length() < .02 || out.normalize().dot(camDir) > -0.15;   // outline points sit on the edge: always shown
@@ -1271,15 +1315,7 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = uSock;`);
     hd.gx = r.left + r.width / 2 - e.clientX; hd.gy = r.top + r.height / 2 - e.clientY;   // grab offset, so the point doesn't jump
     if (hd.kind === 'nf' || hd.kind === 'nb') hd.start = neckCtrl(st.top, meshOf('top', st.top), hd.side).map(p => p.slice());
     else if (hd.kind === 'af' || hd.kind === 'ab') hd.start = armCtrl(st.top, meshOf('top', st.top), hd.side).map(p => p.slice());
-    else if (hd.kind === 'sh') {   // this part's points (heights and values, m), so the drag works from where it started
-      const g = st[hd.slot], vs = handles.filter(h => h.kind === 'sh' && h.slot === hd.slot && h.rg === hd.rg).map(h => h.v);
-      const P0 = g.prof || {}, old = P0[sideKey(hd.rg, hd.k)] || P0[hd.rg] || [];   // a side, or the whole ring saved before
-      const any = Object.keys(P0).find(key => +key.split(':')[0] === hd.rg);
-      const lv = old.length ? old.map(q => q[0] * A.H) : any ? P0[any].map(q => q[0] * A.H) : profLevels(hd.mesh.name, hd.rg, hd.mesh.material.userData.U);
-      hd.start = lv.map(v => [v, ((old.find(q => Math.abs(q[0] * A.H - v) < 1e-4) || [0, 0])[1]) * A.H]);
-      hd.idx = hd.start.findIndex(q => Math.abs(q[0] - hd.v) < 1e-4);
-      hd.vs = vs;
-    }
+    else if (hd.kind === 'sh') profStart(st[hd.slot], hd);   // this part's points, so the drag works from where it started
     else if (hd.kind === 'hem') hd.start = (st[hd.slot].hemOff || new Array(HP).fill(0)).slice();
     else hd.start = (st.top.sleeveAdj || [0, 0]).slice();
     hd.mpp = mPerPx(hd.world || controls.target);
@@ -1288,6 +1324,28 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = uSock;`);
       hd.before = ''; dragH = null; controls.enabled = true; cc.commit(); dirty = true;
     };
     hd.el.addEventListener('pointermove', move); hd.el.addEventListener('pointerup', up); hd.el.addEventListener('pointercancel', up);
+  }
+  // sideways only: out = wider, in = narrower at the point pulled; its neighbours follow part of the way
+  function profDrag(g, hd, dd) {
+    const H = A.H;
+    const vals = hd.start.map(([v, d], j) => {
+      const w = [1, .62, .27, .07][Math.abs(j - hd.idx)] || 0;   // a rounded bulge, not a point
+      return [r4(v / H), r4(clamp(d + dd * w, -.08, .4) / H)];
+    });
+    const P1 = { ...(g.prof || {}) };
+    if (P1[hd.rg]) { const ring = P1[hd.rg]; delete P1[hd.rg]; for (let k = 0; k < 4; k++) P1[sideKey(hd.rg, k)] = ring.map(q => q.slice()); }   // old whole-ring save → four sides
+    P1[sideKey(hd.rg, hd.k)] = vals;
+    if (cc.ui.shapeSym) { const [mr, mk] = mirrorKey(hd.rg, hd.k); if (mr !== hd.rg || mk !== hd.k) P1[sideKey(mr, mk)] = vals.map(q => q.slice()); }
+    g.prof = P1;
+    if (g.look) delete g.look[hd.rg === 0 ? 'body' : SLEEVE(hd.rg) ? 'sleeveShape' : 'legs'];   // no longer the card's shape
+  }
+  // a part side's points as they are now ([v, d] in m), and which one sits at height v
+  function profStart(g, hd) {
+    const P0 = g.prof || {}, old = P0[sideKey(hd.rg, hd.k)] || P0[hd.rg] || [];
+    const any = Object.keys(P0).find(key => +key.split(':')[0] === hd.rg);
+    const lv = old.length ? old.map(q => q[0] * A.H) : any ? P0[any].map(q => q[0] * A.H) : profLevels(hd.mesh.name, hd.rg, hd.mesh.material.userData.U);
+    hd.start = lv.map(v => [v, ((old.find(q => Math.abs(q[0] * A.H - v) < 1e-4) || [0, 0])[1]) * A.H]);
+    hd.idx = hd.start.reduce((b, q, i) => Math.abs(q[0] - hd.v) < Math.abs(hd.start[b][0] - hd.v) ? i : b, 0);
   }
   function dragMove(e, hd) {
     const st = cc.state, H = A.H, dx = (e.clientX - hd.x0) * hd.mpp, dy = -(e.clientY - hd.y0) * hd.mpp;
@@ -1307,17 +1365,7 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = uSock;`);
       }
       T['neck' + hd.side] = pts.map(([x, y]) => [r4(x / H), r4(y / H)]);
     } else if (hd.kind === 'sh') {
-      // sideways only: out = wider, in = narrower, the point under the pointer; its neighbours follow part of the way
-      const g = st[hd.slot], dd = dx * hd.out;   // dx is along the screen; out says which way is outwards
-      const vals = hd.start.map(([v, d], j) => {
-        const w = [1, .62, .27, .07][Math.abs(j - hd.idx)] || 0;   // neighbours follow part of the way: a rounded bulge, not a point
-        return [r4(v / H), r4(clamp(d + dd * w, -.08, .4) / H)];
-      });
-      const P1 = { ...(g.prof || {}) };
-      if (P1[hd.rg]) { const ring = P1[hd.rg]; delete P1[hd.rg]; for (let k = 0; k < 4; k++) P1[sideKey(hd.rg, k)] = ring.map(q => q.slice()); }   // old whole-ring save → four sides
-      P1[sideKey(hd.rg, hd.k)] = vals;
-      if (cc.ui.shapeSym) { const [mr, mk] = mirrorKey(hd.rg, hd.k); if (mr !== hd.rg || mk !== hd.k) P1[sideKey(mr, mk)] = vals.map(q => q.slice()); }
-      g.prof = P1;
+      profDrag(st[hd.slot], hd, dx * hd.out);   // dx is along the screen; out says which way is outwards
     } else if (hd.kind === 'af' || hd.kind === 'ab') {
       // the point goes where the pointer is on the body (either side counts: the armholes mirror each other)
       const T = st.top, id = meshOf('top', T), pts = hd.start.map(p => p.slice());
@@ -1404,7 +1452,7 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = uSock;`);
   canvas.addEventListener('pointerdown', e => {
     if (e.button > 0) return;
     if (cc.tool === 'gfx') return gfxDown(e);
-    if (cc.tool === 'fit') { const h = hit(e); if (h && h.slot !== cc.state.target) cc.setTarget(h.slot); return; }
+    if (cc.tool === 'fit') return zoneDown(e);
     const tool = cc.tool, bm = brushMode();
     if (!['cut', 'dmg', 'color'].includes(tool)) return;
     const h = hit(e);
@@ -1440,7 +1488,11 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = uSock;`);
       return;
     }
     const tool = cc.tool;
-    if (tool === 'gfx' && !e.buttons && !gdrag) {
+    if (tool === 'fit' && !e.buttons && !zdrag) {
+      const z = zoneAt(e);
+      showZone(z, e);
+      canvas.style.cursor = z ? 'ew-resize' : '';
+    } else if (tool === 'gfx' && !e.buttons && !gdrag) {
       const q = gfxAt(e);
       canvas.style.cursor = q && q.it ? 'move' : '';
     } else if (bm && !e.buttons) {
@@ -1463,7 +1515,103 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = uSock;`);
   };
   canvas.addEventListener('pointerup', end);
   canvas.addEventListener('pointercancel', end);
-  canvas.addEventListener('pointerleave', () => { if (!drag) { if (hoverCut) showCut(null); brushRing.classList.remove('show'); } });
+  canvas.addEventListener('pointerleave', () => { if (!drag) { if (hoverCut) showCut(null); brushRing.classList.remove('show'); } if (!zdrag) showZone(null); });
+
+  /* ---------- shape tool: hover a part to see it, grab it anywhere and pull sideways ---------- */
+  let zdrag = null, zone = null;
+  const PARTN = { 0: '', 1: '왼소매', 2: '오른소매', 3: '왼다리', 4: '오른다리' };
+  function zoneName(z) {
+    const id = z.mesh.name, levels = z.levels, t = clamp((levels.length > 1 ? (z.v - levels[0]) / (levels[levels.length - 1] - levels[0]) : 0), 0, 1);
+    let where, side;
+    if (SLEEVE(z.rg)) {
+      where = t < .3 ? '윗팔' : t < .62 ? '팔꿈치' : '소매 끝';
+      side = ['바깥', '앞', '안쪽', '뒤'][z.k];
+    } else if (z.rg) {   // legs: levels run hem (low) → hip (high)
+      where = t > .85 ? '엉덩이' : t > .6 ? '허벅지' : t > .38 ? '무릎' : t > .15 ? '종아리' : '밑단';
+      side = z.k === 0 ? '앞' : z.k === 2 ? '뒤' : (z.k === 1) === (z.rg === 3) ? '바깥' : '안쪽';
+    } else if (TOPS.has(id)) {
+      where = t > .7 ? '가슴' : t > .35 ? '허리' : '밑단';
+      side = ['앞', '왼쪽 옆', '뒤', '오른쪽 옆'][z.k];
+    } else {
+      where = t > .75 ? '엉덩이' : t > .35 ? '가운데' : '밑단';
+      side = ['앞', '왼쪽 옆', '뒤', '오른쪽 옆'][z.k];
+    }
+    return [PARTN[z.rg], where, side].filter(Boolean).join(' ');
+  }
+  // the part under the pointer: which side of it (the screen half it is on), which height step, and its two outline edges
+  function zoneAt(e) {
+    const h = hit(e);
+    if (!h || h.c > .5) return null;
+    const mesh = A.meshes[h.mesh], g = cc.state[h.slot], U = mesh.material.userData.U;
+    const R = regionOf(h.mesh, h.rest, h.s, h.lg), rg = R.rg;
+    const key = g.prof && Object.keys(g.prof).find(k => +k.split(':')[0] === rg);
+    const levels = key ? g.prof[key].map(q => q[0] * A.H) : profLevels(h.mesh, rg, U);
+    if (!levels.length) return null;
+    let idx = 0;
+    levels.forEach((v, i) => { if (Math.abs(v - R.v) < Math.abs(levels[idx] - R.v)) idx = i; });
+    const reg = regionTable(mesh), v = levels[idx], cands = [];
+    for (let k = 0; k < reg.rg.length; k++) if (reg.rg[k] === rg && Math.abs(reg.v[k] - v) < .012) cands.push(k);
+    if (cands.length < 3) return null;
+    const Rv = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0); Rv.y = 0; Rv.normalize();
+    // screen positions of this ring's left and right edges; the side grabbed is the half the pointer is in
+    const edge = out => {
+      const k = sideOf(mesh, rg, cands[0], Rv.clone().multiplyScalar(out)), hd = { kind: 'sh', mesh, rg, k, cands };
+      locate(hd);
+      return { k, p: project(shWorld(hd)) };
+    };
+    const L = edge(-1), Rr = edge(1), r = wrap.getBoundingClientRect(), px = e.clientX - r.left;
+    const out = px >= (L.p[0] + Rr.p[0]) / 2 ? 1 : -1, E = out > 0 ? Rr : L;
+    const step = levels.length > 1 ? Math.abs(levels[1] - levels[0]) : .08;
+    return { slot: h.slot, mesh, rg, k: E.k, idx, v, levels, out, step, point: h.point, edge: E.p };
+  }
+  // where an outline point sits in the world, with the shader's push added
+  function shWorld(hd) {
+    const m = hd.mesh, P = m.geometry.attributes.position, reg = regionTable(m), k = hd.vi;
+    const p = m.getVertexPosition(k, new THREE.Vector3());
+    const rest = [P.getX(k), P.getY(k), P.getZ(k)], r = regionOf(m.name, rest, m.geometry.attributes._s.getX(k), m.geometry.attributes._lg ? m.geometry.attributes._lg.getX(k) : null);
+    const d = Math.max(gridAt(m, hd.rg, reg.v[k], reg.a[k]), .003 - m.geometry.attributes._cl.getX(k));
+    const a0 = m.applyBoneTransform(k, new THREE.Vector3(...rest)), a1 = m.applyBoneTransform(k, new THREE.Vector3(...rest).addScaledVector(r.dir, d));
+    return p.add(a1.sub(a0)).applyMatrix4(m.matrixWorld);
+  }
+  function showZone(z, e, label) {
+    zone = z;
+    for (const id of GARMENTS) { const m = A && A.meshes[id]; if (m) m.material.userData.U.uZoneOn.value = 0; }
+    if (!z) { tip.classList.remove('show'); needs = true; return; }
+    const U = z.mesh.material.userData.U;
+    U.uZone.value.set(z.rg, z.v, z.step * .9, z.k);
+    U.uZoneOn.value = zdrag ? 2 : 1;
+    const r = wrap.getBoundingClientRect();
+    tip.textContent = label || zoneName(z);
+    const x = e.clientX - r.left, w = tip.offsetWidth || 120;   // near the right edge the label goes on the pointer's left
+    tip.style.left = (x + 14 + w > r.width ? x - 14 - w : x + 14) + 'px'; tip.style.top = (e.clientY - r.top - 12) + 'px';
+    tip.classList.add('show');
+    needs = true;
+  }
+  function zoneDown(e) {
+    const z = zoneAt(e);
+    if (!z) return;   // empty space: the view turns
+    e.stopImmediatePropagation(); e.preventDefault();
+    if (cc.state.target !== z.slot) cc.setTarget(z.slot);
+    const g = cc.state[z.slot];
+    zdrag = { ...z, x0: e.clientX, mpp: mPerPx(z.point) };
+    profStart(g, zdrag);
+    controls.enabled = false;
+    canvas.setPointerCapture(e.pointerId);
+    showZone(z, e);
+    const move = ev => {
+      const dd = (ev.clientX - zdrag.x0) * zdrag.mpp * zdrag.out;
+      profDrag(g, zdrag, dd);
+      cc.render();
+      const now = zdrag.start[zdrag.idx][1] + dd;
+      showZone(z, ev, `${zoneName(z)}  ${now >= 0 ? '+' : ''}${(now * 100).toFixed(1)}cm`);
+    };
+    const up = () => {
+      canvas.removeEventListener('pointermove', move); canvas.removeEventListener('pointerup', up); canvas.removeEventListener('pointercancel', up);
+      zdrag = null; controls.enabled = true; showZone(null);
+      cc.commit(); cc.renderPanel();
+    };
+    canvas.addEventListener('pointermove', move); canvas.addEventListener('pointerup', up); canvas.addEventListener('pointercancel', up);
+  }
 
   /* ---------- graphics on the 3D stage: pick, move, resize and turn them right on the garment ---------- */
   // a rest-space point of a garment → its print area and where in it (cm): the inverse of the shader's projection
@@ -1659,6 +1807,54 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = uSock;`);
       T.neckB = id === 'boat' ? mk('B', .01) : null;
       T.neckV = p[2] ? 1 : 0;
       cc.render(); cc.commit();
+    },
+    // a card's shape for a whole part: f(t) in metres along it (t 0 = hip / shoulder end, 1 = hem / cuff end),
+    // times a share for each side (outer, inner, front, back). null clears the part
+    applyLook(slot, part, spec) {
+      const g = cc.state[slot];
+      if (!g || !A) return;
+      const mesh = A.meshes[meshOf(slot, g)], id = mesh.name, U = mesh.material.userData.U, H = A.H;
+      const rgs = part === 'legs' ? [3, 4] : part === 'sleeve' ? [1, 2] : [0];
+      const P = { ...(g.prof || {}) };
+      for (const key of Object.keys(P)) if (rgs.includes(+key.split(':')[0])) delete P[key];
+      if (spec) for (const rg of rgs) {
+        if (SLEEVE(rg) && !A.info[id].sl[rg === 1 ? 'lsl' : 'rsl']) continue;
+        const lv = profLevels(id, rg, U);
+        if (!lv.length) continue;
+        let t0 = lv[0], t1 = lv[lv.length - 1];
+        if (SLEEVE(rg)) {   // along the sleeve as it is now (a short sleeve gets the whole shape)
+          const sl = A.info[id].sl[rg === 1 ? 'lsl' : 'rsl'];
+          t1 = Math.min(t1, Math.min(U.uSleeveCut.value.x, U.uSleeveCut.value.y, A.info[id].smax) * sl.L - .01);
+        }
+        const tOf = v => SLEEVE(rg) ? clamp((v - t0) / Math.max(.01, t1 - t0), 0, 1) : clamp((t1 - v) / Math.max(.01, t1 - t0), 0, 1);
+        const sh = spec.sides || {}, share = k => {
+          const o = sh.outer ?? 1, i = sh.inner ?? 1, f = sh.front ?? 1, b = sh.back ?? 1;
+          if (SLEEVE(rg)) return [o, f, i, b][k];
+          if (rg === 0) return [f, o, b, o][k];
+          return k === 0 ? f : k === 2 ? b : (k === 1) === (rg === 3) ? o : i;
+        };
+        for (let k = 0; k < 4; k++) P[sideKey(rg, k)] = lv.map(v => [r4(v / H), r4(spec.f(tOf(v)) * share(k) * H / 1.77 / H)]);
+      }
+      g.prof = P;
+      g.look = { ...(g.look || {}), [part === 'legs' ? 'legs' : part === 'sleeve' ? 'sleeveShape' : 'body']: spec ? spec.id : null };
+    },
+    // shoulder straps (0 sleeveless, 1 wide strap, 2 thin strap): armhole comes in, and the neckline opens to the strap
+    strapLook(level) {
+      const T = cc.state.top;
+      if (!T || !A) return;
+      const id = meshOf('top', T), H = A.H, inf = A.info[id];
+      const had = (T.strap || 0) > 0;
+      T.strap = level; T.armF = T.armB = null;
+      if (!level || !inf.arm) { if (had) { T.neckF = T.neckB = null; } return; }   // back to a plain tank: its own neckline
+      const w = STRAP[level] * H / 1.77, xi = strapX() - w / 2, ya = inf.arm[NC - 1][1];
+      const mk = (side, depth) => {
+        const pts = [[-xi, 9], [-xi + .013, ya + depth + .006], [0, ya + depth], [xi - .013, ya + depth + .006], [xi, 9]];
+        [0, 4, 2, 1, 3].forEach(i => fixCtrl(pts, i, id, side, false));
+        return pts.map(([x, y]) => [r4(x / H), r4(y / H)]);
+      };
+      T.neckF = mk('F', level === 2 ? .01 : .05);
+      T.neckB = mk('B', level === 2 ? -.01 : .03);
+      T.neckV = 0;
     },
     savePNG() {
       const w = 1000, h = 1500, prev = new THREE.Vector2();

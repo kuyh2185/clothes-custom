@@ -401,7 +401,7 @@ function skirtGeo(b) {
 let state = { top: clone(DEF.tee), bottom: clone(DEF.jeans), target: 'top' };
 let tool = 'gfx', dmgMode = 'paint';
 // 3D free editing: scissors mode, brush size (cm), painting brush
-const ui = { gsel: null, shapeSym: true, cutMode: 'line', brushSize: 2.5, paintOn: false, paintErase: false, brushColor: '#b8382e', brushAlpha: 1, neckSym: true };
+const ui = { gsel: null, shapeSym: true, shapeFine: false, cutMode: 'line', brushSize: 2.5, paintOn: false, paintErase: false, brushColor: '#b8382e', brushAlpha: 1, neckSym: true };
 let images = {};
 const blobUrls = {};
 // look of the studio, kept apart from the undo history
@@ -1164,7 +1164,7 @@ function setTool(id) {
     neck: '목선 점을 끌어 모양을 그려요 · 뒤에서 보면 뒷목선 · 빈 곳을 끌면 회전',
     cut: '밑단·소매 끝 점(민소매는 진동둘레 점)을 끌거나 브러시로 잘라요 · 빈 곳을 끌면 회전',
     dmg: '옷을 누를수록 워싱 → 해짐 → 찢어짐 · 빈 곳을 끌면 회전',
-    fit: '윤곽의 점을 좌우로 끌면 그쪽만 넓어지거나 좁아져요 · 다른 옷을 누르면 그 옷 · 빈 곳을 끌면 회전',
+    fit: '그림 카드로 고르고, 옷의 부위를 잡아 좌우로 끌어 다듬어요 · 빈 곳을 끌면 회전',
     color: '색·무늬를 고르거나 브러시로 옷에 직접 칠해요 · 빈 곳을 끌면 회전',
     gfx: '그래픽을 끌어 옮기고 모서리로 크기, 위 손잡이로 회전 · 빈 곳을 끌면 회전',
   };
@@ -1182,6 +1182,102 @@ const FIT_PRESETS = {
           ['부츠컷', { thigh: .4, knee: .3, hemW: .6 }], ['와이드', { thigh: .8, knee: .85, hemW: .85 }]],
   skirt: [['H라인', { hip: 0, fit: 0 }], ['A라인', { hip: .1, fit: .35 }], ['플레어', { hip: .15, fit: .75 }]],
 };
+/* ---------- shape cards: one press gives a whole look (like a pattern template); grabbing the garment fine-tunes it ---------- */
+const gauss = (t, c, w) => Math.exp(-(((t - c) / w) ** 2));
+// sleeve / leg shapes: f(t) is the width change in metres along the part (t 0 = shoulder / hip, 1 = cuff / hem), sides = share per side
+const SPECS = {
+  puff: { id: 'puff', f: t => .035 * gauss(t, .22, .2) - .004 * sstep(.85, 1, t), sides: { outer: 1, front: .8, back: .8, inner: .45 } },
+  balloonS: { id: 'balloonS', f: t => .05 * gauss(t, .58, .27) - .007 * sstep(.85, 1, t), sides: { outer: 1, front: .85, back: .85, inner: .5 } },
+  bell: { id: 'bell', f: t => .08 * Math.pow(Math.max(0, (t - .3) / .7), 1.5) },
+  bootcut: { id: 'bootcut', f: t => .05 * Math.pow(Math.max(0, (t - .55) / .45), 1.5), sides: { outer: 1.15, inner: .85 } },
+  wide: { id: 'wide', f: t => .018 + .04 * t },
+  balloonL: { id: 'balloonL', f: t => .065 * gauss(t, .5, .26) - .012 * sstep(.85, 1, t), sides: { outer: 1, front: .8, back: .8, inner: .45 } },
+  jogger: { id: 'jogger', f: t => .012 * (1 - t) - .03 * sstep(.8, 1, t) },
+  baggy: { id: 'baggy', f: t => .055 * Math.pow(1 - t, .9) - .012 * sstep(.82, 1, t) },
+  balloonK: { id: 'balloonK', f: t => .065 * gauss(t, .62, .3) - .025 * sstep(.85, 1, t) },
+};
+const LOOKS = {
+  sleeve: [['strap2', '얇은 끈', { sleeve: 190, strap: 2 }], ['strap1', '넓은 끈', { sleeve: 190, strap: 1 }], ['tank', '민소매', { sleeve: 190, strap: 0 }],
+    ['cap', '캡', { sleeve: 214 }], ['short', '반팔', { sleeve: 236 }], ['half', '5부', { sleeve: 290 }], ['three', '7부', { sleeve: 345 }], ['long', '긴팔', { sleeve: 398 }]],
+  sleeveShape: [['straight', '일자', null], ['puff', '퍼프', SPECS.puff], ['balloonS', '벌룬', SPECS.balloonS], ['bell', '벨', SPECS.bell]],
+  body: [...FIT_PRESETS.top.map(([n, p], i) => ['fit' + i, n, p]), ['crop', '크롭', { len: 280 }]],
+  jeans: [['skinny', '스키니', { thigh: .1, knee: .05, hemW: .05 }, null], ['slim', '슬림', { thigh: .3, knee: .25, hemW: .2 }, null],
+    ['straight', '스트레이트', { thigh: .45, knee: .45, hemW: .4 }, null], ['bootcut', '부츠컷', { thigh: .3, knee: .22, hemW: .2 }, SPECS.bootcut],
+    ['wide', '와이드', { thigh: .45, knee: .45, hemW: .4 }, SPECS.wide], ['balloonL', '벌룬', { thigh: .3, knee: .25, hemW: .2 }, SPECS.balloonL],
+    ['jogger', '조거', { thigh: .45, knee: .4, hemW: .3 }, SPECS.jogger], ['baggy', '배기', { thigh: .45, knee: .45, hemW: .4 }, SPECS.baggy]],
+  jeansLen: [['short', '숏', 440], ['bermuda', '버뮤다', 540], ['crop7', '7부', 640], ['ankle', '9부', 700], ['full', '기본', 732]],
+  skirt: [['h', 'H라인', { hip: 0, fit: 0 }, null], ['a', 'A라인', { hip: .1, fit: .35 }, null], ['flare', '플레어', { hip: .15, fit: .75 }, null], ['balloonK', '벌룬', { hip: .1, fit: .3 }, SPECS.balloonK]],
+  skirtLen: [['mini', '미니', 440], ['knee', '무릎', 560], ['midi', '미디', 640], ['maxi', '맥시', 715]],
+};
+/* little silhouettes drawn from the same numbers the cards apply */
+const icon = d => `<svg viewBox="0 0 40 52" aria-hidden="true">${d}</svg>`;
+const pathOf2 = pts => 'M' + pts.map(p => p[0].toFixed(1) + ' ' + p[1].toFixed(1)).join('L') + 'Z';
+const shareOf = (spec, side) => spec && spec.sides && spec.sides[side] != null ? spec.sides[side] : 1;
+function pantsIcon(morph, spec, len = 1) {
+  const W = t => { const m = morph; return t < .5 ? lerp(4 + m.thigh * 4.5, 3.4 + m.knee * 4.5, t / .5) : lerp(3.4 + m.knee * 4.5, 2.8 + m.hemW * 5, (t - .5) / .5); };
+  const ex = (t, side) => spec ? spec.f(t) * shareOf(spec, side) * 110 : 0, y = t => 7 + t * 41 * len, N = 14;
+  const leg = cx => {
+    const o = [], i = [];
+    for (let k = 0; k <= N; k++) { const t = k / N; o.push([cx + Math.sign(cx - 20) * (W(t) + ex(t, 'outer')), y(t)]); i.push([cx - Math.sign(cx - 20) * (W(t) + ex(t, 'inner') * .6), y(t)]); }
+    return pathOf2([...o, ...i.reverse()]);
+  };
+  return icon(`<path d="M10 3h20v4H10z" class="ib"/><path d="${leg(14)}"/><path d="${leg(26)}"/>`);
+}
+function skirtIcon(p, spec, len = .7) {
+  const top = 7, hy = 7 + 40 * len, N = 12, pts = [];
+  for (let k = 0; k <= N; k++) { const t = k / N, w = 9 + t * (4 + p.fit * 12 + p.hip * 6) + (spec ? spec.f(t) * 110 : 0); pts.push([20 + w, top + t * (hy - top)]); }
+  const left = pts.map(([x, y]) => [40 - x, y]).reverse();
+  return icon(`<path d="M11 3h18v4H11z" class="ib"/><path d="${pathOf2([...pts, ...left])}"/>`);
+}
+function topIcon({ sleeve = 236, strap = null, fit = 5, len = 372 }) {
+  const bw = 8 + clamp(fit, -4, 30) * .2, by = 46 - clamp(380 - len, 0, 140) * .17, sh = 9;
+  let d;
+  if (sleeve <= SLEEVELESS) {
+    const s = strap === 2 ? 1.2 : strap === 1 ? 3 : 5.5, ny = strap ? 17 : 12;
+    d = `<path d="M${20 - bw} ${by}V20Q${20 - bw} 16 ${15.5 - s * .3} 15V${sh}h${s}V${ny}Q20 ${ny + 4} ${24.5 - s + s * .3} ${ny}V${sh}h${s}V15Q${20 + bw} 16 ${20 + bw} 20V${by}Z"/>`;
+  } else {
+    const L = clamp((sleeve - 200) / 200, 0, 1) * 26 + 4, ang = .95, ex = Math.sin(ang) * L, ey = Math.cos(ang) * L * .7;
+    d = `<path d="M${20 - bw} ${by}V20L${20 - bw - ex} ${14 + ey}l-3 -3L${20 - bw - 1} ${sh}H16Q20 13 24 ${sh}H${20 + bw + 1}L${20 + bw + ex + 3} ${11 + ey}l-3 3L${20 + bw} 20V${by}Z"/>`;
+  }
+  return icon(d);
+}
+function sleeveIcon(spec) {
+  const N = 12, o = [], i = [];
+  for (let k = 0; k <= N; k++) { const t = k / N, y = 6 + t * 42, w = 4.5 - t * 1.2; o.push([20 + w + (spec ? spec.f(t) * shareOf(spec, 'outer') * 130 : 0), y]); i.push([20 - w - (spec ? spec.f(t) * shareOf(spec, 'inner') * 130 : 0), y]); }
+  return icon(`<path d="${pathOf2([...o, ...i.reverse()])}"/>`);
+}
+const card = (data, on, label, svg) => `<button type="button" class="lk" data-look="${data}" aria-pressed="${on}">${svg}<span>${label}</span></button>`;
+function looksHTML(slot) {
+  const g = state[slot], lk = g.look || {};
+  const row = (title, items) => `<span class="label-sm">${title}</span><div class="lks">${items}</div>`;
+  if (slot === 'top') {
+    const T = g, hasProf = k => Object.keys(T.prof || {}).some(key => [1, 2].includes(+key.split(':')[0]));
+    return row('소매', LOOKS.sleeve.map(([id, n, v]) => card('sleeve:' + id, v.strap != null ? T.sleeve <= SLEEVELESS && (T.strap || 0) === v.strap : Math.abs(T.sleeve - v.sleeve) < 4, n, topIcon({ ...v, fit: T.fit }))).join(''))
+      + (T.sleeve > SLEEVELESS ? row('소매 모양', LOOKS.sleeveShape.map(([id, n, sp]) => card('sleeveShape:' + id, (lk.sleeveShape || (hasProf() ? '' : 'straight')) === id, n, sleeveIcon(sp))).join('')) : '')
+      + row('몸판', LOOKS.body.map(([id, n, p]) => card('body:' + id, id === 'crop' ? T.len <= 285 : Object.entries(p).every(([k, v]) => Math.abs(T[k] - v) < 1e-6), n, topIcon({ sleeve: T.sleeve, strap: T.strap, fit: p.fit ?? T.fit, len: p.len ?? T.len }))).join(''));
+  }
+  const B = g;
+  if (B.kind === 'jeans') return row('바지 핏', LOOKS.jeans.map(([id, n, m, sp]) => card('jeans:' + id, (lk.legs ? lk.legs === (sp && sp.id) : !sp) && Object.entries(m).every(([k, v]) => Math.abs(B[k] - v) < 1e-6), n, pantsIcon(m, sp))).join(''))
+    + row('기장', LOOKS.jeansLen.map(([id, n, len]) => card('jeansLen:' + id, Math.abs(B.len - len) < 4, n, pantsIcon(B, null, clamp((len - 390) / 345, .15, 1)))).join(''));
+  return row('치마 핏', LOOKS.skirt.map(([id, n, p, sp]) => card('skirt:' + id, (lk.body ? lk.body === (sp && sp.id) : !sp) && Object.entries(p).every(([k, v]) => Math.abs(B[k] - v) < 1e-6), n, skirtIcon(p, sp))).join(''))
+    + row('기장', LOOKS.skirtLen.map(([id, n, len]) => card('skirtLen:' + id, Math.abs(B.len - len) < 4, n, skirtIcon(B, null, clamp((len - 300) / 420, .2, 1)))).join(''));
+}
+function applyLook(key) {
+  const [grp, id] = key.split(':'), s3 = window.__s3, T = state.top, B = state.bottom;
+  const item = (LOOKS[grp] || []).find(x => x[0] === id);
+  if (!item) return;
+  if (grp === 'sleeve' && T) {
+    const v = item[2], wasStrap = (T.strap || 0) > 0;
+    T.sleeve = v.sleeve; T.rawSleeve = false; T.sleeveAdj = null;
+    if (v.strap != null) { if (s3) s3.strapLook(v.strap); else T.strap = v.strap; }
+    else { T.strap = 0; T.armF = T.armB = null; if (wasStrap) { T.neckF = T.neckB = null; } }
+  } else if (grp === 'sleeveShape' && T && s3) s3.applyLook('top', 'sleeve', item[2]);
+  else if (grp === 'body' && T) { Object.assign(T, item[2]); if (id !== 'crop' && s3) s3.applyLook('top', 'body', null); }
+  else if (grp === 'jeans' && B) { Object.assign(B, item[2]); if (s3) s3.applyLook('bottom', 'legs', item[3]); }
+  else if (grp === 'skirt' && B) { Object.assign(B, item[2]); if (s3) s3.applyLook('bottom', 'body', item[3]); }
+  else if ((grp === 'jeansLen' || grp === 'skirtLen') && B) { B.len = item[2]; B.rawHem = false; B.hemOff = null; }
+  render(); renderPanel(); commit(); say(item[1]);
+}
 const parseHex = s => {
   let h = String(s).trim().replace(/^#/, '');
   if (/^[0-9a-f]{3}$/i.test(h)) h = h.split('').map(c => c + c).join('');
@@ -1281,17 +1377,9 @@ function panelHTML() {
       if (!T && !B) return need('옷');
       return `<p class="hint">옷을 <b>클릭</b>하면 워싱이 생기고, 같은 곳을 또 누르면 해지고, 한 번 더 누르면 <b>찢어져요</b>. 누른 채 끌면 붓처럼 칠해져요.</p>
         <div class="btn-row"><button type="button" class="chip" data-mode="paint">칠하기</button><button type="button" class="chip" data-mode="erase">지우개</button><button type="button" class="chip" data-act="clear-dmg">전부 지우기</button></div>`;
-    case 'fit':
+    case 'fit': {
       if (!T && !B) return need('옷');
-      return (is3d() ? `<div class="chips" role="group" aria-label="고칠 옷" style="margin-bottom:6px">
-          <button type="button" class="chip" data-target="top" ${T ? '' : 'disabled'}>상의${T ? ' · ' + NAME[T.kind] : ''}</button>
-          <button type="button" class="chip" data-target="bottom" ${B ? '' : 'disabled'}>하의${B ? ' · ' + NAME[B.kind] : ''}</button></div>
-        <p class="hint">고른 옷의 윤곽에 있는 <b>점을 좌우로 끌어요</b>. 점마다 <b>자기 쪽만</b> 바뀌어요 — 바지 바깥 점만 끌면 바깥만 부풀어요(벌룬핏). 위아래 점도 부드럽게 따라와요. 마네킹의 다른 옷을 누르면 그 옷 점이 나와요.</p>
-        <div class="seg2" role="group" aria-label="좌우 대칭"><button type="button" class="chip" data-shapesym="1">좌우 대칭</button><button type="button" class="chip" data-shapesym="0">따로따로</button></div>
-        <div class="btn-row" style="margin-bottom:6px">${T ? '<button type="button" class="chip" data-act="shape-reset" data-slot="top">상의 모양 처음으로</button>' : ''}${B ? '<button type="button" class="chip" data-act="shape-reset" data-slot="bottom">하의 모양 처음으로</button>' : ''}</div>
-        <span class="label-sm" style="margin-top:20px">출발점 고르기</span>
-        <p class="note" style="margin:-4px 0 10px">아래는 처음 모양이에요. 끌어서 만든 모양은 그 위에 더해져요.</p>`
-        : `<p class="hint">부위마다 <b>점이 따로</b> 있어요. 바깥으로 끌면 넓어지고 안쪽으로 끌면 좁아져요. 조절하는 동안 옷이 <b>반투명</b>해지고 원래 모양이 점선으로 남아요.</p>`) + `
+      const sliders = `
         ${T ? `<span class="label-sm">상의 · ${NAME[T.kind]}</span>${fitChips('top', FIT_PRESETS.top)}
           ${B && T.len > Y.waist + BODY.rise + 10 ? `<div class="seg2" role="group" aria-label="입는 방법"><button type="button" class="chip" data-tuck="0">밖으로 빼 입기</button><button type="button" class="chip" data-tuck="1">넣어 입기</button></div>` : ''}
           ${slider('top.fit', '몸통 품', ...LIMIT['top.fit'], .5)}${slider('top.cling', '허리 라인 (일자 ↔ 붙게)', 0, 1, .01)}
@@ -1301,6 +1389,17 @@ function panelHTML() {
           ${B.kind === 'jeans'
             ? slider('bottom.thigh', '허벅지', 0, 1, .01) + slider('bottom.knee', '무릎', 0, 1, .01) + slider('bottom.hemW', '밑단', 0, 1, .01)
             : slider('bottom.hip', '엉덩이', 0, 1, .01) + slider('bottom.fit', '밑단 퍼짐', 0, 1, .01)}` : ''}`;
+      if (!is3d()) return `<p class="hint">부위마다 <b>점이 따로</b> 있어요. 바깥으로 끌면 넓어지고 안쪽으로 끌면 좁아져요. 조절하는 동안 옷이 <b>반투명</b>해지고 원래 모양이 점선으로 남아요.</p>` + sliders;
+      const slot = state[state.target] ? state.target : (T ? 'top' : 'bottom');
+      return `<div class="chips" role="group" aria-label="고칠 옷" style="margin-bottom:2px">
+          <button type="button" class="chip" data-target="top" ${T ? '' : 'disabled'}>상의${T ? ' · ' + NAME[T.kind] : ''}</button>
+          <button type="button" class="chip" data-target="bottom" ${B ? '' : 'disabled'}>하의${B ? ' · ' + NAME[B.kind] : ''}</button></div>
+        ${looksHTML(slot)}
+        <p class="hint" style="margin-top:16px"><b>더 다듬기</b> — 옷 위에 마우스를 올리면 그 부위가 밝아져요. <b>잡고 좌우로 끌면</b> 그쪽만 넓어지거나 좁아져요.</p>
+        <div class="seg2" role="group" aria-label="좌우 대칭"><button type="button" class="chip" data-shapesym="1">좌우 대칭</button><button type="button" class="chip" data-shapesym="0">따로따로</button></div>
+        <div class="btn-row" style="margin-bottom:6px"><button type="button" class="chip" data-act="shape-fine" aria-pressed="${!!ui.shapeFine}">세밀하게 (윤곽 점)</button><button type="button" class="chip" data-act="shape-reset" data-slot="${slot}">${slot === 'top' ? '상의' : '하의'} 모양 처음으로</button></div>
+        <details class="more"><summary>막대로 조절</summary>${sliders}</details>`;
+    }
     case 'color': {
       const g = state[state.target];
       if (!g) return need('옷');
@@ -1449,7 +1548,9 @@ P.addEventListener('click', e => {
   const g = state[state.target], d = b.dataset;
   if (d.cutmode) { ui.cutMode = d.cutmode; renderPanel(); return; }
   if (d.shapesym) { ui.shapeSym = d.shapesym === '1'; syncPanel(); return; }
-  if (d.act === 'shape-reset') { const g2 = state[d.slot]; if (g2) { g2.shape = []; g2.prof = null; } render(); commit(); say('끌어서 만든 모양을 지웠어요 (되돌리기 가능)'); return; }
+  if (d.look) { applyLook(d.look); return; }
+  if (d.act === 'shape-fine') { ui.shapeFine = !ui.shapeFine; renderPanel(); return; }
+  if (d.act === 'shape-reset') { const g2 = state[d.slot]; if (g2) { g2.shape = []; g2.prof = null; g2.look = null; } render(); renderPanel(); commit(); say('끌어서 만든 모양을 지웠어요 (되돌리기 가능)'); return; }
   if (d.uiSym) { ui.neckSym = d.uiSym === '1'; syncPanel(); return; }
   if (d.paint) { ui.paintOn = d.paint !== 'off'; ui.paintErase = d.paint === 'erase'; renderPanel(); return; }
   if (d.bc) { ui.brushColor = d.bc; renderPanel(); return; }
