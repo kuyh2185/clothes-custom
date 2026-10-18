@@ -127,6 +127,16 @@ function start() {
   let A = null, loading = null;
   let handles = [], dragH = null;   // 3D edit points (neckline / hem / sleeve ends)
   let shAz = null;   // view direction the outline points were placed for
+  // which of a part's four sides faces a screen direction (in that part's own frame)
+  function sideOf(mesh, rg, k0, S) {
+    let ta;
+    if (SLEEVE(rg)) {
+      const P = mesh.geometry.attributes.position;
+      const r = regionOf(mesh.name, [P.getX(k0), P.getY(k0), P.getZ(k0)], mesh.geometry.attributes._s.getX(k0));
+      ta = Math.atan2(S.dot(r.b), S.dot(r.o));
+    } else ta = Math.atan2(S.x, S.z);
+    return ((Math.round(ta / (PI / 2)) % 4) + 4) % 4;
+  }
   const loadBody = kind => new Promise((res, rej) => loader.load(`assets/body_${kind}.glb?v=${VER}`, g => {
     const root = g.scene, meshes = {};
     root.traverse(o => {
@@ -755,7 +765,12 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = uSock;`);
      Between points a smooth curve; past the last point towards the hem / cuff it carries on, towards the waist /
      armpit / shoulder it fades out (so waistbands and armholes stay as they are). The whole way round changes. */
   const SLEEVE = rg => rg === 1 || rg === 2;
-  function profRows(D, rg, pts) {
+  /* each part has four sides, k = 0 front, 1 at +90° (a leg's or the body's +x side, a sleeve's back), 2 back, 3 at −90°.
+     g.prof keys are "part:side"; a side's change spreads round with cos² (four sides at the same value = the whole ring).
+     Keys without a side (saved before) count for all four. */
+  const sideKey = (rg, k) => rg + ':' + k;
+  const mirrorKey = (rg, k) => rg === 0 ? [0, (4 - k) % 4] : SLEEVE(rg) ? [3 - rg, k] : [7 - rg, (4 - k) % 4];
+  function profRows(D, rg, pts, side) {
     const H = A.H, P = pts.map(([v, d]) => [v * H, d * H]).sort((a, b) => a[0] - b[0]);
     if (!P.length || P.every(q => !q[1])) return;
     const range = SLEEVE(rg) ? SLR : BR, dv = range / (SHR - 1), lo = P[0], hi = P[P.length - 1];
@@ -766,7 +781,10 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = uSock;`);
       else val = v < lo[0] ? lo[1] : v > hi[0] ? hi[1] * clamp(1 - (v - hi[0]) / .08, 0, 1) : P.length > 1 ? mono(P, v) : lo[1];
       if (!val) continue;
       const row = (rg * SHR + y) * SHW;
-      for (let c = 0; c < SHW; c++) D[row + c] += val;
+      for (let c = 0; c < SHW; c++) {
+        const w = side == null ? 1 : Math.max(0, Math.cos(c / SHW * TAU - side * PI / 2)) ** 2;
+        if (w) D[row + c] += val * w;
+      }
     }
   }
   function applyShape(U, mesh, ops, prof) {
@@ -776,7 +794,7 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = uSock;`);
     md.shapeKey = key;
     const t = U.uShape.value, D = t.image.data;
     D.fill(0);
-    if (prof) for (const rg in prof) profRows(D, +rg, prof[rg]);
+    if (prof) for (const key in prof) { const [rg, k] = key.split(':'); profRows(D, +rg, prof[key], k == null ? null : +k); }
     for (const op of ops) { shapeOp(D, op, false); if (op.m) shapeOp(D, op, true); }
     t.needsUpdate = true;
   }
@@ -1099,14 +1117,8 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = uSock;`);
       const c = neckCtrl(T, meshOf('top', T), hd.side)[hd.i];
       hd.pt = c;
       hd.vi = nearestVertex(mesh, (vx, vy, vz, vh, vs, vc) => vs > .02 || vc > .5 || (hd.side === 'F' ? vz < 0 : vz > 0) ? 1e9 : (vx - c[0]) ** 2 + (vy - c[1]) ** 2);
-    } else if (hd.kind === 'sh') {   // the vertex of this height's ring that sticks out furthest towards this side of the screen
-      const reg = regionTable(mesh), S = hd.side;
-      let ta;
-      if (SLEEVE(hd.rg)) {
-        const P = mesh.geometry.attributes.position, k0 = hd.cands[0];
-        const r = regionOf(mesh.name, [P.getX(k0), P.getY(k0), P.getZ(k0)], mesh.geometry.attributes._s.getX(k0));
-        ta = Math.atan2(S.dot(r.b), S.dot(r.o));
-      } else ta = Math.atan2(S.x, S.z);
+    } else if (hd.kind === 'sh') {   // the vertex of this height's ring furthest out on the point's side
+      const reg = regionTable(mesh), ta = hd.k * PI / 2;
       let best = -1, bd = -2;
       for (const k of hd.cands) { const c = Math.cos(reg.a[k] - ta); if (c > bd) { bd = c; best = k; } }
       hd.vi = best;
@@ -1143,7 +1155,6 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = uSock;`);
       const hd = { kind, mesh, el, ...extra };
       if (kind === 'nf' || kind === 'nb') el.classList.toggle('end', extra.i === 0 || extra.i === NC - 1);
       el.addEventListener('pointerdown', e => startDrag(e, hd));
-      if (kind === 'sh') el.classList.toggle('in', extra.out < 0);
       locate(hd);
       if (hd.vi < 0) { el.remove(); return; }
       handles.push(hd);
@@ -1159,26 +1170,23 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = uSock;`);
       const sideVec = out => new THREE.Vector3(out * rx / rl, 0, out * rz / rl);
       const nearX = camera.position.x - controls.target.x;
       for (const [slot, g] of [['top', T], ['bottom', Bt]]) {
-        if (!g) continue;
+        if (!g || slot !== st.target) continue;   // only the garment being edited
         const mesh = A.meshes[meshOf(slot, g)], id = mesh.name, U = mesh.material.userData.U, reg = regionTable(mesh);
         const parts = id === 'jeans' ? [3, 4] : TOPS.has(id) ? [0, 1, 2] : [0];
         for (const rg of parts) {
           if (SLEEVE(rg) && (T.sleeve <= cc.SLEEVELESS || !A.info[id].sl[rg === 1 ? 'lsl' : 'rsl'])) continue;
-          // which sides: the body both; a leg / sleeve its outer side — from the side, the near one both sides
+          // both edges of every part (inside and outside of a leg / sleeve); from the side, legs and sleeves only the near one
           let outs = [1, -1];
-          if (rg !== 0) {
-            const px = rg === 1 || rg === 3 ? 1 : -1;
-            if (Math.abs(rx / rl) > .35) outs = [Math.sign(rx) * px];
-            else outs = Math.sign(nearX) === px ? [1, -1] : [];
-          }
-          const pts = (g.prof && g.prof[rg]) ? g.prof[rg].map(q => q[0] * A.H) : profLevels(id, rg, U);
+          if (rg !== 0 && Math.abs(rx / rl) <= .35) outs = Math.sign(nearX) === (rg === 1 || rg === 3 ? 1 : -1) ? [1, -1] : [];
+          const lvl = g.prof && Object.keys(g.prof).find(key => +key.split(':')[0] === rg);
+          const pts = lvl ? g.prof[lvl].map(q => q[0] * A.H) : profLevels(id, rg, U);
           const cut = SLEEVE(rg) ? Math.min(U.uSleeveCut.value.x, U.uSleeveCut.value.y, A.info[id].smax) * A.info[id].sl[rg === 1 ? 'lsl' : 'rsl'].L : U.uCutH.value;
           pts.forEach((v, i) => {
             if (SLEEVE(rg) ? v > cut - .02 : v < cut + .015) return;   // cut away: no point
             const tol = .012, cands = [];
             for (let k = 0; k < reg.rg.length; k++) if (reg.rg[k] === rg && Math.abs(reg.v[k] - v) < tol) cands.push(k);
             if (cands.length < 3) return;
-            for (const out of outs) add('sh', mesh, { slot, rg, i, v, out, cands, side: sideVec(out) });
+            for (const out of outs) add('sh', mesh, { slot, rg, i, v, out, cands, side: sideVec(out), k: sideOf(mesh, rg, cands[0], sideVec(out)) });
           });
         }
       }
@@ -1265,8 +1273,9 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = uSock;`);
     else if (hd.kind === 'af' || hd.kind === 'ab') hd.start = armCtrl(st.top, meshOf('top', st.top), hd.side).map(p => p.slice());
     else if (hd.kind === 'sh') {   // this part's points (heights and values, m), so the drag works from where it started
       const g = st[hd.slot], vs = handles.filter(h => h.kind === 'sh' && h.slot === hd.slot && h.rg === hd.rg).map(h => h.v);
-      const old = (g.prof && g.prof[hd.rg]) || [];
-      const lv = old.length ? old.map(q => q[0] * A.H) : profLevels(hd.mesh.name, hd.rg, hd.mesh.material.userData.U);
+      const P0 = g.prof || {}, old = P0[sideKey(hd.rg, hd.k)] || P0[hd.rg] || [];   // a side, or the whole ring saved before
+      const any = Object.keys(P0).find(key => +key.split(':')[0] === hd.rg);
+      const lv = old.length ? old.map(q => q[0] * A.H) : any ? P0[any].map(q => q[0] * A.H) : profLevels(hd.mesh.name, hd.rg, hd.mesh.material.userData.U);
       hd.start = lv.map(v => [v, ((old.find(q => Math.abs(q[0] * A.H - v) < 1e-4) || [0, 0])[1]) * A.H]);
       hd.idx = hd.start.findIndex(q => Math.abs(q[0] - hd.v) < 1e-4);
       hd.vs = vs;
@@ -1301,11 +1310,14 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = uSock;`);
       // sideways only: out = wider, in = narrower, the point under the pointer; its neighbours follow part of the way
       const g = st[hd.slot], dd = dx * hd.out;   // dx is along the screen; out says which way is outwards
       const vals = hd.start.map(([v, d], j) => {
-        const w = j === hd.idx ? 1 : Math.abs(j - hd.idx) === 1 ? .5 : Math.abs(j - hd.idx) === 2 ? .15 : 0;
+        const w = [1, .62, .27, .07][Math.abs(j - hd.idx)] || 0;   // neighbours follow part of the way: a rounded bulge, not a point
         return [r4(v / H), r4(clamp(d + dd * w, -.08, .4) / H)];
       });
-      g.prof = { ...(g.prof || {}), [hd.rg]: vals };
-      if (cc.ui.shapeSym && hd.rg) g.prof[hd.rg < 3 ? 3 - hd.rg : 7 - hd.rg] = vals.map(q => q.slice());
+      const P1 = { ...(g.prof || {}) };
+      if (P1[hd.rg]) { const ring = P1[hd.rg]; delete P1[hd.rg]; for (let k = 0; k < 4; k++) P1[sideKey(hd.rg, k)] = ring.map(q => q.slice()); }   // old whole-ring save → four sides
+      P1[sideKey(hd.rg, hd.k)] = vals;
+      if (cc.ui.shapeSym) { const [mr, mk] = mirrorKey(hd.rg, hd.k); if (mr !== hd.rg || mk !== hd.k) P1[sideKey(mr, mk)] = vals.map(q => q.slice()); }
+      g.prof = P1;
     } else if (hd.kind === 'af' || hd.kind === 'ab') {
       // the point goes where the pointer is on the body (either side counts: the armholes mirror each other)
       const T = st.top, id = meshOf('top', T), pts = hd.start.map(p => p.slice());
@@ -1392,6 +1404,7 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = uSock;`);
   canvas.addEventListener('pointerdown', e => {
     if (e.button > 0) return;
     if (cc.tool === 'gfx') return gfxDown(e);
+    if (cc.tool === 'fit') { const h = hit(e); if (h && h.slot !== cc.state.target) cc.setTarget(h.slot); return; }
     const tool = cc.tool, bm = brushMode();
     if (!['cut', 'dmg', 'color'].includes(tool)) return;
     const h = hit(e);

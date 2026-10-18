@@ -1164,7 +1164,7 @@ function setTool(id) {
     neck: '목선 점을 끌어 모양을 그려요 · 뒤에서 보면 뒷목선 · 빈 곳을 끌면 회전',
     cut: '밑단·소매 끝 점(민소매는 진동둘레 점)을 끌거나 브러시로 잘라요 · 빈 곳을 끌면 회전',
     dmg: '옷을 누를수록 워싱 → 해짐 → 찢어짐 · 빈 곳을 끌면 회전',
-    fit: '윤곽의 점을 좌우로 끌면 그 높이 폭이 바뀌어요 · 빈 곳을 끌면 회전',
+    fit: '윤곽의 점을 좌우로 끌면 그쪽만 넓어지거나 좁아져요 · 다른 옷을 누르면 그 옷 · 빈 곳을 끌면 회전',
     color: '색·무늬를 고르거나 브러시로 옷에 직접 칠해요 · 빈 곳을 끌면 회전',
     gfx: '그래픽을 끌어 옮기고 모서리로 크기, 위 손잡이로 회전 · 빈 곳을 끌면 회전',
   };
@@ -1283,8 +1283,11 @@ function panelHTML() {
         <div class="btn-row"><button type="button" class="chip" data-mode="paint">칠하기</button><button type="button" class="chip" data-mode="erase">지우개</button><button type="button" class="chip" data-act="clear-dmg">전부 지우기</button></div>`;
     case 'fit':
       if (!T && !B) return need('옷');
-      return (is3d() ? `<p class="hint">옷 윤곽에 있는 <b>점을 좌우로 끌어요</b>. 바깥으로 끌면 그 높이가 넓어지고, 안으로 끌면 좁아져요. 위아래 점도 부드럽게 따라와요. 돌려 보면 그쪽 윤곽에 점이 다시 붙어요.</p>
-        <div class="seg2" role="group" aria-label="좌우 대칭"><button type="button" class="chip" data-shapesym="1">양쪽 같이</button><button type="button" class="chip" data-shapesym="0">한쪽만</button></div>
+      return (is3d() ? `<div class="chips" role="group" aria-label="고칠 옷" style="margin-bottom:6px">
+          <button type="button" class="chip" data-target="top" ${T ? '' : 'disabled'}>상의${T ? ' · ' + NAME[T.kind] : ''}</button>
+          <button type="button" class="chip" data-target="bottom" ${B ? '' : 'disabled'}>하의${B ? ' · ' + NAME[B.kind] : ''}</button></div>
+        <p class="hint">고른 옷의 윤곽에 있는 <b>점을 좌우로 끌어요</b>. 점마다 <b>자기 쪽만</b> 바뀌어요 — 바지 바깥 점만 끌면 바깥만 부풀어요(벌룬핏). 위아래 점도 부드럽게 따라와요. 마네킹의 다른 옷을 누르면 그 옷 점이 나와요.</p>
+        <div class="seg2" role="group" aria-label="좌우 대칭"><button type="button" class="chip" data-shapesym="1">좌우 대칭</button><button type="button" class="chip" data-shapesym="0">따로따로</button></div>
         <div class="btn-row" style="margin-bottom:6px">${T ? '<button type="button" class="chip" data-act="shape-reset" data-slot="top">상의 모양 처음으로</button>' : ''}${B ? '<button type="button" class="chip" data-act="shape-reset" data-slot="bottom">하의 모양 처음으로</button>' : ''}</div>
         <span class="label-sm" style="margin-top:20px">출발점 고르기</span>
         <p class="note" style="margin:-4px 0 10px">아래는 처음 모양이에요. 끌어서 만든 모양은 그 위에 더해져요.</p>`
