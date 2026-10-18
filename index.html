@@ -197,6 +197,8 @@ input[type=range]:active::-webkit-slider-thumb{transform:scale(1.15)}
 .chip:disabled{opacity:.35;cursor:default}
 .seg2{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;gap:2px;padding:3px;border-radius:9px;background:var(--panel-2);border:1px solid var(--line);margin:0 0 12px}
 .seg2 .chip{border:0;background:none;height:28px;border-radius:7px}
+.seg4 .chip{padding:0 4px}
+.stage-wrap.shaping{cursor:grabbing}
 .seg2 .chip[aria-pressed="true"]{background:var(--panel-3);color:var(--text);box-shadow:0 1px 2px rgba(0,0,0,.25)}
 .swatches{display:grid;grid-template-columns:repeat(9,1fr);gap:6px}
 .sw{aspect-ratio:1;border-radius:6px;position:relative;box-shadow:inset 0 0 0 1px rgba(0,0,0,.2),inset 0 0 0 1px rgba(255,255,255,.06);transition:transform .12s}
@@ -424,9 +426,9 @@ body.modal-open{overflow:hidden}
   <span class="cur" id="foot-hint"></span>
   <span class="keys"><span><kbd>1</kbd>–<kbd>6</kbd> 도구</span><span><kbd>H</kbd> 점 숨기기</span><span><kbd>Ctrl</kbd>+<kbd>Z</kbd> 되돌리기</span></span>
 </footer>
-<script src="app.js?v=17"></script>
+<script src="app.js?v=20"></script>
 <script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"}}</script>
 <script type="module" src="gfx.js?v=7"></script>
-<script type="module" src="stage3d.js?v=45"></script>
+<script type="module" src="stage3d.js?v=53"></script>
 </body>
 </html>

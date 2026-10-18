@@ -401,7 +401,7 @@ function skirtGeo(b) {
 let state = { top: clone(DEF.tee), bottom: clone(DEF.jeans), target: 'top' };
 let tool = 'gfx', dmgMode = 'paint';
 // 3D free editing: scissors mode, brush size (cm), painting brush
-const ui = { gsel: null, cutMode: 'line', brushSize: 2.5, paintOn: false, paintErase: false, brushColor: '#b8382e', brushAlpha: 1, neckSym: true };
+const ui = { gsel: null, shapeMode: 'grab', shapeR: 7, shapeSym: true, shapeRing: true, cutMode: 'line', brushSize: 2.5, paintOn: false, paintErase: false, brushColor: '#b8382e', brushAlpha: 1, neckSym: true };
 let images = {};
 const blobUrls = {};
 // look of the studio, kept apart from the undo history
@@ -1141,11 +1141,11 @@ const ICON = {
   neck: '<path d="M4 5c1.5 0 3 .2 4 .8C9 9 10.2 12 12 12s3-3 4-6.2c1-.6 2.5-.8 4-.8"/><path d="M4 5v14h16V5"/>',
   cut: '<circle cx="6" cy="18" r="3"/><circle cx="18" cy="18" r="3"/><path d="M8.2 15.8 19 3M15.8 15.8 5 3"/>',
   dmg: '<path d="M5 3v18M19 3v18"/><path d="M8 10q4 -2 8 0M8 13q4 2 8 0M9 11.5h6"/>',
-  fit: '<path d="M3 12h18M7 8l-4 4 4 4M17 8l4 4-4 4"/>',
+  fit: '<path d="M6 3c0 4 3 5 3 9s-3 5-3 9M18 3c0 4-3 5-3 9s3 5 3 9"/><path d="M2.5 12h3.2M18.3 12h3.2"/>',
   color: '<path d="M12 3s6 6.5 6 11a6 6 0 0 1-12 0c0-4.5 6-11 6-11z"/><path d="M8.5 14.5a3.5 3.5 0 0 0 3.5 3.5"/>',
   gfx: '<path d="M7 4h10l4 3-2.5 3.5L17 9.5V20H7V9.5l-1.5 1L3 7z"/><path d="m12 11.2.9 1.9 2 .3-1.5 1.4.4 2-1.8-1-1.8 1 .4-2-1.5-1.4 2-.3z"/>',
 };
-const TOOLS = [['gfx', '그래픽'], ['neck', '넥라인'], ['cut', '가위'], ['dmg', '데미지'], ['fit', '통·핏'], ['color', '색·무늬']];
+const TOOLS = [['gfx', '그래픽'], ['neck', '넥라인'], ['cut', '가위'], ['dmg', '데미지'], ['fit', '모양'], ['color', '색·무늬']];
 const TOOL_HINT = {
   neck: '목 아래 점을 끌어 깊이·넓이를, 마름모 점으로 U↔V를 바꿔요',
   cut: '자를 높이에 대고 클릭하면 그 자리에서 잘려요',
@@ -1162,9 +1162,9 @@ function setTool(id) {
   document.querySelectorAll('.tool').forEach(b => b.setAttribute('aria-pressed', b.dataset.tool === id));
   const h3 = {
     neck: '목선 점을 끌어 모양을 그려요 · 뒤에서 보면 뒷목선 · 빈 곳을 끌면 회전',
-    cut: '밑단·소매 끝 점을 끌거나 브러시로 잘라요 · 빈 곳을 끌면 회전',
+    cut: '밑단·소매 끝 점(민소매는 진동둘레 점)을 끌거나 브러시로 잘라요 · 빈 곳을 끌면 회전',
     dmg: '옷을 누를수록 워싱 → 해짐 → 찢어짐 · 빈 곳을 끌면 회전',
-    fit: '막대와 빠른 버튼으로 핏을 바꿔요 · 끌면 회전',
+    fit: '옷을 잡고 바깥으로 끌면 늘어나고 안으로 끌면 줄어요 · 빈 곳을 끌면 회전',
     color: '색·무늬를 고르거나 브러시로 옷에 직접 칠해요 · 빈 곳을 끌면 회전',
     gfx: '그래픽을 끌어 옮기고 모서리로 크기, 위 손잡이로 회전 · 빈 곳을 끌면 회전',
   };
@@ -1266,7 +1266,7 @@ function panelHTML() {
     case 'cut':
       if (!T && !B) return need('옷');
       if (is3d()) return `<div class="seg2" role="group" aria-label="가위 방법"><button type="button" class="chip" data-cutmode="line">가로로 자르기</button><button type="button" class="chip" data-cutmode="free">붓으로 자르기</button><button type="button" class="chip" data-cutmode="keep">되살리기</button></div>
-        <p class="hint">${ui.cutMode === 'line' ? '자를 높이에 대고 <b>클릭</b>하면 한 줄로 잘려요. 밑단과 소매 끝의 <b>점</b>을 끌면 밑단을 비대칭·곡선으로, 소매를 한쪽만 바꿀 수 있어요.'
+        <p class="hint">${ui.cutMode === 'line' ? '자를 높이에 대고 <b>클릭</b>하면 한 줄로 잘려요. 밑단과 소매 끝의 <b>점</b>을 끌면 밑단을 비대칭·곡선으로, 소매를 한쪽만 바꿀 수 있어요. 민소매는 <b>진동둘레 점</b>을 끌어 겨드랑이를 깊게 파거나 어깨를 좁혀요.'
           : ui.cutMode === 'free' ? '옷 위를 <b>누른 채 문지르면</b> 그 자리가 잘려 나가요. 트임, 컷아웃, 구멍 무엇이든 돼요.' : '잘라 낸 곳을 <b>문지르면</b> 다시 붙어요.'}</p>
         ${ui.cutMode !== 'line' ? `<label class="row"><span class="lab">붓 크기<b>${ui.brushSize.toFixed(1)}cm</b></span><input type="range" data-ui="brushSize" min="0.5" max="8" step="0.1" value="${ui.brushSize}"></label>` : ''}
         ${T ? slider('top.len', '상의 기장', ...LIMIT['top.len'], 1) + slider('top.sleeve', '소매 기장', ...LIMIT['top.sleeve'], 1) : ''}
@@ -1283,7 +1283,15 @@ function panelHTML() {
         <div class="btn-row"><button type="button" class="chip" data-mode="paint">칠하기</button><button type="button" class="chip" data-mode="erase">지우개</button><button type="button" class="chip" data-act="clear-dmg">전부 지우기</button></div>`;
     case 'fit':
       if (!T && !B) return need('옷');
-      return (is3d() ? `<p class="hint">부위마다 <b>막대</b>로 품을 넓히거나 좁혀요. 빠른 버튼으로 핏을 한 번에 바꿀 수도 있어요. 마네킹을 끌면 돌려 볼 수 있어요.</p>`
+      return (is3d() ? `<p class="hint">옷의 <b>아무 곳이나</b> 누른 채 <b>바깥으로 끌면 늘어나고, 안으로 끌면 줄어요</b>. 무릎 바깥을 끌면 무릎만, 밑단을 끌면 밑단만 바뀌어요. 몸 안으로는 안 들어가요. 빈 곳을 끌면 돌려 봐요.</p>
+        <div class="seg2 seg4" role="group" aria-label="모양 도구"><button type="button" class="chip" data-shapemode="grab">끌기</button><button type="button" class="chip" data-shapemode="grow">부풀리기</button><button type="button" class="chip" data-shapemode="shrink">조이기</button><button type="button" class="chip" data-shapemode="smooth">고르게</button></div>
+        ${ui.shapeMode !== 'grab' ? '<p class="note" style="margin:-4px 0 10px">옷 위를 누른 채 문지르면 조금씩 바뀌어요.</p>' : ''}
+        <label class="row"><span class="lab">한 번에 바뀌는 범위<b>${ui.shapeR.toFixed(1)}cm</b></span><input type="range" data-ui="shapeR" min="2" max="25" step="0.5" value="${ui.shapeR}"></label>
+        ${ui.shapeMode === 'grab' ? '<div class="seg2" role="group" aria-label="바뀌는 곳"><button type="button" class="chip" data-shapering="1">둘레 전체</button><button type="button" class="chip" data-shapering="0">누른 곳만</button></div>' : ''}
+        <div class="seg2" role="group" aria-label="좌우 대칭"><button type="button" class="chip" data-shapesym="1">좌우 대칭</button><button type="button" class="chip" data-shapesym="0">한쪽만</button></div>
+        <div class="btn-row" style="margin-bottom:6px">${T ? '<button type="button" class="chip" data-act="shape-reset" data-slot="top">상의 모양 처음으로</button>' : ''}${B ? '<button type="button" class="chip" data-act="shape-reset" data-slot="bottom">하의 모양 처음으로</button>' : ''}</div>
+        <span class="label-sm" style="margin-top:20px">출발점 고르기</span>
+        <p class="note" style="margin:-4px 0 10px">아래는 처음 모양이에요. 끌어서 만든 모양은 그 위에 더해져요.</p>`
         : `<p class="hint">부위마다 <b>점이 따로</b> 있어요. 바깥으로 끌면 넓어지고 안쪽으로 끌면 좁아져요. 조절하는 동안 옷이 <b>반투명</b>해지고 원래 모양이 점선으로 남아요.</p>`) + `
         ${T ? `<span class="label-sm">상의 · ${NAME[T.kind]}</span>${fitChips('top', FIT_PRESETS.top)}
           ${B && T.len > Y.waist + BODY.rise + 10 ? `<div class="seg2" role="group" aria-label="입는 방법"><button type="button" class="chip" data-tuck="0">밖으로 빼 입기</button><button type="button" class="chip" data-tuck="1">넣어 입기</button></div>` : ''}
@@ -1363,6 +1371,9 @@ function syncPanel() {
     P.querySelectorAll('[data-c2]').forEach(b => b.setAttribute('aria-pressed', b.dataset.c2 === g.fill.c2));
   }
   P.querySelectorAll('[data-cutmode]').forEach(b => b.setAttribute('aria-pressed', b.dataset.cutmode === ui.cutMode));
+  P.querySelectorAll('[data-shapemode]').forEach(b => b.setAttribute('aria-pressed', b.dataset.shapemode === ui.shapeMode));
+  P.querySelectorAll('[data-shapesym]').forEach(b => b.setAttribute('aria-pressed', (b.dataset.shapesym === '1') === ui.shapeSym));
+  P.querySelectorAll('[data-shapering]').forEach(b => b.setAttribute('aria-pressed', (b.dataset.shapering === '1') === ui.shapeRing));
   P.querySelectorAll('[data-ui-sym]').forEach(b => b.setAttribute('aria-pressed', (b.dataset.uiSym === '1') === ui.neckSym));
   P.querySelectorAll('[data-hood]').forEach(b => b.setAttribute('aria-pressed', (b.dataset.hood === '1') === !!(state.top && state.top.hoodOff)));
   P.querySelectorAll('[data-neckv]').forEach(b => b.setAttribute('aria-pressed', (b.dataset.neckv === '1') === !!(state.top && state.top.neckV)));
@@ -1405,7 +1416,7 @@ document.addEventListener('pointerup', () => { if (sliderAdjust) { sliderAdjust 
 document.addEventListener('pointercancel', () => { if (sliderAdjust) { sliderAdjust = false; endAdjust(); } });
 P.addEventListener('input', e => {
   const u = e.target.closest('[data-ui]');
-  if (u) { ui[u.dataset.ui] = +u.value; const b = u.closest('.row').querySelector('.lab b'); if (b) b.textContent = u.dataset.ui === 'brushAlpha' ? Math.round(ui.brushAlpha * 100) + '%' : ui.brushSize.toFixed(1) + 'cm'; syncPanel(); return; }
+  if (u) { const k = u.dataset.ui; ui[k] = +u.value; const b = u.closest('.row').querySelector('.lab b'); if (b) b.textContent = k === 'brushAlpha' ? Math.round(ui.brushAlpha * 100) + '%' : ui[k].toFixed(1) + 'cm'; syncPanel(); return; }
   if (e.target.matches('[data-bchex]')) { const v = parseHex(e.target.value); e.target.classList.toggle('bad', !v); if (v) { ui.brushColor = v; e.target.previousElementSibling.style.background = v; } return; }
   const hue = e.target.closest('[data-hue]');
   if (hue) { const c = hue.dataset.hue; setHSV(c, { ...getHSV(c), h: +hue.value }); return; }
@@ -1440,6 +1451,10 @@ P.addEventListener('click', e => {
   if (!b || b.disabled) return;
   const g = state[state.target], d = b.dataset;
   if (d.cutmode) { ui.cutMode = d.cutmode; renderPanel(); return; }
+  if (d.shapemode) { ui.shapeMode = d.shapemode; renderPanel(); return; }
+  if (d.shapesym) { ui.shapeSym = d.shapesym === '1'; syncPanel(); return; }
+  if (d.shapering) { ui.shapeRing = d.shapering === '1'; syncPanel(); return; }
+  if (d.act === 'shape-reset') { const g2 = state[d.slot]; if (g2) g2.shape = []; render(); commit(); say('끌어서 만든 모양을 지웠어요 (되돌리기 가능)'); return; }
   if (d.uiSym) { ui.neckSym = d.uiSym === '1'; syncPanel(); return; }
   if (d.paint) { ui.paintOn = d.paint !== 'off'; ui.paintErase = d.paint === 'erase'; renderPanel(); return; }
   if (d.bc) { ui.brushColor = d.bc; renderPanel(); return; }
@@ -1447,7 +1462,7 @@ P.addEventListener('click', e => {
   if (d.hood && state.top) { state.top.hoodOff = d.hood === '1'; render(); commit(); syncPanel(); say(state.top.hoodOff ? '후드를 뗐어요' : '후드를 달았어요'); return; }
   if (d.neckv && state.top) { state.top.neckV = d.neckv === '1' ? 1 : 0; render(); commit(); syncPanel(); return; }
   if (d.act === 'neck-reset') { state.top.neckF = state.top.neckB = null; state.top.neckV = 0; render(); commit(); say('목선을 원래대로 돌렸어요'); return; }
-  if (d.act === 'hem-reset') { [state.top, state.bottom].forEach(x => { if (x) { x.hemOff = null; x.sleeveAdj = null; } }); render(); commit(); say('밑단·소매 모양을 처음으로 돌렸어요'); return; }
+  if (d.act === 'hem-reset') { [state.top, state.bottom].forEach(x => { if (x) { x.hemOff = null; x.sleeveAdj = null; x.armF = x.armB = null; } }); render(); commit(); say('밑단·소매·진동 모양을 처음으로 돌렸어요'); return; }
   if (d.act === 'cuts-clear') { [state.top, state.bottom].forEach(x => { if (x && x.strokes) x.strokes = x.strokes.filter(k => k.t === 'paint' || k.t === 'erase'); }); render(); commit(); say('붓으로 자른 곳을 되살렸어요'); return; }
   if (d.act === 'paint-clear') { const g2 = state[state.target]; if (g2 && g2.strokes) g2.strokes = g2.strokes.filter(k => k.t === 'cut' || k.t === 'keep'); render(); commit(); say('칠한 것을 지웠어요'); return; }
   if (d.tuck) { state.top.tuck = d.tuck === '1'; say(state.top.tuck ? '상의를 하의 안에 넣었어요' : '상의를 밖으로 뺐어요'); }
