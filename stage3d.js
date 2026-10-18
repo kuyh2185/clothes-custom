@@ -5,7 +5,9 @@
    Editing happens in the shaders, in rest-pose space (so it stays put in any pose):
    colour/pattern over the fabric's own shading, a free neckline (9 draggable points, front and back), a free hem
    (8 draggable points around) and per-side sleeve ends, brush cutting/restoring and brush painting (canvas masks in
-   the brush UVs), washes and rips, and printed images. The body is pushed just inside whatever covers it. */
+   the brush UVs), washes and rips, and printed graphics (gfx.js composites each print area — front, back, the
+   outside of each sleeve — into a canvas; the shader projects it onto the fabric facing that way, and the graphics
+   are picked, moved, resized and turned right on the garment). The body is pushed just inside whatever covers it. */
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
@@ -48,6 +50,25 @@ function start() {
   const brushRing = document.createElement('div');
   brushRing.className = 'brush3d';
   wrap.appendChild(brushRing);
+  // graphics tool: the picked graphic's outline on the garment, with corner (size) and turn handles
+  const SVGNS = 'http://www.w3.org/2000/svg';
+  const gbox = document.createElementNS(SVGNS, 'svg');
+  gbox.setAttribute('class', 'gbox');
+  gbox.innerHTML = '<line class="gb-stem"/><polygon class="gb-shape"/>';
+  layer.appendChild(gbox);
+  const gShape = gbox.querySelector('.gb-shape'), gStem = gbox.querySelector('.gb-stem');
+  const gH = ['nw', 'ne', 'se', 'sw', 'rot'].map(k => {
+    const el = document.createElement('button');
+    el.type = 'button';
+    el.className = 'gh ' + k;
+    el.setAttribute('aria-label', k === 'rot' ? '그래픽 돌리기' : '그래픽 크기 바꾸기');
+    el.addEventListener('pointerdown', e => gStart(e, k === 'rot' ? 'rot' : 'scale'));
+    layer.appendChild(el);
+    return el;
+  });
+  gShape.addEventListener('pointerdown', e => gStart(e, 'move'));
+  let GS = null, gdrag = null;
+  const gPts = new Map();   // pointers on a graphic (two fingers = pinch to resize and turn)
 
   /* ---------- studio ---------- */
   const scene = new THREE.Scene();
@@ -134,7 +155,22 @@ function start() {
       }
       return [x, best > -1e8 ? best : hi];
     });
-    return { lo, lo0, hi, smax, smax0, neckF: outline(1), neckB: outline(-1) };
+    // each sleeve: its centre front-to-back, its length per unit of _s, and which way its outside faces (for the sleeve prints)
+    const sl = {}, N = g.attributes.normal;
+    for (const sgn of [1, -1]) {
+      const bins = [[0, 0, 0, 0], [0, 0, 0, 0]];
+      for (let i = 0; i < n; i++) {
+        const sv = s.getX(i);
+        if (sv <= .02 || sgn * P.getX(i) <= 0) continue;
+        const b = sv >= .05 && sv < .15 ? bins[0] : sv >= .25 && sv < .35 ? bins[1] : null;
+        if (b) { b[0] += P.getX(i); b[1] += P.getY(i); b[2] += P.getZ(i); b[3]++; }
+      }
+      if (!bins[0][3] || !bins[1][3] || !N) continue;
+      const [c0, c1] = bins.map(b => [b[0] / b[3], b[1] / b[3], b[2] / b[3]]);
+      const dx = c1[0] - c0[0], dy = c1[1] - c0[1], dl = Math.hypot(dx, dy) || 1;
+      sl[sgn > 0 ? 'lsl' : 'rsl'] = { z: c0[2], L: Math.hypot(dx, dy, c1[2] - c0[2]) / .2, o: sgn > 0 ? [-dy / dl, dx / dl, 0] : [dy / dl, -dx / dl, 0] };
+    }
+    return { lo, lo0, hi, smax, smax0, neckF: outline(1), neckB: outline(-1), sl };
   }
 
   /* ---------- materials ---------- */
@@ -174,7 +210,9 @@ function start() {
       uNeckF: { value: Array.from({ length: NP }, () => new THREE.Vector2()) }, uNeckB: { value: Array.from({ length: NP }, () => new THREE.Vector2()) }, uNeckOn: { value: 0 },
       uFit: { value: new THREE.Vector4() }, uFitH: { value: new THREE.Vector4() }, uSh: { value: new THREE.Vector2(9, 10) }, uHand: { value: HANDS }, uHandOn: { value: 0 }, uHoodOff: { value: 0 },
       uDmg: { value: Array.from({ length: MAXD }, () => new THREE.Vector4()) }, uDmgN: { value: 0 },
-      uPrint: { value: null }, uPrintOn: { value: 0 }, uPrintBox: { value: new THREE.Vector4() },
+      uG0: { value: null }, uG1: { value: null }, uG2: { value: null }, uG3: { value: null }, uGOn: { value: new THREE.Vector4() },
+      uGBox: { value: Array.from({ length: 4 }, () => new THREE.Vector4()) }, uGSL: { value: new THREE.Vector2() },
+      uGSO: { value: [new THREE.Vector3(1, 0, 0), new THREE.Vector3(-1, 0, 0)] }, uGuide: { value: -1 },
       uHover: { value: -10 }, uBand: { value: new THREE.Vector3() }, uHem: { value: new THREE.Vector2() }, uUnder: { value: 99 },
       uMask: { value: mask.t }, uPaint: { value: paint.t }, uBrushOn: { value: 0 },
     };
@@ -193,7 +231,7 @@ attribute float _h; attribute float _s; attribute float _c;
 #ifndef USE_UV1
 attribute vec2 uv1;
 #endif
-varying vec3 vRest; varying float vH; varying float vS; varying vec2 vB; varying float vC;
+varying vec3 vRest; varying float vH; varying float vS; varying vec2 vB; varying float vC; varying vec3 vRN;
 uniform vec4 uFit; uniform vec4 uFitH; uniform vec2 uSh; uniform vec4 uHand[2]; uniform float uHandOn;`)
         .replace('#include <skinning_vertex>', `#include <skinning_vertex>
 // a hand never goes into the cloth: whatever is inside its sphere is pushed out round it
@@ -202,21 +240,22 @@ if (uHandOn > 0.5) for (int i = 0; i < 2; i++) {
   if (uHand[i].w > 0.0 && r < uHand[i].w) transformed = uHand[i].xyz + d / max(r, 1e-4) * uHand[i].w;
 }`)
         .replace('#include <begin_vertex>', `#include <begin_vertex>
-vRest = position; vH = _h; vS = _s; vB = uv1; vC = _c;
+vRest = position; vH = _h; vS = _s; vB = uv1; vC = _c; vRN = normal;
 float off = (vS > 0.01 ? uFit.y : uFit.x * (1.0 - smoothstep(uSh.y, uSh.x, _h)));   // no push at the shoulders: a big top hangs from them
 off += uFit.z * max(0.0, uFitH.x - _h);
 if (uFitH.y > 0.0) { float t = clamp((uFitH.y - _h) / max(0.01, uFitH.y - uFitH.z), 0.0, 1.0); off += mix(uFit.w, uFitH.w, t); }
 transformed += objectNormal * off;`);
       sh.fragmentShader = sh.fragmentShader
         .replace('#include <common>', `#include <common>
-varying vec3 vRest; varying float vH; varying float vS; varying vec2 vB; varying float vC;
+varying vec3 vRest; varying float vH; varying float vS; varying vec2 vB; varying float vC; varying vec3 vRN;
 uniform float uHoodOff;
 uniform vec3 uC1; uniform vec3 uC2; uniform float uPat; uniform float uScale; uniform float uAvg; uniform vec3 uAvgC; uniform float uKeep; uniform float uDetail;
 uniform float uCutH; uniform vec2 uSleeveCut; uniform float uRaw; uniform float uRawS; uniform float uTuckH;
 uniform float uHemOff[${HP}]; uniform float uHemLeg;
 uniform vec2 uNeckF[${NP}]; uniform vec2 uNeckB[${NP}]; uniform float uNeckOn;
 uniform vec4 uDmg[${MAXD}]; uniform int uDmgN;
-uniform sampler2D uPrint; uniform float uPrintOn; uniform vec4 uPrintBox;
+uniform sampler2D uG0; uniform sampler2D uG1; uniform sampler2D uG2; uniform sampler2D uG3; uniform vec4 uGOn;
+uniform vec4 uGBox[4]; uniform vec2 uGSL; uniform vec3 uGSO[2]; uniform float uGuide;
 uniform float uHover; uniform vec3 uBand; uniform vec2 uHem; uniform float uUnder;
 uniform sampler2D uMask; uniform sampler2D uPaint; uniform float uBrushOn;
 float hash(float n) { return fract(sin(n) * 43758.5453); }
@@ -300,9 +339,32 @@ for (int i = 0; i < ${MAXD}; i++) {
   diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.88, 0.88, 0.85), k * (0.28 + d.w * 0.12));
   if (d.w > 1.5 && k > 0.35 && fract(vRest.y * 140.0 + hash(float(i))) < 0.18) diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.93), 0.7);
 }
-if (uPrintOn > 0.5 && vRest.z > 0.0) {
-  vec2 pu = (vRest.xy - uPrintBox.xy) / uPrintBox.zw + 0.5;
-  if (pu.x > 0.0 && pu.x < 1.0 && pu.y > 0.0 && pu.y < 1.0) { vec4 pc = texture2D(uPrint, vec2(pu.x, pu.y)); diffuseColor.rgb = mix(diffuseColor.rgb, pc.rgb, pc.a); }
+// printed graphics: the print area facing this way (front, back, outside of a sleeve), projected flat onto the cloth
+// (not round the sides, where a flat print would smear: like a real print, it stops before the side seams).
+// gu = (across, up) in metres as seen from that side; the area box is (centre across, top, width, height)
+int ga = -1; vec2 gu = vec2(0.0);
+if (vC < 0.5) {
+  if (vS < 0.01) {
+    if (vRest.z > 0.0 && vRN.z > 0.3) { ga = 0; gu = vRest.xy; }
+    else if (vRest.z < 0.0 && vRN.z < -0.3) { ga = 1; gu = vec2(-vRest.x, vRest.y); }
+  }
+  else if (vRest.x > 0.0 && dot(vRN, uGSO[0]) > 0.15) { ga = 2; gu = vec2(-vRest.z, -vS * uGSL.x); }
+  else if (vRest.x < 0.0 && dot(vRN, uGSO[1]) > 0.15) { ga = 3; gu = vec2(vRest.z, -vS * uGSL.y); }
+}
+vec4 gb = ga == 0 ? uGBox[0] : ga == 1 ? uGBox[1] : ga == 2 ? uGBox[2] : uGBox[3];
+float gon = ga == 0 ? uGOn.x : ga == 1 ? uGOn.y : ga == 2 ? uGOn.z : uGOn.w;
+vec2 gq = vec2((gu.x - gb.x) / max(gb.z, 1e-4) + 0.5, (gb.y - gu.y) / max(gb.w, 1e-4));
+bool gin = ga >= 0 && gb.z > 0.0 && gq.x > 0.0 && gq.x < 1.0 && gq.y > 0.0 && gq.y < 1.0;
+vec2 gt = vec2(gq.x, 1.0 - gq.y);
+vec4 g0 = texture2D(uG0, gt), g1 = texture2D(uG1, gt), g2 = texture2D(uG2, gt), g3 = texture2D(uG3, gt);
+if (gin && gon > 0.5) {
+  vec4 pc = ga == 0 ? g0 : ga == 1 ? g1 : ga == 2 ? g2 : g3;
+  diffuseColor.rgb = mix(diffuseColor.rgb, pc.rgb * mix(1.0, detail, 0.5), pc.a);   // ink follows the weave a little
+}
+if (uGuide > -0.5 && gin && abs(float(ga) - uGuide) < 0.5) {   // the picked graphic's print area as a dashed line, its centre line faintly
+  vec2 ge = min(gq, 1.0 - gq) * gb.zw;
+  if (min(ge.x, ge.y) < 0.0028 && fract((gu.x + gu.y) * 55.0) < 0.55) diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.86, 0.16, 0.05), 0.9);
+  if (abs(gq.x - 0.5) * gb.z < 0.0011 && fract(gu.y * 45.0) < 0.5) diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.9), 0.4);
 }
 if (uBand.z > 0.5 && vH > uBand.x && vS < 0.01) {
   diffuseColor.rgb = uC1 * clamp(detail, 0.85, 1.1) * 0.92;
@@ -395,12 +457,27 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = uSock;`);
   }
 
   /* ---------- apply the editor state ---------- */
-  const IMG = {};
-  function printTexture(id) {
-    if (!cc.images[id]) return null;
-    if (!IMG[id]) { const t = new THREE.TextureLoader().load(cc.images[id], () => S3.update()); t.colorSpace = THREE.SRGBColorSpace; IMG[id] = t; }
-    return IMG[id];
+  // print areas of a garment as boxes in its rest space: [centre across, top, width, height] in metres
+  const GA = ['front', 'back', 'lsl', 'rsl'];
+  function gboxes(id) {
+    const G = window.__gfx, inf = A.info[id], top = TOPS.has(id), AR = G ? G.AREAS[top ? 'top' : 'bottom'] : {}, mid = (NO - 1) >> 1;
+    const box = (a, cx, y) => AR[a] ? [cx, y, AR[a].w / 100, AR[a].h / 100] : null;
+    return {
+      front: box('front', 0, top ? inf.neckF[mid][1] : inf.hi), back: box('back', 0, top ? inf.neckB[mid][1] : inf.hi),
+      lsl: top && inf.sl.lsl ? box('lsl', -inf.sl.lsl.z, 0) : null, rsl: top && inf.sl.rsl ? box('rsl', inf.sl.rsl.z, 0) : null,
+    };
   }
+  const GTEX = {};
+  function gtex(key, C) {
+    let t = GTEX[key];
+    if (!t || t.image !== C.c) {
+      t = GTEX[key] = new THREE.CanvasTexture(C.c);
+      t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = renderer.capabilities.getMaxAnisotropy(); t.userData.n = -1;
+    }
+    if (t.userData.n !== C.n) { t.userData.n = C.n; t.needsUpdate = true; }
+    return t;
+  }
+  let noGuide = false;
   const PAT = { solid: 0, stripe: 1, check: 2, dot: 3 };
   let hoverCut = null;
   const meshOf = (slot, g) => !g ? null : slot === 'top' ? (TOPS.has(g.kind) ? g.kind : 'tee') : (g.kind === 'skirt' ? 'skirt' : 'jeans');
@@ -498,13 +575,22 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = uSock;`);
       const ds = (g.dmg3 || []).filter(d => d.g === id && d.p).slice(-MAXD);
       ds.forEach((d, i) => U.uDmg.value[i].set(d.p[0], d.p[1], d.p[2], d.lv));
       U.uDmgN.value = ds.length;
-      const p = g.print, p3 = g.print3 && g.print3.g === id && g.print3.p ? g.print3 : null, tex = p && printTexture(p.img);
-      U.uPrintOn.value = tex && tex.image ? 1 : 0;
-      if (U.uPrintOn.value) {
-        U.uPrint.value = tex;
-        const c = p3 ? p3.p : (id === 'jeans' || id === 'skirt') ? [0.08 * (H / 1.77), toH(470), 0] : [0, toH(226), 0];
-        U.uPrintBox.value.set(c[0], c[1], p.w * k, p.w * p.ar * k);
+      const G = window.__gfx, slot = TOPS.has(id) ? 'top' : 'bottom';
+      if (G) {
+        const cs = G.canvases(slot), bx = gboxes(id), inf = A.info[id];
+        GA.forEach((a, i) => {
+          const C = cs[a], b = bx[a], on = C && C.on && b ? 1 : 0;
+          U.uGOn.value.setComponent(i, on);
+          if (b) U.uGBox.value[i].set(b[0], b[1], b[2], b[3]); else U.uGBox.value[i].set(0, 0, 0, 0);
+          if (on) U['uG' + i].value = gtex(slot + ':' + a, C);
+        });
+        U.uGSL.value.set(inf.sl.lsl ? inf.sl.lsl.L : 0, inf.sl.rsl ? inf.sl.rsl.L : 0);
+        if (inf.sl.lsl) U.uGSO.value[0].fromArray(inf.sl.lsl.o);
+        if (inf.sl.rsl) U.uGSO.value[1].fromArray(inf.sl.rsl.o);
       }
+      // graphics tool: the picked graphic's print area is outlined
+      const sel = G && cc.tool === 'gfx' && !noGuide ? G.selected() : null;
+      U.uGuide.value = sel && sel.slot === slot ? GA.indexOf(sel.it.a) : -1;
       const strokes = (g.strokes || []).filter(s => s.g === id);
       U.uBrushOn.value = strokes.length ? 1 : 0;
       redrawBrush(M[id], strokes);
@@ -586,6 +672,7 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = uSock;`);
     if (A.pose !== clip) { A.mixer.stopAllAction(); A.mixer.clipAction(clip).play(); A.mixer.setTime(0); A.pose = clip; }
     if (!dragH) buildHandles();
     else handles.filter(hd => hd.kind === dragH.kind && hd.slot === dragH.slot).forEach(locate);
+    buildGSel();
     // while a point is being dragged the garment turns see-through, so the body and the new line show clearly
     for (const id of GARMENTS) {
       const m = M[id] && M[id].material, see = !!dragH && (dragH.slot === 'top' ? id === topMesh : id === botMesh);
@@ -655,7 +742,7 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = uSock;`);
   (function frame() {
     requestAnimationFrame(frame);
     if (dirty) { dirty = false; rebuild(); needs = true; }
-    if (controls.update() || needs) { needs = false; updateHands(); renderer.render(scene, camera); placeHandles(); }
+    if (controls.update() || needs) { needs = false; updateHands(); renderer.render(scene, camera); placeHandles(); placeGSel(); }
   })();
   controls.addEventListener('change', () => { needs = true; });
 
@@ -681,7 +768,7 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = uSock;`);
       const get = i => comp === 0 ? attr.getX(i) : comp === 1 ? attr.getY(i) : attr.getZ(i);
       return get(a) * bary.x + get(b) * bary.y + get(c) * bary.z;
     };
-    const uv1 = g.attributes.uv1;
+    const uv1 = g.attributes.uv1, N = g.attributes.normal, C = g.attributes._c;
     // brush UVs per metre at this spot, so a brush of n cm is n cm wherever you paint
     let uvPerM = 1;
     if (uv1) {
@@ -692,6 +779,7 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = uSock;`);
     return {
       mesh: o.name, slot: TOPS.has(o.name) ? 'top' : 'bottom', rest: [ip(P, 0), ip(P, 1), ip(P, 2)],
       h: g.attributes._h ? ip(g.attributes._h) : 0, s: g.attributes._s ? ip(g.attributes._s) : 0, point: h.point, uv: uv1 ? [ip(uv1, 0), ip(uv1, 1)] : null, uvPerM,
+      n: N ? [ip(N, 0), ip(N, 1), ip(N, 2)] : [0, 0, 1], c: C ? ip(C) : 0,
     };
   }
   // metres per screen pixel at a world point (for dragging edit points and sizing the brush ring)
@@ -921,6 +1009,7 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = uSock;`);
   let drag = null;
   canvas.addEventListener('pointerdown', e => {
     if (e.button > 0) return;
+    if (cc.tool === 'gfx') return gfxDown(e);
     const tool = cc.tool, bm = brushMode();
     if (!['cut', 'dmg', 'color'].includes(tool)) return;
     const h = hit(e);
@@ -939,9 +1028,7 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = uSock;`);
       paintAt(h, true);
       drag = { type: 'dmg', slot: h.slot, last: h.point.clone() };
     } else {
-      const g = cc.state[h.slot];
-      if (cc.state.target !== h.slot) { cc.setTarget(h.slot); return; }
-      if (g && g.print) { g.print3 = { g: h.mesh, p: h.rest }; cc.render(); cc.commit(); cc.say('프린트를 옮겼어요'); }
+      if (cc.state.target !== h.slot) cc.setTarget(h.slot);
       return;
     }
     canvas.setPointerCapture(e.pointerId);
@@ -958,7 +1045,10 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = uSock;`);
       return;
     }
     const tool = cc.tool;
-    if (bm && !e.buttons) {
+    if (tool === 'gfx' && !e.buttons && !gdrag) {
+      const q = gfxAt(e);
+      canvas.style.cursor = q && q.it ? 'move' : '';
+    } else if (bm && !e.buttons) {
       const h = hit(e);
       showBrush(e, h);
       canvas.style.cursor = h ? 'none' : '';
@@ -979,6 +1069,174 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = uSock;`);
   canvas.addEventListener('pointerup', end);
   canvas.addEventListener('pointercancel', end);
   canvas.addEventListener('pointerleave', () => { if (!drag) { if (hoverCut) showCut(null); brushRing.classList.remove('show'); } });
+
+  /* ---------- graphics on the 3D stage: pick, move, resize and turn them right on the garment ---------- */
+  // a rest-space point of a garment → its print area and where in it (cm): the inverse of the shader's projection
+  function areaOf(id, x, y, z, nx, ny, nz, s, c) {
+    if (c > .5) return null;
+    const inf = A.info[id], B = gboxes(id);
+    let a, u, v;
+    if (s < .01) {
+      if (z > 0 && nz > .3) { a = 'front'; u = x; v = y; }
+      else if (z < 0 && nz < -.3) { a = 'back'; u = -x; v = y; }
+      else return null;
+    } else {
+      const sl = inf.sl[x > 0 ? 'lsl' : 'rsl'];
+      if (!sl || nx * sl.o[0] + ny * sl.o[1] + nz * sl.o[2] <= .15) return null;
+      a = x > 0 ? 'lsl' : 'rsl'; u = x > 0 ? -z : z; v = -s * sl.L;
+    }
+    const b = B[a];
+    return b ? { a, x: (u - b[0]) * 100, y: (b[1] - v) * 100 } : null;
+  }
+  const areaOfHit = h => areaOf(h.mesh, ...h.rest, ...h.n, h.s, h.c);
+  // every vertex's print-area spot, once per garment: finds the cloth under a graphic's corners
+  function areaTable(mesh) {
+    if (mesh.userData.at) return mesh.userData.at;
+    const g = mesh.geometry, P = g.attributes.position, N = g.attributes.normal, S = g.attributes._s, C = g.attributes._c, t = {};
+    GA.forEach(a => { t[a] = { i: [], x: [], y: [] }; });
+    for (let i = 0; i < P.count; i++) {
+      const r = areaOf(mesh.name, P.getX(i), P.getY(i), P.getZ(i), N.getX(i), N.getY(i), N.getZ(i), S.getX(i), C ? C.getX(i) : 0);
+      if (r) { const q = t[r.a]; q.i.push(i); q.x.push(r.x); q.y.push(r.y); }
+    }
+    return (mesh.userData.at = t);
+  }
+  function nearestIn(mesh, a, x, y) {
+    const t = areaTable(mesh)[a];
+    let best = -1, bd = 1e9;
+    for (let k = 0; k < t.i.length; k++) { const d = (t.x[k] - x) ** 2 + (t.y[k] - y) ** 2; if (d < bd) { bd = d; best = k; } }
+    return best < 0 ? null : { vi: t.i[best], x: t.x[best], y: t.y[best], d: Math.sqrt(bd) };
+  }
+  // what is under the pointer: the garment, its print area spot, and the graphic there (if any)
+  function gfxAt(e) {
+    const G = window.__gfx, h = G && hit(e);
+    if (!h) return null;
+    const q = areaOfHit(h);
+    return { h, q, it: q ? G.hitTest(h.slot, q.a, q.x, q.y) : null };
+  }
+
+  function buildGSel() {
+    const G = window.__gfx, s = G && cc.tool === 'gfx' ? G.selected() : null;
+    GS = null;
+    if (s && !s.it.hid) {
+      const mesh = A.meshes[meshOf(s.slot, cc.state[s.slot])], it = s.it;
+      const c = mesh && mesh.visible ? nearestIn(mesh, it.a, it.x, it.y) : null;
+      if (c) {
+        // two spots 3 cm away (towards the middle of the area) tell how a centimetre of cloth looks on screen
+        const AR = G.AREAS[s.slot][it.a];
+        const bx = nearestIn(mesh, it.a, c.x + (c.x > 0 ? -3 : 3), c.y), by = nearestIn(mesh, it.a, c.x, c.y + (c.y > AR.h / 2 ? -3 : 3));
+        if (bx && by) GS = { it, slot: s.slot, mesh, c, bx, by };
+      }
+    }
+    placeGSel();
+  }
+  function placeGSel() {
+    const show = !!GS;
+    gbox.style.display = show ? '' : 'none';
+    gH.forEach(el => { el.hidden = !show; });
+    if (!show) return;
+    const sp = vi => { GS.mesh.getVertexPosition(vi, tmp); tmp.applyMatrix4(GS.mesh.matrixWorld); return project(tmp); };
+    const p0 = sp(GS.c.vi), p1 = sp(GS.bx.vi), p2 = sp(GS.by.vi);
+    const d1 = [GS.bx.x - GS.c.x, GS.bx.y - GS.c.y], d2 = [GS.by.x - GS.c.x, GS.by.y - GS.c.y], det = d1[0] * d2[1] - d2[0] * d1[1];
+    if (Math.abs(det) < 1e-3) { gbox.style.display = 'none'; gH.forEach(el => { el.hidden = true; }); return; }
+    const i00 = d2[1] / det, i01 = -d2[0] / det, i10 = -d1[1] / det, i11 = d1[0] / det;
+    const s1 = [p1[0] - p0[0], p1[1] - p0[1]], s2 = [p2[0] - p0[0], p2[1] - p0[1]];
+    const J = [s1[0] * i00 + s2[0] * i10, s1[0] * i01 + s2[0] * i11, s1[1] * i00 + s2[1] * i10, s1[1] * i01 + s2[1] * i11];
+    // seen from the other side the cloth's axes come out mirrored: the graphic isn't facing you
+    const jdet = J[0] * J[3] - J[1] * J[2];
+    const it = GS.it, w = it.w, h = window.__gfx.hOf(it), r = (it.r || 0) * PI / 180, cs = Math.cos(r), sn = Math.sin(r);
+    const scr = (ax, ay) => [p0[0] + J[0] * (ax - GS.c.x) + J[1] * (ay - GS.c.y), p0[1] + J[2] * (ax - GS.c.x) + J[3] * (ay - GS.c.y)];
+    const at = (lx, ly) => scr(it.x + lx * cs - ly * sn, it.y + lx * sn + ly * cs);
+    const P4 = [at(-w / 2, -h / 2), at(w / 2, -h / 2), at(w / 2, h / 2), at(-w / 2, h / 2)], ctr = at(0, 0), topM = at(0, -h / 2);
+    const vis = jdet > 0 || !!gdrag;
+    gbox.style.display = vis ? '' : 'none';
+    gShape.setAttribute('points', P4.map(p => p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' '));
+    const ux = topM[0] - ctr[0], uy = topM[1] - ctr[1], ul = Math.hypot(ux, uy) || 1, rot = [topM[0] + ux / ul * 28, topM[1] + uy / ul * 28];
+    gStem.setAttribute('x1', topM[0]); gStem.setAttribute('y1', topM[1]); gStem.setAttribute('x2', rot[0]); gStem.setAttribute('y2', rot[1]);
+    [...P4, rot].forEach((p, i) => { gH[i].hidden = !vis; gH[i].style.transform = `translate(${p[0]}px, ${p[1]}px)`; });
+    Object.assign(GS, { J, ctr });
+  }
+  const local = e => { const r = wrap.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
+  function gStart(e, kind) {
+    if (!GS) return;
+    e.preventDefault(); e.stopPropagation();
+    gPts.set(e.pointerId, local(e));
+    if (gdrag && gPts.size === 2) {   // a second finger: pinch
+      const [a, b] = [...gPts.values()];
+      gdrag = { kind: 'pinch', it: GS.it, d0: Math.hypot(b[0] - a[0], b[1] - a[1]) || 1, a0: Math.atan2(b[1] - a[1], b[0] - a[0]), w0: GS.it.w, r0: GS.it.r || 0 };
+      return;
+    }
+    if (gdrag) return;
+    const it = GS.it, h = kind === 'move' ? hit(e, [GS.mesh.name]) : null, q = h && areaOfHit(h);
+    gdrag = { kind, it, p0: local(e), sx: it.x, sy: it.y, w0: it.w, r0: it.r || 0, J: GS.J.slice(), ctr: GS.ctr.slice(), mesh: GS.mesh.name, q0: q && q.a === it.a ? q : null };
+    controls.enabled = false;
+    window.addEventListener('pointermove', gMove);
+    window.addEventListener('pointerup', gEnd);
+    window.addEventListener('pointercancel', gEnd);
+  }
+  function gMove(e) {
+    const d = gdrag;
+    if (!d || !gPts.has(e.pointerId)) return;
+    const p = local(e), G = window.__gfx, it = d.it, slot = GS ? GS.slot : cc.state.target, AR = G.AREAS[slot][it.a];
+    gPts.set(e.pointerId, p);
+    if (d.kind === 'idle') return;
+    if (d.kind === 'pinch') {
+      if (gPts.size < 2) return;
+      const [a, b] = [...gPts.values()];
+      it.w = Math.round(clamp(d.w0 * Math.hypot(b[0] - a[0], b[1] - a[1]) / d.d0, 1, AR.w * 1.4) * 10) / 10;
+      it.r = snapAngle(d.r0 + (Math.atan2(b[1] - a[1], b[0] - a[0]) - d.a0) * 180 / PI, false);
+    } else if (d.kind === 'move') {
+      let nx, ny;
+      const h = hit(e, [d.mesh]), q = h && areaOfHit(h);
+      if (q && d.q0 && q.a === it.a) { nx = d.sx + q.x - d.q0.x; ny = d.sy + q.y - d.q0.y; }
+      else {   // off the cloth: by how far the pointer moved, through the screen-per-cm map from the start
+        const [j0, j1, j2, j3] = d.J, det = j0 * j3 - j1 * j2 || 1, dx = p[0] - d.p0[0], dy = p[1] - d.p0[1];
+        nx = d.sx + (j3 * dx - j1 * dy) / det; ny = d.sy + (-j2 * dx + j0 * dy) / det;
+      }
+      if (Math.abs(nx) < .8) nx = 0;   // snaps onto the centre line
+      it.x = Math.round(clamp(nx, -AR.w / 2, AR.w / 2) * 10) / 10;
+      it.y = Math.round(clamp(ny, 0, AR.h) * 10) / 10;
+    } else if (d.kind === 'scale') {
+      const k = Math.hypot(p[0] - d.ctr[0], p[1] - d.ctr[1]) / (Math.hypot(d.p0[0] - d.ctr[0], d.p0[1] - d.ctr[1]) || 1);
+      it.w = Math.round(clamp(d.w0 * k, 1, AR.w * 1.4) * 10) / 10;
+    } else {
+      const a = Math.atan2(p[1] - d.ctr[1], p[0] - d.ctr[0]) - Math.atan2(d.p0[1] - d.ctr[1], d.p0[0] - d.ctr[0]);
+      it.r = snapAngle(d.r0 + a * 180 / PI, e.shiftKey);
+    }
+    cc.render(); G.sync();
+  }
+  function snapAngle(deg, step15) {
+    let v = ((deg + 180) % 360 + 360) % 360 - 180;
+    if (step15) return Math.round(v / 15) * 15;
+    const n = Math.round(v / 90) * 90;
+    if (Math.abs(v - n) < 4) v = n;   // straight up / sideways / upside down are easy to hit
+    return Math.round(v);
+  }
+  function gEnd(e) {
+    gPts.delete(e.pointerId);
+    if (gPts.size) { if (gdrag && gdrag.kind === 'pinch') gdrag = { ...gdrag, kind: 'idle' }; return; }
+    window.removeEventListener('pointermove', gMove);
+    window.removeEventListener('pointerup', gEnd);
+    window.removeEventListener('pointercancel', gEnd);
+    gdrag = null; controls.enabled = true;
+    cc.commit(); cc.renderPanel();
+  }
+  // pressing the garment with the graphics tool: a graphic there is picked and can be dragged at once;
+  // anywhere else lets go of the selection and turns the view as usual
+  function gfxDown(e) {
+    const G = window.__gfx;
+    if (!G) return;
+    if (gdrag && e.pointerType === 'touch' && GS) { gStart(e, 'pinch'); e.stopImmediatePropagation(); return; }
+    const f = gfxAt(e);
+    if (!f || !f.it) {
+      if (f && cc.state.target !== f.h.slot) cc.setTarget(f.h.slot);
+      if (G.selected()) G.select(null);
+      return;
+    }
+    e.stopImmediatePropagation();
+    e.preventDefault();
+    if (cc.ui.gsel !== f.it.id) { G.select(f.it.id); applyState(); }
+    if (GS) gStart(e, 'move');
+  }
 
   /* ---------- public ---------- */
   const VIEWS = { front: 0, side: -PI / 2, back: PI };
@@ -1011,8 +1269,9 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = uSock;`);
       const w = 1000, h = 1500, prev = new THREE.Vector2();
       renderer.getSize(prev);
       const pa = camera.aspect, pr = renderer.getPixelRatio(), hv = hoverCut;
-      hoverCut = null;
+      hoverCut = null; noGuide = true;
       if (A) applyState();
+      noGuide = false;
       renderer.setPixelRatio(1); renderer.setSize(w, h, false);
       camera.aspect = w / h; camera.updateProjectionMatrix();
       renderer.render(scene, camera);

@@ -238,6 +238,12 @@ function upgrade(g) {
     delete g.fit;
   }
   if (g.kind === 'skirt' && g.hip == null) g.hip = f * .2;
+  if (!g.gfx) g.gfx = [];
+  if (g.print) {   // saved before graphics layers: the one print becomes the first layer (editor units → cm)
+    const top = SLOT[g.kind] === 'top', cm = 0.243;
+    g.gfx.push({ id: 'g' + Date.now().toString(36), t: 'img', img: g.print.img, a: 'front', x: top ? 0 : -10, y: top ? 14 : 24, w: Math.round(g.print.w * cm * 10) / 10, ar: g.print.ar, r: 0 });
+    g.print = null; delete g.print3;
+  }
   return g;
 }
 const bottomLenLimit = b => b.kind === 'jeans' ? [412, 735] : [340, 720];
@@ -393,9 +399,9 @@ function skirtGeo(b) {
 
 /* ---------- state ---------- */
 let state = { top: clone(DEF.tee), bottom: clone(DEF.jeans), target: 'top' };
-let tool = 'neck', dmgMode = 'paint';
+let tool = 'gfx', dmgMode = 'paint';
 // 3D free editing: scissors mode, brush size (cm), painting brush
-const ui = { cutMode: 'line', brushSize: 2.5, paintOn: false, paintErase: false, brushColor: '#b8382e', brushAlpha: 1, neckSym: true };
+const ui = { gsel: null, cutMode: 'line', brushSize: 2.5, paintOn: false, paintErase: false, brushColor: '#b8382e', brushAlpha: 1, neckSym: true };
 let images = {};
 const blobUrls = {};
 // look of the studio, kept apart from the undo history
@@ -561,6 +567,13 @@ function frayD(x0, x1, y, seed) {
   return d;
 }
 
+// 2D stage (no WebGL): the front print area drawn flat on the garment
+function gfxSVG(slot) {
+  const G = window.__gfx, a = G && G.flat(slot);
+  if (!a) return '';
+  const u = 728 / (BODY.height || 177), y0 = slot === 'top' ? neckY(CX) + 4 : Y.waist + 6;
+  return `<image href="${a.url}" x="${r1(CX - a.w * u / 2)}" y="${r1(y0)}" width="${r1(a.w * u)}" height="${r1(a.h * u)}" preserveAspectRatio="none"/>`;
+}
 function printSVG(p) {
   if (!p || !images[p.img]) return '';
   const w = p.w, h = p.w * p.ar, [cx, cy] = at([p.cx, p.cy]);
@@ -637,7 +650,7 @@ function renderTop() {
   const hx = G.HL[0], hy = G.hy;
   if (!t.rawHem) pre += `<path d="M${pt([hx + 1, hy - 6])}Q${pt([CX, hy])} ${pt([400 - hx - 1, hy - 6])}" ${stitch}/>`;
   else outer += `<path d="${frayD(hx, 400 - hx, hy + 1, hy)}" stroke="${shade(c, -.15)}" stroke-width=".9" fill="none"/>`;
-  L('topbody').innerHTML = piece('body', G.body, fill, pre + topFolds(t, G) + printSVG(t.print), dm, outer);
+  L('topbody').innerHTML = piece('body', G.body, fill, pre + topFolds(t, G) + gfxSVG('top'), dm, outer);
   if (G.nl) { L('sleeves').innerHTML = ''; return; }
   let sl = '';
   const prevCtx = CTX; CTX = 'arm';
@@ -706,7 +719,7 @@ function renderBottom() {
       if (b.rawHem) outer += `<path d="${frayD(a, z, hy + 1, hy + i)}" stroke="${shade(c, .65)}" stroke-width="1" fill="none"/>`;
       else pre += `<path d="M${pt([a + 1, hy - 7])}L${pt([z - 1, hy - 7])}" ${amber}/>`;
     });
-    L('bottom').innerHTML = piece('bottom', G.d, fill, pre + printSVG(b.print), post, outer);
+    L('bottom').innerHTML = piece('bottom', G.d, fill, pre + gfxSVG('bottom'), post, outer);
   } else {
     const G = geo.bottom = skirtGeo(b), { wy, wh, hipY, hipH, hemH, hy, baseY } = G;
     const wh2 = bodyHalf(wy + 12) + 2.5;
@@ -719,7 +732,7 @@ function renderBottom() {
       });
     });
     if (b.rawHem) outer += `<path d="${inCtx('skirt', () => frayD(CX - hemH, CX + hemH, hy + 2, hy))}" stroke="${shade(c, -.15)}" stroke-width=".9" fill="none"/>`;
-    L('bottom').innerHTML = piece('bottom', G.d, fill, pre + printSVG(b.print), post, outer);
+    L('bottom').innerHTML = piece('bottom', G.d, fill, pre + gfxSVG('bottom'), post, outer);
   }
 }
 
@@ -1006,7 +1019,7 @@ const redo = () => { if (hi < hist.length - 1) { hi++; restore(hist[hi]); say('�
 function updateActs() { $('#undo').disabled = hi <= 0; $('#redo').disabled = hi >= hist.length - 1; }
 function save() {
   const used = {};
-  [state.top, state.bottom].forEach(g => { if (g && g.print && images[g.print.img]) used[g.print.img] = images[g.print.img]; });
+  [state.top, state.bottom].forEach(g => { if (g) (g.gfx || []).forEach(x => { if (x.img && images[x.img]) used[x.img] = images[x.img]; }); });
   try { localStorage.setItem(STORE, JSON.stringify({ top: state.top, bottom: state.bottom, images: used })); }
   catch (e) { try { localStorage.setItem(STORE, JSON.stringify({ top: state.top, bottom: state.bottom, images: {} })); } catch (e2) { /* ignore */ } }
 }
@@ -1068,7 +1081,11 @@ document.querySelector('.wardrobe').addEventListener('click', e => {
   if (!b) return;
   const k = b.dataset.kind, slot = SLOT[k];
   if (state[slot]?.kind === k) { state[slot] = null; say(NAME[k] + '을(를) 벗었어요'); }
-  else { state[slot] = clone(DEF[k]); state.target = slot; say(NAME[k] + ' 입었어요'); }
+  else {   // graphics stay on when you change the garment: a logo moves from the tee to the hoodie
+    const keep = state[slot] && state[slot].gfx;
+    state[slot] = clone(DEF[k]); state.target = slot; say(NAME[k] + ' 입었어요');
+    if (keep) state[slot].gfx = keep;
+  }
   if (!state[state.target]) state.target = state.top ? 'top' : 'bottom';
   renderAll(); commit();
 });
@@ -1126,14 +1143,16 @@ const ICON = {
   dmg: '<path d="M5 3v18M19 3v18"/><path d="M8 10q4 -2 8 0M8 13q4 2 8 0M9 11.5h6"/>',
   fit: '<path d="M3 12h18M7 8l-4 4 4 4M17 8l4 4-4 4"/>',
   color: '<path d="M12 3s6 6.5 6 11a6 6 0 0 1-12 0c0-4.5 6-11 6-11z"/><path d="M8.5 14.5a3.5 3.5 0 0 0 3.5 3.5"/>',
+  gfx: '<path d="M7 4h10l4 3-2.5 3.5L17 9.5V20H7V9.5l-1.5 1L3 7z"/><path d="m12 11.2.9 1.9 2 .3-1.5 1.4.4 2-1.8-1-1.8 1 .4-2-1.5-1.4 2-.3z"/>',
 };
-const TOOLS = [['neck', '넥라인'], ['cut', '가위'], ['dmg', '데미지'], ['fit', '통·핏'], ['color', '색·무늬']];
+const TOOLS = [['gfx', '그래픽'], ['neck', '넥라인'], ['cut', '가위'], ['dmg', '데미지'], ['fit', '통·핏'], ['color', '색·무늬']];
 const TOOL_HINT = {
   neck: '목 아래 점을 끌어 깊이·넓이를, 마름모 점으로 U↔V를 바꿔요',
   cut: '자를 높이에 대고 클릭하면 그 자리에서 잘려요',
   dmg: '옷을 누를수록 워싱 → 해짐 → 찢어짐',
   fit: '부위별 점을 바깥으로 끌면 넓어지고 안쪽으로 끌면 좁아져요',
   color: '색을 고르거나 마네킹의 옷을 눌러 고칠 옷을 바꿔요',
+  gfx: '로고·캐릭터·글자를 올려 옷에 붙여요 · 배경은 자동으로 지울 수 있어요',
 };
 $('#toolbar').innerHTML = TOOLS.map(([id, name], i) =>
   `<button type="button" class="tool" data-tool="${id}" aria-pressed="false" title="${name} (${i + 1})"><span class="k" aria-hidden="true">${i + 1}</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[id]}</svg>${name}</button>`).join('');
@@ -1147,6 +1166,7 @@ function setTool(id) {
     dmg: '옷을 누를수록 워싱 → 해짐 → 찢어짐 · 빈 곳을 끌면 회전',
     fit: '막대와 빠른 버튼으로 핏을 바꿔요 · 끌면 회전',
     color: '색·무늬를 고르거나 브러시로 옷에 직접 칠해요 · 빈 곳을 끌면 회전',
+    gfx: '그래픽을 끌어 옮기고 모서리로 크기, 위 손잡이로 회전 · 빈 곳을 끌면 회전',
   };
   $('#foot-hint').innerHTML = `<b>${TOOLS.find(t => t[0] === id)[1]}</b>${(is3d() && h3[id]) || TOOL_HINT[id]}`;
   renderPanel(); renderOverlay();
@@ -1229,6 +1249,8 @@ const need = what => `<p class="empty">${what}을 먼저 입혀 주세요. 왼�
 function panelHTML() {
   const T = state.top, B = state.bottom;
   switch (tool) {
+    case 'gfx':
+      return window.__gfx ? window.__gfx.panel() : '<p class="hint">그래픽 도구를 불러오는 중이에요…</p>';
     case 'neck':
       if (!T) return need('상의');
       if (is3d()) return `<p class="hint">가운데 <b>동그란 점</b>은 깊이, 사이 점은 곡선, 양끝 <b>네모 점</b>은 넓이예요. 점을 누른 채 끌면 옷이 반투명해지고 원래 선이 점선으로 남아요. <b>뒤</b>에서 보면 뒷목선 점이 나와요.</p>
@@ -1297,10 +1319,8 @@ function panelHTML() {
           <label class="row"><span class="lab">붓 크기<b>${ui.brushSize.toFixed(1)}cm</b></span><input type="range" data-ui="brushSize" min="0.5" max="8" step="0.1" value="${ui.brushSize}"></label>
           <label class="row"><span class="lab">진하기<b>${Math.round(ui.brushAlpha * 100)}%</b></span><input type="range" data-ui="brushAlpha" min="0.1" max="1" step="0.05" value="${ui.brushAlpha}"></label>
           <div class="btn-row"><button type="button" class="chip" data-act="paint-clear">칠한 것 전부 지우기</button></div>` : ''}` : ''}
-        <span class="label-sm">내 이미지 프린트</span>
-        <div class="btn-row"><label class="file">${g.print ? '이미지 바꾸기' : '이미지 올리기'}<input type="file" accept="image/*" id="print-file"></label>
-          ${g.print ? '<button type="button" class="chip" data-act="del-print">프린트 지우기</button>' : ''}</div>
-        ${g.print ? `<p class="note">${is3d() ? '옷을 누르면 그 자리로 프린트가 옮겨져요.' : '프린트를 끌어서 옮길 수 있어요.'}</p><div style="margin-top:12px">${slider('cur.print.w', '프린트 크기', 24, 220, 1)}</div>` : ''}`;
+        <span class="label-sm">로고·캐릭터·글자</span>
+        <div class="btn-row"><button type="button" class="chip" data-act="to-gfx">그래픽 도구로 넣기</button></div>`;
     }
   }
   return '';
@@ -1414,7 +1434,6 @@ P.addEventListener('change', e => {
     if (e.target.dataset.k === 'top.sleeve' && state.top.sleeve <= SLEEVELESS) state.top.sleeve = 190;
     commit();
   }
-  if (e.target.id === 'print-file' && e.target.files[0]) loadPrint(e.target.files[0]);
 });
 P.addEventListener('click', e => {
   const b = e.target.closest('button');
@@ -1440,32 +1459,10 @@ P.addEventListener('click', e => {
   else if (d.c2) g.fill.c2 = d.c2;
   else if (d.pat) { g.fill.type = d.pat; render(); renderPanel(); commit(); return; }
   else if (d.act === 'clear-dmg') { [state.top, state.bottom].forEach(x => x && (x.dmg = [])); say('데미지를 지웠어요'); }
-  else if (d.act === 'del-print') { g.print = null; render(); renderPanel(); commit(); return; }
+  else if (d.act === 'to-gfx') { setTool('gfx'); return; }
   else return;
   render(); syncPanel(); commit();
 });
-
-function loadPrint(file) {
-  const fr = new FileReader();
-  fr.onload = () => {
-    const img = new Image();
-    img.onload = () => {
-      const k = Math.min(1, 600 / Math.max(img.width, img.height));
-      const cv = document.createElement('canvas');
-      cv.width = Math.max(1, Math.round(img.width * k)); cv.height = Math.max(1, Math.round(img.height * k));
-      cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
-      const id = 'img' + Date.now().toString(36);
-      images[id] = cv.toDataURL('image/png');
-      const g = state[state.target];
-      const pos = state.target === 'top' ? [CX, 226] : g.kind === 'jeans' ? [171, 460] : [CX, Math.min(390, (g.len + 284) / 2)];
-      g.print = { img: id, cx: pos[0], cy: pos[1], w: 70, ar: cv.height / cv.width };
-      render(); renderPanel(); commit(); say('프린트를 붙였어요');
-    };
-    img.onerror = () => say('이미지를 열 수 없어요');
-    img.src = fr.result;
-  };
-  fr.readAsDataURL(file);
-}
 
 /* ---------- header actions ---------- */
 $('#undo').addEventListener('click', undo);
@@ -1509,7 +1506,7 @@ document.addEventListener('keydown', e => {
     return;
   }
   if (typing || e.altKey) return;
-  if (/^[1-5]$/.test(e.key)) setTool(TOOLS[+e.key - 1][0]);
+  if (/^[1-6]$/.test(e.key)) setTool(TOOLS[+e.key - 1][0]);
   else if (e.key === 'h' || e.key === 'H') toggleGuides();
 });
 
@@ -1527,17 +1524,17 @@ window.__cc = {
   get BODY() { return BODY; }, ui, get Y() { return Y; }, get LEG() { return LEG; }, get tool() { return tool; }, get dmgMode() { return dmgMode; },
   table, bodyHalf, armO, armI, neckY, legMid, shade, warp: (p, ctx) => warp(p, ctx), tucked,
   LIMIT, SLEEVELESS, bottomLenLimit, sleeveName, topLenName, bottomLenName, NAME, DEF,
-  applyCut: c => applyCut(c, null), render, commit, say, renderPanel, renderLayers,
+  applyCut: c => applyCut(c, null), render, commit, save, say, renderPanel, syncPanel, renderLayers, setTool, COLORS, parseHex, SLOT,
   setTarget(slot) { if (state[slot] && state.target !== slot) { state.target = slot; renderPanel(); renderLayers(); } },
   attach3D(s3) {
     window.__s3 = s3;
     document.querySelector('.stage-wrap').classList.add('is3d');
-    document.querySelector('.foot .keys').innerHTML = '<span><kbd>1</kbd>–<kbd>5</kbd> 도구</span><span>끌어서 돌려 보기 · 휠로 확대</span><span><kbd>Ctrl</kbd>+<kbd>Z</kbd> 되돌리기</span>';
+    document.querySelector('.foot .keys').innerHTML = '<span><kbd>1</kbd>–<kbd>6</kbd> 도구</span><span>끌어서 돌려 보기 · 휠로 확대</span><span><kbd>Ctrl</kbd>+<kbd>Z</kbd> 되돌리기</span>';
     renderStudio(); setTool(tool); render();
   },
 };
 drawBackdrop(); drawMannequin(); renderStudio();
-setTool('neck');
+setTool(tool);
 renderAll();
 commit();
 })();
