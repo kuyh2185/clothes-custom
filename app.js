@@ -401,7 +401,7 @@ function skirtGeo(b) {
 let state = { top: clone(DEF.tee), bottom: clone(DEF.jeans), target: 'top' };
 let tool = 'gfx', dmgMode = 'paint';
 // 3D free editing: scissors mode, brush size (cm), painting brush
-const ui = { gsel: null, shapeMode: 'grab', shapeR: 7, shapeSym: true, shapeRing: true, cutMode: 'line', brushSize: 2.5, paintOn: false, paintErase: false, brushColor: '#b8382e', brushAlpha: 1, neckSym: true };
+const ui = { gsel: null, shapeSym: true, cutMode: 'line', brushSize: 2.5, paintOn: false, paintErase: false, brushColor: '#b8382e', brushAlpha: 1, neckSym: true };
 let images = {};
 const blobUrls = {};
 // look of the studio, kept apart from the undo history
@@ -1164,7 +1164,7 @@ function setTool(id) {
     neck: '목선 점을 끌어 모양을 그려요 · 뒤에서 보면 뒷목선 · 빈 곳을 끌면 회전',
     cut: '밑단·소매 끝 점(민소매는 진동둘레 점)을 끌거나 브러시로 잘라요 · 빈 곳을 끌면 회전',
     dmg: '옷을 누를수록 워싱 → 해짐 → 찢어짐 · 빈 곳을 끌면 회전',
-    fit: '옷을 잡고 바깥으로 끌면 늘어나고 안으로 끌면 줄어요 · 빈 곳을 끌면 회전',
+    fit: '윤곽의 점을 좌우로 끌면 그 높이 폭이 바뀌어요 · 빈 곳을 끌면 회전',
     color: '색·무늬를 고르거나 브러시로 옷에 직접 칠해요 · 빈 곳을 끌면 회전',
     gfx: '그래픽을 끌어 옮기고 모서리로 크기, 위 손잡이로 회전 · 빈 곳을 끌면 회전',
   };
@@ -1283,12 +1283,8 @@ function panelHTML() {
         <div class="btn-row"><button type="button" class="chip" data-mode="paint">칠하기</button><button type="button" class="chip" data-mode="erase">지우개</button><button type="button" class="chip" data-act="clear-dmg">전부 지우기</button></div>`;
     case 'fit':
       if (!T && !B) return need('옷');
-      return (is3d() ? `<p class="hint">옷의 <b>아무 곳이나</b> 누른 채 <b>바깥으로 끌면 늘어나고, 안으로 끌면 줄어요</b>. 무릎 바깥을 끌면 무릎만, 밑단을 끌면 밑단만 바뀌어요. 몸 안으로는 안 들어가요. 빈 곳을 끌면 돌려 봐요.</p>
-        <div class="seg2 seg4" role="group" aria-label="모양 도구"><button type="button" class="chip" data-shapemode="grab">끌기</button><button type="button" class="chip" data-shapemode="grow">부풀리기</button><button type="button" class="chip" data-shapemode="shrink">조이기</button><button type="button" class="chip" data-shapemode="smooth">고르게</button></div>
-        ${ui.shapeMode !== 'grab' ? '<p class="note" style="margin:-4px 0 10px">옷 위를 누른 채 문지르면 조금씩 바뀌어요.</p>' : ''}
-        <label class="row"><span class="lab">한 번에 바뀌는 범위<b>${ui.shapeR.toFixed(1)}cm</b></span><input type="range" data-ui="shapeR" min="2" max="25" step="0.5" value="${ui.shapeR}"></label>
-        ${ui.shapeMode === 'grab' ? '<div class="seg2" role="group" aria-label="바뀌는 곳"><button type="button" class="chip" data-shapering="1">둘레 전체</button><button type="button" class="chip" data-shapering="0">누른 곳만</button></div>' : ''}
-        <div class="seg2" role="group" aria-label="좌우 대칭"><button type="button" class="chip" data-shapesym="1">좌우 대칭</button><button type="button" class="chip" data-shapesym="0">한쪽만</button></div>
+      return (is3d() ? `<p class="hint">옷 윤곽에 있는 <b>점을 좌우로 끌어요</b>. 바깥으로 끌면 그 높이가 넓어지고, 안으로 끌면 좁아져요. 위아래 점도 부드럽게 따라와요. 돌려 보면 그쪽 윤곽에 점이 다시 붙어요.</p>
+        <div class="seg2" role="group" aria-label="좌우 대칭"><button type="button" class="chip" data-shapesym="1">양쪽 같이</button><button type="button" class="chip" data-shapesym="0">한쪽만</button></div>
         <div class="btn-row" style="margin-bottom:6px">${T ? '<button type="button" class="chip" data-act="shape-reset" data-slot="top">상의 모양 처음으로</button>' : ''}${B ? '<button type="button" class="chip" data-act="shape-reset" data-slot="bottom">하의 모양 처음으로</button>' : ''}</div>
         <span class="label-sm" style="margin-top:20px">출발점 고르기</span>
         <p class="note" style="margin:-4px 0 10px">아래는 처음 모양이에요. 끌어서 만든 모양은 그 위에 더해져요.</p>`
@@ -1371,9 +1367,7 @@ function syncPanel() {
     P.querySelectorAll('[data-c2]').forEach(b => b.setAttribute('aria-pressed', b.dataset.c2 === g.fill.c2));
   }
   P.querySelectorAll('[data-cutmode]').forEach(b => b.setAttribute('aria-pressed', b.dataset.cutmode === ui.cutMode));
-  P.querySelectorAll('[data-shapemode]').forEach(b => b.setAttribute('aria-pressed', b.dataset.shapemode === ui.shapeMode));
   P.querySelectorAll('[data-shapesym]').forEach(b => b.setAttribute('aria-pressed', (b.dataset.shapesym === '1') === ui.shapeSym));
-  P.querySelectorAll('[data-shapering]').forEach(b => b.setAttribute('aria-pressed', (b.dataset.shapering === '1') === ui.shapeRing));
   P.querySelectorAll('[data-ui-sym]').forEach(b => b.setAttribute('aria-pressed', (b.dataset.uiSym === '1') === ui.neckSym));
   P.querySelectorAll('[data-hood]').forEach(b => b.setAttribute('aria-pressed', (b.dataset.hood === '1') === !!(state.top && state.top.hoodOff)));
   P.querySelectorAll('[data-neckv]').forEach(b => b.setAttribute('aria-pressed', (b.dataset.neckv === '1') === !!(state.top && state.top.neckV)));
@@ -1451,10 +1445,8 @@ P.addEventListener('click', e => {
   if (!b || b.disabled) return;
   const g = state[state.target], d = b.dataset;
   if (d.cutmode) { ui.cutMode = d.cutmode; renderPanel(); return; }
-  if (d.shapemode) { ui.shapeMode = d.shapemode; renderPanel(); return; }
   if (d.shapesym) { ui.shapeSym = d.shapesym === '1'; syncPanel(); return; }
-  if (d.shapering) { ui.shapeRing = d.shapering === '1'; syncPanel(); return; }
-  if (d.act === 'shape-reset') { const g2 = state[d.slot]; if (g2) g2.shape = []; render(); commit(); say('끌어서 만든 모양을 지웠어요 (되돌리기 가능)'); return; }
+  if (d.act === 'shape-reset') { const g2 = state[d.slot]; if (g2) { g2.shape = []; g2.prof = null; } render(); commit(); say('끌어서 만든 모양을 지웠어요 (되돌리기 가능)'); return; }
   if (d.uiSym) { ui.neckSym = d.uiSym === '1'; syncPanel(); return; }
   if (d.paint) { ui.paintOn = d.paint !== 'off'; ui.paintErase = d.paint === 'erase'; renderPanel(); return; }
   if (d.bc) { ui.brushColor = d.bc; renderPanel(); return; }
