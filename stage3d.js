@@ -298,6 +298,9 @@ function start() {
     t.needsUpdate = true;
     return t;
   };
+  // the bottom's outside radius table (botTable), shared by the tops' shaders
+  const BTW = 48, BTH = 64, botTex = new THREE.DataTexture(new Float32Array(BTW * BTH), BTW, BTH, THREE.RedFormat, THREE.FloatType);
+  botTex.needsUpdate = true;
   const brushCanvas = () => {
     const c = document.createElement('canvas'); c.width = c.height = 1024;
     const t = new THREE.CanvasTexture(c); t.flipY = false;
@@ -323,7 +326,7 @@ function start() {
       uSlO: { value: [new THREE.Vector3(1, 0, 0), new THREE.Vector3(-1, 0, 0)] }, uSlL: { value: new THREE.Vector2(.6, .6) },
       uArmF: { value: Array.from({ length: NA }, () => new THREE.Vector2()) }, uArmB: { value: Array.from({ length: NA }, () => new THREE.Vector2()) }, uArmOn: { value: 0 },
       uStrapY: { value: 99 }, uZone: { value: new THREE.Vector4() }, uZoneOn: { value: 0 },
-      uFold: { value: 1 }, uFoldK: { value: 1 }, uFoldLo: { value: 99 },
+      uFold: { value: 1 }, uFoldK: { value: 1 }, uFoldLo: { value: 99 }, uBotR: { value: botTex }, uBotFr: { value: new THREE.Vector4() },
       uHover: { value: -10 }, uBand: { value: new THREE.Vector3() }, uHem: { value: new THREE.Vector2() }, uUnder: { value: 99 },
       uMask: { value: mask.t }, uPaint: { value: paint.t }, uBrushOn: { value: 0 },
     };
@@ -401,6 +404,16 @@ vec4 shapeOff(vec3 p, float s, float lg) {
 // cloth left over folds. Fold height (m) at angle a round a part and length u along it, and its slopes along a and u.
 // N whole folds round the part so the ring closes; the phase wanders with the length so they don't look like pleats
 uniform float uFold; uniform float uFoldK; uniform float uFoldLo;
+// a top worn over a bottom: the bottom's largest radius round its centre per rest height row and angle (botTable in JS);
+// uBotFr x = that centre's z, y = the bottom's waistband height, z = the rows' height range, w = on
+uniform sampler2D uBotR; uniform vec4 uBotFr;
+float botR(float h, float a) {
+  float fy = clamp(h / uBotFr.z, 0.0, 1.0) * ${BTH}.0 - 0.5, fx = fract(a / 6.2831853 + 1.0) * ${BTW}.0 - 0.5;
+  int y0 = clamp(int(floor(fy)), 0, ${BTH - 1}), y1 = min(y0 + 1, ${BTH - 1}), x0 = (int(floor(fx)) + ${BTW}) % ${BTW}, x1 = (x0 + 1) % ${BTW};
+  float ty = clamp(fy - floor(fy), 0.0, 1.0), tx = fx - floor(fx);
+  return mix(mix(texelFetch(uBotR, ivec2(x0, y0), 0).r, texelFetch(uBotR, ivec2(x1, y0), 0).r, tx),
+             mix(texelFetch(uBotR, ivec2(x0, y1), 0).r, texelFetch(uBotR, ivec2(x1, y1), 0).r, tx), ty);
+}
 float foldVal(float a, float u, float N, float A, out float dA, out float dU) {
   float ph = 0.9 * sin(u * 3.0 + a) + 0.5 * sin(u * 7.0 + 2.0);
   float phA = 0.9 * cos(u * 3.0 + a), phU = 2.7 * cos(u * 3.0 + a) + 3.5 * cos(u * 7.0 + 2.0);
@@ -417,7 +430,8 @@ float foldVal(float a, float u, float N, float A, out float dA, out float dU) {
 vec3 foldAt(vec3 p, vec3 t, float s, float lg, float cl, out vec3 grad) {
   grad = vec3(0.0);
   float dA, dU;
-  if (uFr.w < 0.5 && s > 0.01) {   // a sleeve, round its own line
+  if (uFr.w < 0.5 && s > 0.01) {   // a sleeve, round its own line (none when sleeveless: what is left lies on the body)
+    if (uStrapY < 50.0) return vec3(0.0);
     int i = p.x > 0.0 ? 0 : 1;
     vec3 d = normalize(uSlD[i]), q = p - (uSlC[i] + uSlD[i] * (s - 0.1));
     q -= d * dot(q, d);
@@ -474,11 +488,17 @@ if (uFold > 0.0) {
 #endif`)
         .replace('#include <morphtarget_vertex>', `#include <morphtarget_vertex>
 // left-over cloth folds (measured after the shape tool, fit pushes and fit shapes, before skinning)
+// a top worn out over trousers or a skirt stays outside them, however wide they were made (the table already slopes in above)
+if (uBotFr.w > 0.5 && _s < 0.01 && _h < uBotFr.z) {
+  vec2 q = vec2(transformed.x, transformed.z - uBotFr.x);
+  float r = length(q), need = botR(_h, atan(q.x, q.y));
+  if (need > 0.0 && r < need + 0.004) transformed.xz += q / max(r, 1e-4) * (need + 0.004 - r);
+}
 vec3 foldGrad = vec3(0.0);
 if (uFold > 0.0) transformed += foldAt(position, transformed, _s, _lg, _cl, foldGrad);`)
         .replace('#include <begin_vertex>', `#include <begin_vertex>
 vRest = position; vH = _h; vS = _s; vB = uv1; vC = _c; vRN = normal; vPart = partCoord(position, _s, _lg);
-float off = (vS > 0.01 ? uFit.y : uFit.x * (1.0 - smoothstep(uSh.y, uSh.x, _h)));   // no push at the shoulders: a big top hangs from them
+float off = (vS > 0.01 && uStrapY > 50.0 ? uFit.y : uFit.x * (1.0 - smoothstep(uSh.y, uSh.x, _h)));   // no push at the shoulders: a big top hangs from them
 off += uFit.z * max(0.0, uFitH.x - _h);
 if (uFitH.y > 0.0) { float t = clamp((uFitH.y - _h) / max(0.01, uFitH.y - uFitH.z), 0.0, 1.0); off += mix(uFit.w, uFitH.w, t); }
 // out from the part's middle, not along the normal: the normals differ either side of a seam and tore the sides open
@@ -486,7 +506,7 @@ transformed += shapeOff(position, _s, _lg).xyz * off;
 // pulled out / pushed in by hand, never into the body
 if (uShapeOn > 0.5) { vec4 so = shapeOff(position, _s, _lg); transformed += so.xyz * max(so.w, 0.003 - _cl); }
 // sleeveless: what is left above the armpit (shoulders, straps) lies on the body
-if (_s < 0.01 && position.y > uStrapY) { float L = length(_cn); transformed += _cn * max(0.0, 1.0 - 0.004 / max(L, 1e-4)) * smoothstep(uStrapY, uStrapY + 0.05, position.y); }
+if (position.y > uStrapY) { float L = length(_cn); transformed += _cn * max(0.0, 1.0 - 0.004 / max(L, 1e-4)) * smoothstep(uStrapY, uStrapY + 0.05, position.y); }
 // a waistband sits on the body instead of standing off it (drawn in towards the middle)
 if (uWaist > 0.0) transformed -= normalize(vec3(position.x, 0.0, position.z - uFr.x) + 1e-6) * max(0.0, _cl - 0.004) * smoothstep(uWaist - 0.08, uWaist - 0.025, _h);`);
       sh.fragmentShader = sh.fragmentShader
@@ -543,7 +563,7 @@ float fr = uRaw > 0.5 ? noise1(vRest.x * 900.0 + vRest.z * 700.0) * 0.006 : 0.0;
 if (vS < 0.01 && vH < cutH + fr) discard;
 float sc = vRest.x > 0.0 ? uSleeveCut.x : uSleeveCut.y;
 float frs = uRawS > 0.5 ? noise1(vRest.y * 900.0 + vRest.z * 600.0) * 0.03 : 0.0;
-if (vS > 0.01 && vS > sc - frs) discard;
+if (uArmOn < 0.5 && vS > 0.01 && vS > sc - frs) discard;   // sleeveless: the armhole line below decides instead
 if (uTuckH > 0.0 && vS < 0.01 && vH < uTuckH) discard;
 if (vH > uUnder) discard;   // waistband and belt loops under a top worn out over them
 if (uHoodOff > 0.5 && vC > 0.5) discard;   // hood taken off
@@ -551,9 +571,12 @@ if (uNeckOn > 0.5 && vS < 0.01 && vC < 0.5) {   // the collar / hood stays: the 
   if (vRest.z > 0.0 && aboveNeck(uNeckF, vRest.x, vRest.y)) discard;
   if (vRest.z <= 0.0 && aboveNeck(uNeckB, vRest.x, vRest.y)) discard;
 }
-if (uArmOn > 0.5 && vS < 0.01 && vC < 0.5) {
+// sleeveless: body and sleeve cloth alike are cut by the armhole line, so the edge follows the drawn curve even where
+// it runs outside the sleeve seam (cutting the sleeve away whole left a stepped edge along the seam's triangles)
+if (uArmOn > 0.5 && vC < 0.5) {
   if (vRest.z >= 0.0 && outsideArm(uArmF, abs(vRest.x), vRest.y)) discard;
   if (vRest.z < 0.0 && outsideArm(uArmB, abs(vRest.x), vRest.y)) discard;
+  if (vS > 0.01 && vRest.y < min(uArmF[0].x, uArmB[0].x)) discard;   // sleeve cloth below the armpit
 }
 if (uBrushOn > 0.5 && texture2D(uMask, vB).r < 0.5) discard;
 for (int i = 0; i < ${MAXD}; i++) {
@@ -916,6 +939,55 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = uSock;`);
     for (const op of ops) { shapeOp(D, op, false); if (op.m) shapeOp(D, op, true); }
     t.needsUpdate = true;
   }
+  /* the bottom's outside, for a top worn over it: per rest height row and angle round the bottom's centre, the largest
+     radius it reaches after its fit shapes (morphs), fit pushes, shape-tool pushes and folds, with one cell of margin.
+     Recomputed only when one of those changes. Returns [centre z, waistband height, rows' height range] */
+  function botTable(id) {
+    const mesh = A.meshes[id], md = mesh.material.userData, U = md.U, inf = A.info[id], infl = mesh.morphTargetInfluences || [];
+    const F = U.uFit.value, FH = U.uFitH.value, SH = U.uSh.value, fold = U.uFold.value * U.uFoldK.value;
+    const top = inf.hi + .3, zc = inf.zc, out = [zc, inf.hi, top];   // rows reach above the waistband for the slope
+    const key = id + A.kind + md.shapeKey + U.uShapeOn.value + infl.join(',') + fold + F.toArray() + FH.toArray();
+    if (botTex.userData.key === key) return out;
+    botTex.userData.key = key;
+    const g = mesh.geometry, P = g.attributes.position, CL = g.attributes._cl, MP = g.morphAttributes.position || [];
+    const reg = regionTable(mesh), shapeOn = U.uShapeOn.value > .5, R = new Float32Array(BTW * BTH), D = botTex.image.data;
+    const ss = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };   // GLSL smoothstep
+    for (let i = 0; i < P.count; i++) {
+      const h = P.getY(i);
+      if (h > top) continue;
+      let x = P.getX(i), z = P.getZ(i);
+      for (let k = 0; k < MP.length; k++) if (infl[k]) { x += MP[k].getX(i) * infl[k]; z += MP[k].getZ(i) * infl[k]; }
+      // the same pushes as the shader (taken straight out from the centre: a little more than the shader's, never less)
+      let push = F.x * (1 - ss(SH.y, SH.x, h)) + F.z * Math.max(0, FH.x - h);
+      if (FH.y > 0) push += lerp(F.w, FH.w, clamp((FH.y - h) / Math.max(.01, FH.y - FH.z), 0, 1));
+      const cl = CL ? CL.getX(i) : 0;
+      if (shapeOn && reg.rg[i] >= 0) push += Math.max(gridAt(mesh, reg.rg[i], reg.v[i], reg.a[i]), .003 - cl);
+      const r = Math.hypot(x, z - zc) + push + fold * Math.min(.3 * Math.max(0, cl + push - .012), .022);
+      const row = clamp(Math.floor(h / top * BTH), 0, BTH - 1), col = (Math.floor((Math.atan2(x, z - zc) / TAU + 1) * BTW) % BTW + BTW) % BTW;
+      if (r > R[row * BTW + col]) R[row * BTW + col] = r;
+    }
+    const R2 = new Float32Array(BTW * BTH);
+    for (let y = 0; y < BTH; y++) for (let c = 0; c < BTW; c++) {
+      let m = 0;
+      for (let dy = -1; dy <= 1; dy++) {
+        const yy = y + dy;
+        if (yy >= 0 && yy < BTH) for (let dc = -1; dc <= 1; dc++) m = Math.max(m, R[yy * BTW + (c + dc + BTW) % BTW]);
+      }
+      R2[y * BTW + c] = m;
+    }
+    // cloth reaches a wide part gradually: from above it slopes out (BUP m per m of height), below it hangs almost straight (BDN)
+    const dh = top / BTH, BUP = .45, BDN = .12;
+    for (let c = 0; c < BTW; c++) for (let y = 0; y < BTH; y++) {
+      let m = 0;
+      for (let y2 = 0; y2 < BTH; y2++) {
+        const v = R2[y2 * BTW + c];
+        if (v) m = Math.max(m, v - (y > y2 ? BUP : BDN) * Math.abs(y - y2) * dh);
+      }
+      D[y * BTW + c] = m;
+    }
+    botTex.needsUpdate = true;
+    return out;
+  }
   function gridAt(mesh, rg, v, a) {   // the grid value (m) the shader will use at a spot
     const D = mesh.material.userData.U.uShape.value.image.data, range = SLEEVE(rg) ? SLR : BR;
     const fy = clamp(v / range, 0, 1) * (SHR - 1), fx = (((a / TAU) % 1) + 1) % 1 * SHW;
@@ -1100,6 +1172,12 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = uSock;`);
         U.uFitH.value.set(toH(Y.hip), 0, 0, 0);
         U.uBand.value.set(0, 0, 0);
       }
+    }
+    // a top worn out over a bottom is kept outside the bottom's actual shape (wide legs, pulled-out shapes, folds)
+    if (topMesh) {
+      const U = M[topMesh].material.userData.U;
+      if (botMesh && !T.tuck) { const [zc, hi, top] = botTable(botMesh); U.uBotFr.value.set(zc, hi, top, 1); }
+      else U.uBotFr.value.w = 0;
     }
     const clip = A.clips[pr.pose] || A.clips.relaxed;
     if (A.pose !== clip) { A.mixer.stopAllAction(); A.mixer.clipAction(clip).play(); A.mixer.setTime(0); A.pose = clip; }
