@@ -576,7 +576,11 @@ if (uNeckOn > 0.5 && vS < 0.01 && vC < 0.5) {   // the collar / hood stays: the 
 if (uArmOn > 0.5 && vC < 0.5) {
   if (vRest.z >= 0.0 && outsideArm(uArmF, abs(vRest.x), vRest.y)) discard;
   if (vRest.z < 0.0 && outsideArm(uArmB, abs(vRest.x), vRest.y)) discard;
-  if (vS > 0.01 && vRest.y < min(uArmF[0].x, uArmB[0].x)) discard;   // sleeve cloth below the armpit
+  // below the armpit the line carries on straight down: sleeve cloth outside it goes (body cloth there keeps its own edge)
+  // and the body's own corner bits at the seam just under the armpit go too (a line slanting out 1:2 over 4 cm)
+  vec2 a0 = vRest.z >= 0.0 ? uArmF[0] : uArmB[0];
+  if (vS > 0.01 && vRest.y < a0.x && abs(vRest.x) > a0.y) discard;
+  if (vS <= 0.01 && vRest.y < a0.x && vRest.y > a0.x - 0.04 && abs(vRest.x) > a0.y + (a0.x - vRest.y) * 0.5) discard;
 }
 if (uBrushOn > 0.5 && texture2D(uMask, vB).r < 0.5) discard;
 for (int i = 0; i < ${MAXD}; i++) {
