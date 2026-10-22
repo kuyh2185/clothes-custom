@@ -323,6 +323,7 @@ function start() {
       uSlO: { value: [new THREE.Vector3(1, 0, 0), new THREE.Vector3(-1, 0, 0)] }, uSlL: { value: new THREE.Vector2(.6, .6) },
       uArmF: { value: Array.from({ length: NA }, () => new THREE.Vector2()) }, uArmB: { value: Array.from({ length: NA }, () => new THREE.Vector2()) }, uArmOn: { value: 0 },
       uStrapY: { value: 99 }, uZone: { value: new THREE.Vector4() }, uZoneOn: { value: 0 },
+      uFold: { value: 1 }, uFoldK: { value: 1 }, uFoldLo: { value: 99 },
       uHover: { value: -10 }, uBand: { value: new THREE.Vector3() }, uHem: { value: new THREE.Vector2() }, uUnder: { value: 99 },
       uMask: { value: mask.t }, uPaint: { value: paint.t }, uBrushOn: { value: 0 },
     };
@@ -396,19 +397,92 @@ vec4 shapeOff(vec3 p, float s, float lg) {
   }
   vec2 q = vec2(p.x, p.z - uFr.x);
   return vec4(normalize(vec3(q.x, 0.0, q.y) + 1e-6), shapeCell(0, p.y, ${BR}, atan(q.x, q.y)));
+}
+// cloth left over folds. Fold height (m) at angle a round a part and length u along it, and its slopes along a and u.
+// N whole folds round the part so the ring closes; the phase wanders with the length so they don't look like pleats
+uniform float uFold; uniform float uFoldK; uniform float uFoldLo;
+float foldVal(float a, float u, float N, float A, out float dA, out float dU) {
+  float ph = 0.9 * sin(u * 3.0 + a) + 0.5 * sin(u * 7.0 + 2.0);
+  float phA = 0.9 * cos(u * 3.0 + a), phU = 2.7 * cos(u * 3.0 + a) + 3.5 * cos(u * 7.0 + 2.0);
+  float m = 0.6 + 0.4 * sin(u * 5.0 + 2.0 * a), mA = 0.8 * cos(u * 5.0 + 2.0 * a), mU = 2.0 * cos(u * 5.0 + 2.0 * a);
+  // hanging cloth: broad rounded ridges, narrow valleys (g = 1 - (1 - h)^2)
+  float h = 0.5 + 0.5 * sin(N * a + ph), hs = 0.5 * cos(N * a + ph), g = 1.0 - (1.0 - h) * (1.0 - h), gh = 2.0 * (1.0 - h);
+  dA = A * (m * gh * hs * (N + phA) + mA * g);
+  dU = A * (m * gh * hs * phU + mU * g);
+  return A * m * g;
+}
+// p = rest position, t = the same point after the shape tool, fit pushes and fit shapes; cl = how far p stood off the body.
+// The slack (how far t now stands off the body, less a little ease) sets the fold height. Returns the displacement;
+// grad = the fold's slope in rest space, taken off the normal after skinning so the folds catch the light
+vec3 foldAt(vec3 p, vec3 t, float s, float lg, float cl, out vec3 grad) {
+  grad = vec3(0.0);
+  float dA, dU;
+  if (uFr.w < 0.5 && s > 0.01) {   // a sleeve, round its own line
+    int i = p.x > 0.0 ? 0 : 1;
+    vec3 d = normalize(uSlD[i]), q = p - (uSlC[i] + uSlD[i] * (s - 0.1));
+    q -= d * dot(q, d);
+    vec3 o = uSlO[i], b = cross(d, o) * (i == 0 ? 1.0 : -1.0), dir = normalize(q + 1e-6);
+    float a = atan(dot(q, b), dot(q, o));
+    float sl = max(0.0, cl + dot(t - p, dir) - 0.012) * smoothstep(0.02, 0.08, s);
+    if (sl <= 0.0) return vec3(0.0);
+    float A = uFold * uFoldK * min(0.3 * sl, 0.022), D = foldVal(a, s * (i == 0 ? uSlL.x : uSlL.y), 5.0, A, dA, dU);
+    grad = normalize(b * cos(a) - o * sin(a)) * dA / max(length(q), 0.03) + d * dU;
+    // a roomy sleeve hangs: its spare cloth settles downwards
+    return dir * D - vec3(0.0, 0.35 * sl * min(uFold, 1.0), 0.0);
+  }
+  vec2 qb = vec2(p.x, p.z - uFr.x), ql = qb;
+  vec3 dir = normalize(vec3(qb.x, 0.0, qb.y) + 1e-6);
+  float tl = 0.0;
+  if (uFr.w > 0.5 && uFr.w < 1.5) {   // trousers: each leg round its own centre, blending into the hips
+    vec2 lc = legCentre(p.y);
+    ql = lg >= 0.0 ? vec2(p.x - lc.x, p.z - lc.y) : vec2(p.x + lc.x, p.z - lc.y);
+    tl = smoothstep(0.2, 0.5, abs(lg));
+    dir = normalize(mix(dir, normalize(vec3(ql.x, 0.0, ql.y) + 1e-6), tl));
+  }
+  float sl = max(0.0, cl + dot(t - p, dir) - 0.012);
+  if (sl <= 0.0) return vec3(0.0);
+  float A = uFold * uFoldK * min(0.3 * sl, 0.022);
+  float ab = atan(qb.x, qb.y), D = foldVal(ab, p.y, uFr.w > 1.5 ? 16.0 : 14.0, A, dA, dU);
+  grad = vec3(cos(ab), 0.0, -sin(ab)) * dA / max(length(qb), 0.03) + vec3(0.0, dU, 0.0);
+  if (tl > 0.0) {
+    float al = atan(ql.x, ql.y), dA2, dU2, D2 = foldVal(al, p.y, 8.0, A, dA2, dU2);
+    vec3 g2 = vec3(cos(al), 0.0, -sin(al)) * dA2 / max(length(ql), 0.03) + vec3(0.0, dU2, 0.0);
+    // a full-length leg breaks: folds across it just above the hem
+    if (uFoldLo < 0.5) {
+      float br = (1.0 - smoothstep(uFoldLo, uFoldLo + 0.12, p.y)) * uFold * min(0.3 * sl, 0.012), w = p.y * 80.0 + al;
+      D2 += br * (0.5 + 0.5 * sin(w)); g2.y += br * 40.0 * cos(w);
+    }
+    D = mix(D, D2, tl); grad = mix(grad, g2, tl);
+  }
+  return dir * D;
 }`)
         .replace('#include <skinning_vertex>', `#include <skinning_vertex>
 // a hand never goes into the cloth: whatever is inside its sphere is pushed out round it
 if (uHandOn > 0.5) for (int i = 0; i < 2; i++) {
   vec3 d = transformed - uHand[i].xyz; float r = length(d);
   if (uHand[i].w > 0.0 && r < uHand[i].w) transformed = uHand[i].xyz + d / max(r, 1e-4) * uHand[i].w;
-}`)
+}
+#ifndef FLAT_SHADED
+if (uFold > 0.0) {
+#ifdef USE_SKINNING
+  vec3 fg = (skinMatrix * vec4(foldGrad, 0.0)).xyz;
+#else
+  vec3 fg = foldGrad;
+#endif
+  vNormal = normalize(vNormal - normalMatrix * fg);
+}
+#endif`)
+        .replace('#include <morphtarget_vertex>', `#include <morphtarget_vertex>
+// left-over cloth folds (measured after the shape tool, fit pushes and fit shapes, before skinning)
+vec3 foldGrad = vec3(0.0);
+if (uFold > 0.0) transformed += foldAt(position, transformed, _s, _lg, _cl, foldGrad);`)
         .replace('#include <begin_vertex>', `#include <begin_vertex>
 vRest = position; vH = _h; vS = _s; vB = uv1; vC = _c; vRN = normal; vPart = partCoord(position, _s, _lg);
 float off = (vS > 0.01 ? uFit.y : uFit.x * (1.0 - smoothstep(uSh.y, uSh.x, _h)));   // no push at the shoulders: a big top hangs from them
 off += uFit.z * max(0.0, uFitH.x - _h);
 if (uFitH.y > 0.0) { float t = clamp((uFitH.y - _h) / max(0.01, uFitH.y - uFitH.z), 0.0, 1.0); off += mix(uFit.w, uFitH.w, t); }
-transformed += objectNormal * off;
+// out from the part's middle, not along the normal: the normals differ either side of a seam and tore the sides open
+transformed += shapeOff(position, _s, _lg).xyz * off;
 // pulled out / pushed in by hand, never into the body
 if (uShapeOn > 0.5) { vec4 so = shapeOff(position, _s, _lg); transformed += so.xyz * max(so.w, 0.003 - _cl); }
 // sleeveless: what is left above the armpit (shoulders, straps) lies on the body
@@ -558,7 +632,10 @@ if (uBand.z > 0.5 && vH > uBand.x && vS < 0.01) {
 }
 if (uHem.x > 0.5 && uRaw < 0.5 && vS < 0.01 && vH < cutH + 0.02) {
   diffuseColor.rgb *= 0.9;
-  if (abs(vH - (cutH + 0.014)) < 0.0009 && fract((vRest.x + vRest.z) * 70.0) < 0.6) diffuseColor.rgb *= 0.6;
+  // the stitching: antialiased, and faded out when it gets thinner than a pixel (far away it only flickered)
+  float fw = fwidth(vH), sf = fract((vRest.x + vRest.z) * 70.0);
+  float st = (1.0 - smoothstep(0.0009, 0.0009 + fw, abs(vH - (cutH + 0.014)))) * (1.0 - smoothstep(0.0006, 0.0016, fw));
+  diffuseColor.rgb *= 1.0 - 0.4 * st * smoothstep(0.0, 0.08, sf) * (1.0 - smoothstep(0.52, 0.6, sf));
 }
 if (uHem.y > 0.5 && uRawS < 0.5 && vS > 0.01 && vS > sc - 0.05) diffuseColor.rgb *= 0.9;
 if (uRaw > 0.5 && vS < 0.01 && vH < cutH + 0.012) diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.92), 0.35);
@@ -913,6 +990,7 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = uSock;`);
     const common = (U, g, id) => {
       const mat = M[id].material;
       U.uC1.value.set(g.fill.c1); U.uC2.value.set(g.fill.c2); U.uPat.value = PAT[g.fill.type] || 0; U.uScale.value = g.fill.scale || 1;
+      U.uFold.value = g.fold ?? 1; U.uFoldK.value = id === 'skirt' ? .5 : 1; U.uFoldLo.value = 99;
       // the sheen follows the fabric colour: a black tee must not get a white haze
       mat.sheenColor.set(g.fill.c1).lerp(new THREE.Color('#ffffff'), .15);
       const ds = (g.dmg3 || []).filter(d => d.g === id && d.p).slice(-MAXD);
@@ -1004,6 +1082,8 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = uSock;`);
       U.uHandOn.value = botMesh === 'skirt' ? 1 : 0;
       U.uHemLeg.value = botMesh === 'jeans' ? legC() : 0;
       U.uHem.value.set(U.uCutH.value > inf.lo + .01 || (Bt.hemOff || []).some(v => v) ? 1 : 0, 0);
+      const hemY = Math.max(U.uCutH.value, inf.lo);   // a full-length leg breaks above the shoe
+      U.uFoldLo.value = botMesh === 'jeans' && hemY < .2 ? hemY : 99;
       if (botMesh === 'jeans') {
         // thigh, knee and hem each shape their own part of the leg
         const w = {};

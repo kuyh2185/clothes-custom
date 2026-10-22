@@ -1247,6 +1247,8 @@ function sleeveIcon(spec) {
   return icon(`<path d="${pathOf2([...o, ...i.reverse()])}"/>`);
 }
 const card = (data, on, label, svg) => `<button type="button" class="lk" data-look="${data}" aria-pressed="${on}">${svg}<span>${label}</span></button>`;
+// which garment the shape tool works on: the picked one if it is worn, else the top, else the bottom
+const shapeSlot = () => state[state.target] ? state.target : (state.top ? 'top' : 'bottom');
 function looksHTML(slot) {
   const g = state[slot], lk = g.look || {};
   const row = (title, items) => `<span class="label-sm">${title}</span><div class="lks">${items}</div>`;
@@ -1390,13 +1392,15 @@ function panelHTML() {
             ? slider('bottom.thigh', '허벅지', 0, 1, .01) + slider('bottom.knee', '무릎', 0, 1, .01) + slider('bottom.hemW', '밑단', 0, 1, .01)
             : slider('bottom.hip', '엉덩이', 0, 1, .01) + slider('bottom.fit', '밑단 퍼짐', 0, 1, .01)}` : ''}`;
       if (!is3d()) return `<p class="hint">부위마다 <b>점이 따로</b> 있어요. 바깥으로 끌면 넓어지고 안쪽으로 끌면 좁아져요. 조절하는 동안 옷이 <b>반투명</b>해지고 원래 모양이 점선으로 남아요.</p>` + sliders;
-      const slot = state[state.target] ? state.target : (T ? 'top' : 'bottom');
+      const slot = shapeSlot();
       return `<div class="chips" role="group" aria-label="고칠 옷" style="margin-bottom:2px">
           <button type="button" class="chip" data-target="top" ${T ? '' : 'disabled'}>상의${T ? ' · ' + NAME[T.kind] : ''}</button>
           <button type="button" class="chip" data-target="bottom" ${B ? '' : 'disabled'}>하의${B ? ' · ' + NAME[B.kind] : ''}</button></div>
         ${looksHTML(slot)}
         <p class="hint" style="margin-top:16px"><b>더 다듬기</b> — 옷 위에 마우스를 올리면 그 부위가 밝아져요. <b>잡고 좌우로 끌면</b> 그쪽만 넓어지거나 좁아져요.</p>
         <div class="seg2" role="group" aria-label="좌우 대칭"><button type="button" class="chip" data-shapesym="1">좌우 대칭</button><button type="button" class="chip" data-shapesym="0">따로따로</button></div>
+        <p class="label-sm" style="margin:0 0 6px">남는 천 주름</p>
+        <div class="seg2" role="group" aria-label="남는 천 주름"><button type="button" class="chip" data-fold="0">없음</button><button type="button" class="chip" data-fold="1">자연스럽게</button><button type="button" class="chip" data-fold="1.8">많이</button></div>
         <div class="btn-row" style="margin-bottom:6px"><button type="button" class="chip" data-act="shape-fine" aria-pressed="${!!ui.shapeFine}">세밀하게 (윤곽 점)</button><button type="button" class="chip" data-act="shape-reset" data-slot="${slot}">${slot === 'top' ? '상의' : '하의'} 모양 처음으로</button></div>
         <details class="more"><summary>막대로 조절</summary>${sliders}</details>`;
     }
@@ -1470,6 +1474,8 @@ function syncPanel() {
   }
   P.querySelectorAll('[data-cutmode]').forEach(b => b.setAttribute('aria-pressed', b.dataset.cutmode === ui.cutMode));
   P.querySelectorAll('[data-shapesym]').forEach(b => b.setAttribute('aria-pressed', (b.dataset.shapesym === '1') === ui.shapeSym));
+  const fg = state[shapeSlot()];
+  P.querySelectorAll('[data-fold]').forEach(b => b.setAttribute('aria-pressed', !!fg && +b.dataset.fold === (fg.fold ?? 1)));
   P.querySelectorAll('[data-ui-sym]').forEach(b => b.setAttribute('aria-pressed', (b.dataset.uiSym === '1') === ui.neckSym));
   P.querySelectorAll('[data-hood]').forEach(b => b.setAttribute('aria-pressed', (b.dataset.hood === '1') === !!(state.top && state.top.hoodOff)));
   P.querySelectorAll('[data-neckv]').forEach(b => b.setAttribute('aria-pressed', (b.dataset.neckv === '1') === !!(state.top && state.top.neckV)));
@@ -1548,6 +1554,11 @@ P.addEventListener('click', e => {
   const g = state[state.target], d = b.dataset;
   if (d.cutmode) { ui.cutMode = d.cutmode; renderPanel(); return; }
   if (d.shapesym) { ui.shapeSym = d.shapesym === '1'; syncPanel(); return; }
+  if (d.fold != null) {
+    const g2 = state[shapeSlot()];
+    if (g2) { g2.fold = +d.fold; render(); commit(); syncPanel(); say(g2.fold ? (g2.fold > 1 ? '남는 천 주름을 많이 넣었어요' : '남는 천이 자연스럽게 주름져요') : '주름 없이 매끈하게 했어요'); }
+    return;
+  }
   if (d.look) { applyLook(d.look); return; }
   if (d.act === 'shape-fine') { ui.shapeFine = !ui.shapeFine; renderPanel(); return; }
   if (d.act === 'shape-reset') { const g2 = state[d.slot]; if (g2) { g2.shape = []; g2.prof = null; g2.look = null; } render(); renderPanel(); commit(); say('끌어서 만든 모양을 지웠어요 (되돌리기 가능)'); return; }
