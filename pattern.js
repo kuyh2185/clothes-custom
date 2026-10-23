@@ -106,7 +106,9 @@ function bodyHalf(P, front) {
     const yw = -(ad + 17);
     for (const q of side) q[0] -= P.waist * Math.exp(-(((q[1] - yw) / 7.5) ** 2));
   }
-  const hem = bez([P.hw, -L], [P.hw * .6, -L - .3], [P.hw * .2, -L - .5], [0, -L - .5]);
+  // the hem starts where the side seam ends (a crop's hem sits in the waist's taking-in: from P.hw it left a flap)
+  const hx = side[side.length - 1][0];
+  const hem = bez([hx, -L], [hx * .6, -L - .3], [hx * .2, -L - .5], [0, -L - .5]);
   return { neck, shoulder, arm, side, hem };
 }
 
