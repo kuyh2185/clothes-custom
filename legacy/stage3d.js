@@ -202,7 +202,7 @@ function start() {
     } else ta = Math.atan2(S.x, S.z);
     return ((Math.round(ta / (PI / 2)) % 4) + 4) % 4;
   }
-  const loadBody = kind => new Promise((res, rej) => loader.load(`assets/body_${kind}.glb?v=${VER}`, g => {
+  const loadBody = kind => new Promise((res, rej) => loader.load(`../assets/body_${kind}.glb?v=${VER}`, g => {
     const root = g.scene, meshes = {};
     root.traverse(o => {
       if (o.isMesh) { o.castShadow = o.receiveShadow = true; o.frustumCulled = false; meshes[o.name] = o; }

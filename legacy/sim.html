@@ -63,7 +63,7 @@ scene.add(key, rim, rim2, new THREE.HemisphereLight('#c8d4ff', '#202640', .5));
 addEventListener('resize', () => { renderer.setSize(innerWidth, innerHeight); camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); });
 
 const $ = id => document.getElementById(id);
-const gltf = await new GLTFLoader().setDRACOLoader(new DRACOLoader().setDecoderPath('https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/libs/draco/gltf/')).loadAsync(`assets/body_${kind}.glb?v=13`);
+const gltf = await new GLTFLoader().setDRACOLoader(new DRACOLoader().setDecoderPath('https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/libs/draco/gltf/')).loadAsync(`../assets/body_${kind}.glb?v=13`);
 const root = gltf.scene;
 scene.add(root);
 root.updateMatrixWorld(true);
