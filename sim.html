@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>고쳐 입기 · 천 시험</title>
+<style>
+  :root { --bg: #0b1530; --fg: #e8ecf6; --dim: #93a0c0; --acc: #ff7a2f; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); font: 14px/1.4 system-ui, 'Pretendard', sans-serif; }
+  canvas { display: block; }
+  .panel { position: fixed; right: 16px; top: 16px; width: 280px; padding: 14px 16px; border-radius: 12px;
+    background: rgba(18, 28, 58, .78); backdrop-filter: blur(10px); }
+  .panel h1 { font-size: 15px; margin: 0 0 10px; }
+  .row { margin: 12px 0; }
+  .row label { display: flex; justify-content: space-between; color: var(--dim); font-size: 12px; }
+  .row label b { color: var(--fg); font-weight: 600; }
+  input[type=range] { width: 100%; accent-color: var(--acc); }
+  .stat { margin-top: 10px; color: var(--dim); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .views { display: flex; gap: 6px; margin-top: 10px; }
+  .views button { flex: 1; background: #22305a; color: var(--fg); border: 0; border-radius: 6px; padding: 6px; cursor: pointer; }
+</style>
+</head>
+<body>
+<div class="panel">
+  <h1>천 시험 — 패턴 티</h1>
+  <div class="row"><label>소매 ↔ 끈 <b id="sv"></b></label><input id="sl" type="range" min="-10" max="58" step="0.5" value="20"></div>
+  <div class="row"><label>기장 <b id="lv"></b></label><input id="len" type="range" min="40" max="95" step="0.5" value="65"></div>
+  <div class="row"><label>앞 목 깊이 <b id="nv"></b></label><input id="nd" type="range" min="6" max="24" step="0.5" value="10"></div>
+  <div class="row"><label>품 <b id="fv"></b></label><input id="fit" type="range" min="-3" max="12" step="0.5" value="0"></div>
+  <div class="views"><button data-a="0">앞</button><button data-a="0.8">비스듬히</button><button data-a="1.5708">옆</button><button data-a="3.1416">뒤</button></div>
+  <div class="stat" id="stat">불러오는 중…</div>
+</div>
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"}}</script>
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import * as UW from './underwear.js';
+
+const kind = new URLSearchParams(location.search).get('kind') || 'f', PAUSE = new URLSearchParams(location.search).has('pause');
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+renderer.setPixelRatio(Math.min(2, devicePixelRatio));
+renderer.setSize(innerWidth, innerHeight);
+renderer.toneMapping = THREE.NeutralToneMapping;
+renderer.shadowMap.enabled = true;
+document.body.prepend(renderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color('#0b1530');
+scene.environment = new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(), .04).texture;
+scene.environmentIntensity = .35;
+const camera = new THREE.PerspectiveCamera(30, innerWidth / innerHeight, .05, 20);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 1.15, 0);
+camera.position.set(0, 1.25, 3.2);
+controls.update();
+const key = new THREE.DirectionalLight('#fff4e8', 2.4); key.position.set(1.2, 3, 2.2); key.castShadow = true;
+key.shadow.mapSize.set(2048, 2048); Object.assign(key.shadow.camera, { left: -1, right: 1, top: 2, bottom: 0, near: .5, far: 6 }); key.shadow.bias = -.0004; key.shadow.normalBias = .01;
+const rim = new THREE.DirectionalLight('#9db8ff', 1.6); rim.position.set(-2, 2, -2);
+const rim2 = new THREE.DirectionalLight('#ffd2a8', 1.0); rim2.position.set(2, 1.5, -2);
+scene.add(key, rim, rim2, new THREE.HemisphereLight('#c8d4ff', '#202640', .5));
+addEventListener('resize', () => { renderer.setSize(innerWidth, innerHeight); camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); });
+
+const $ = id => document.getElementById(id);
+const gltf = await new GLTFLoader().setDRACOLoader(new DRACOLoader().setDecoderPath('https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/libs/draco/gltf/')).loadAsync(`assets/body_${kind}.glb?v=13`);
+const root = gltf.scene;
+scene.add(root);
+root.updateMatrixWorld(true);
+const meshes = {};
+root.traverse(o => { if (o.isMesh) { meshes[o.name] = o; o.castShadow = o.receiveShadow = true; o.frustumCulled = false; } });
+for (const [n, m] of Object.entries(meshes)) m.visible = n === 'body' || n === 'jeans' || n === 'shoes';
+meshes.body.material = new THREE.MeshPhysicalMaterial({ color: '#d9b49c', roughness: .55, sheen: .4, sheenColor: new THREE.Color('#ffb59a') });
+const H = new THREE.Box3().setFromObject(meshes.body).max.y;
+// underwear always on: the body reshaped under it before anything reads the body, then drawn on the skin
+const uwL = UW.landmarks(meshes.body.geometry.attributes.position, H, kind);
+UW.reshape(meshes.body.geometry, uwL);
+if (!new URLSearchParams(location.search).has('nouw')) UW.patch(meshes.body.material, uwL);
+if (new URLSearchParams(location.search).has('bare')) meshes.jeans.visible = meshes.shoes.visible = false;
+
+// rest-pose surface in world space
+function world(mesh) {
+  const P = mesh.geometry.attributes.position, N = mesh.geometry.attributes.normal, M = mesh.matrixWorld, NM = new THREE.Matrix3().getNormalMatrix(M);
+  const pos = new Float32Array(P.count * 3), nrm = new Float32Array(P.count * 3), v = new THREE.Vector3();
+  for (let i = 0; i < P.count; i++) {
+    v.fromBufferAttribute(P, i).applyMatrix4(M); pos.set([v.x, v.y, v.z], i * 3);
+    v.fromBufferAttribute(N, i).applyMatrix3(NM).normalize(); nrm.set([v.x, v.y, v.z], i * 3);
+  }
+  return { pos, nrm };
+}
+const body = world(meshes.body), bottom = world(meshes.jeans);
+const sk = meshes.body.skeleton, bp = n => sk.getBoneByName(n).getWorldPosition(new THREE.Vector3()).toArray();
+const bones = { l: [bp('upperarm_l'), bp('lowerarm_l'), bp('hand_l')], r: [bp('upperarm_r'), bp('lowerarm_r'), bp('hand_r')] };
+// high shoulder point: top of the shoulder 7.5 cm out from the middle; torso centre depth at the chest
+let hps = 0, zs = [];
+const s = H / 1.77;
+for (let i = 0; i < body.pos.length; i += 3) {
+  const x = body.pos[i], y = body.pos[i + 1], z = body.pos[i + 2];
+  if (Math.abs(x - .075 * s) < .008 && Math.abs(z) < .06 && y > 1.38 * s && y < 1.56 * s) hps = Math.max(hps, y);
+}
+for (let i = 0; i < body.pos.length; i += 3) if (Math.abs(body.pos[i]) < .12 && Math.abs(body.pos[i + 1] - (hps - .2)) < .02) zs.push(body.pos[i + 2]);
+const z0 = (Math.min(...zs) + Math.max(...zs)) / 2;
+console.log('H', H, 'hps', hps, 'z0', z0, bones);
+
+/* ---------- the cloth ---------- */
+const worker = new Worker('cloth.js', { type: 'module' });
+const mat = new THREE.MeshPhysicalMaterial({ color: '#f3f1ec', roughness: .85, sheen: .6, sheenRoughness: .8, sheenColor: new THREE.Color('#ffffff'), side: THREE.DoubleSide });
+let geo = null, mesh = null, map = null, next = null, busy = false, last = 0;
+const stat = { ms: 0, awake: 0, nP: 0, frames: 0, t0: performance.now(), fps: 0 };
+worker.onerror = e => console.error('[cloth worker]', e.message, e.filename, e.lineno);
+worker.onmessage = e => {
+  const m = e.data;
+  if (m.t === 'log') console.log('[cloth]', m.s);
+  // a new mesh waits for its first positions, so the old one stays on screen until then (no blank frame)
+  if (m.t === 'topo') next = m;
+  if (m.t === 'frame') {
+    busy = false;
+    if (next && m.pos) {
+      const t = next; next = null;
+      map = t.map;
+      geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(t.nV * 3), 3));
+      geo.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(t.nV * 3), 3));
+      geo.setAttribute('uv', new THREE.BufferAttribute(t.uv, 2));
+      geo.setIndex(new THREE.BufferAttribute(t.index, 1));
+      if (mesh) { scene.remove(mesh); mesh.geometry.dispose(); }
+      mesh = new THREE.Mesh(geo, mat); mesh.castShadow = mesh.receiveShadow = true; mesh.frustumCulled = false;
+      mesh.visible = !new URLSearchParams(location.search).has('bare');
+      scene.add(mesh);
+      stat.nP = t.nP;
+    }
+    if (!m.pos || !geo) return;
+    const P = geo.attributes.position.array, N = geo.attributes.normal.array;
+    for (let i = 0; i < map.length; i++) {
+      const q = map[i] * 3;
+      P[i * 3] = m.pos[q]; P[i * 3 + 1] = m.pos[q + 1]; P[i * 3 + 2] = m.pos[q + 2];
+      N[i * 3] = m.nrm[q]; N[i * 3 + 1] = m.nrm[q + 1]; N[i * 3 + 2] = m.nrm[q + 2];
+    }
+    geo.attributes.position.needsUpdate = geo.attributes.normal.needsUpdate = true;
+    geo.computeBoundingSphere();
+    stat.ms = stat.ms * .9 + m.ms * .1; stat.awake = m.awake; stat.frames++;
+  }
+};
+worker.postMessage({ t: 'init', body, bottom, bones, hps, z0 });
+
+const params = () => {
+  const v = +$('sl').value, full = 19 - 9.6;
+  const B = kind === 'm' ? { cw: 29, hw: 28.5 } : { cw: 25.5, hw: 26 };
+  const p = { base: kind, L: +$('len').value, cw: B.cw + +$('fit').value, hw: B.hw + +$('fit').value };
+  if (kind !== 'm') p.ndF = +$('nd').value;
+  if (v >= 0) { p.sleeve = v; p.strap = null; } else { p.sleeve = 0; p.strap = full - (-v / 10) * (full - .7); }
+  $('sv').textContent = v >= 1.2 ? `소매 ${v} cm` : v >= 0 ? '민소매' : `어깨 ${p.strap.toFixed(1)} cm`;
+  $('lv').textContent = p.L + ' cm'; $('nv').textContent = p.ndF + ' cm'; $('fv').textContent = (+$('fit').value >= 0 ? '+' : '') + $('fit').value + ' cm';
+  return p;
+};
+const send = () => worker.postMessage({ t: 'params', p: params() });
+for (const id of ['sl', 'len', 'nd', 'fit']) { const q = new URLSearchParams(location.search).get(id); if (q !== null) $(id).value = q; $(id).addEventListener('input', send); }
+send();
+document.querySelectorAll('.views button').forEach(b => b.onclick = () => {
+  const a = +b.dataset.a, r = 3.2;
+  camera.position.set(Math.sin(a) * r, 1.25, Math.cos(a) * r); controls.update();
+});
+
+function loop(t) {
+  requestAnimationFrame(loop);
+  if (!busy && !(PAUSE && stat.frames > 0)) { busy = true; worker.postMessage({ t: 'tick', hold: PAUSE }); }
+  controls.update();
+  renderer.render(scene, camera);
+  if (t - last > 500) {
+    stat.fps = stat.frames / ((t - last) / 1000); stat.frames = 0; last = t;
+    $('stat').textContent = `입자 ${stat.nP} · 계산 ${stat.ms.toFixed(1)} ms/프레임 · 천 ${stat.fps.toFixed(0)} fps · ${stat.awake ? '움직이는 중' : '멈춤'}`;
+  }
+}
+requestAnimationFrame(loop);
+// test helper: several views of the current state in one picture ([angle, target height, distance] each)
+function grid(views, w = 420, h = 560) {
+  const c = document.createElement('canvas'); c.width = w * views.length; c.height = h;
+  const x = c.getContext('2d'), keep = [camera.position.clone(), controls.target.clone(), camera.aspect];
+  renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix();
+  views.forEach(([a, ty, r, tx = 0, el = .1], i) => {
+    controls.target.set(tx, ty, 0); camera.position.set(tx + Math.sin(a) * r, ty + el, Math.cos(a) * r); camera.lookAt(controls.target);
+    renderer.render(scene, camera); x.drawImage(renderer.domElement, i * w, 0, w, h);
+  });
+  camera.position.copy(keep[0]); controls.target.copy(keep[1]); camera.aspect = keep[2]; camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+  return c.toDataURL('image/jpeg', .85);
+}
+const settle = () => new Promise(r => { const t = setInterval(() => { if (!stat.awake && !busy) { clearInterval(t); r(); } }, 100); setTimeout(() => { clearInterval(t); r(); }, 15000); });
+window.__sim = { worker, camera, controls, scene, set(p) { for (const [k, v] of Object.entries(p)) $(k).value = v; send(); stat.awake = 1; }, stat, grid, settle };
+</script>
+</body>
+</html>

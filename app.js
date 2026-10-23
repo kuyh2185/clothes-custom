@@ -1278,7 +1278,7 @@ function applyLook(key) {
     const v = item[2], wasStrap = (T.strap || 0) > 0;
     T.sleeve = v.sleeve; T.rawSleeve = false; T.sleeveAdj = null;
     if (v.strap != null) { if (s3) s3.strapLook(v.strap); else T.strap = v.strap; }
-    else { T.strap = 0; T.armF = T.armB = null; if (wasStrap) { T.neckF = T.neckB = null; } }
+    else { T.strap = 0; T.strapW = null; T.armF = T.armB = null; if (wasStrap) { T.neckF = T.neckB = null; } }
   } else if (grp === 'sleeveShape' && T && s3) s3.applyLook('top', 'sleeve', item[2]);
   else if (grp === 'body' && T) { Object.assign(T, item[2]); if (id !== 'crop' && s3) s3.applyLook('top', 'body', null); }
   else if (grp === 'jeans' && B) { Object.assign(B, item[2]); if (s3) s3.applyLook('bottom', 'legs', item[3]); }

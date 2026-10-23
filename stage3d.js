@@ -7,7 +7,10 @@
    (8 draggable points around) and per-side sleeve ends, brush cutting/restoring and brush painting (canvas masks in
    the brush UVs), washes and rips, and printed graphics (gfx.js composites each print area — front, back, the
    outside of each sleeve — into a canvas; the shader projects it onto the fabric facing that way, and the graphics
-   are picked, moved, resized and turned right on the garment). The body is pushed just inside whatever covers it. */
+   are picked, moved, resized and turned right on the garment). The body is pushed just inside whatever covers it.
+   The T-shirt and the knit are no longer baked: they are sewn from a pattern and hung as cloth (simtop.js → cloth.js,
+   a worker), so length, sleeves down to a strap and ease change the garment itself; the shader edits still apply.
+   The mannequin always wears underwear (underwear.js). */
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
@@ -17,6 +20,9 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import * as UW from './underwear.js?v=1';
+import { SimTop } from './simtop.js?v=5';
+import { BASE as PAT_F, BASE_M as PAT_M } from './pattern.js?v=2';
 
 const cc = window.__cc;
 const PI = Math.PI, TAU = PI * 2;
@@ -25,6 +31,8 @@ const lerp = (a, b, t) => a + (b - a) * t;
 const VER = 13;   // bump with the assets
 const GARMENTS = ['tee', 'long', 'shirt', 'hoodie', 'jeans', 'skirt'];
 const TOPS = new Set(['tee', 'long', 'shirt', 'hoodie']);
+// tops sewn from a pattern and hung as cloth on the stage (simtop.js); the others are still the baked assets
+const SIM = new Set(['tee', 'long']);
 const NP = 17, NO = 17, NC = 5, HP = 8, MAXD = 16, NA = 9;
 // free shape: each garment part (body · left/right sleeve · left/right trouser leg) is a grid of length × angle round it;
 // what is pulled out or pushed in is added there and the vertex shader moves the cloth along its normal by that much
@@ -200,12 +208,22 @@ function start() {
       if (o.isMesh) { o.castShadow = o.receiveShadow = true; o.frustumCulled = false; meshes[o.name] = o; }
     });
     const H = new THREE.Box3().setFromObject(meshes.body).max.y;
+    // the mannequin always wears underwear: its surface reshaped under it before anything reads the body
+    const uwL = UW.landmarks(meshes.body.geometry.attributes.position, H, kind);
+    UW.reshape(meshes.body.geometry, uwL);
     const mixer = new THREE.AnimationMixer(root), clips = {};
     g.animations.forEach(c => { clips[c.name] = c; });
     const asset = { root, meshes, mixer, clips, H, kind, info: {} };
     for (const id of GARMENTS) if (meshes[id]) asset.info[id] = analyse(meshes[id], H);
     clearance(meshes);
     setupMaterials(asset);
+    UW.patch(meshes.body.material, uwL);
+    asset.sim = new SimTop(asset, {
+      frame() { needs = true; },
+      // a new cloth mesh (the pattern changed): what the edit tools know about the garment, worked out again
+      topo(mesh) { simInfo(asset, mesh); if (dragH) handles.filter(hd => hd.mesh === mesh).forEach(locate); else buildHandles(); },
+      settled(mesh) { simInfo(asset, mesh); if (!dragH) buildHandles(); },
+    });
     ASSETS[kind] = asset;
     res(asset);
   }, undefined, rej));
@@ -841,11 +859,13 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = uSock;`);
   const TOP_FULL = 380;
   function topCut(id, len) {
     const k = A.H / 728, lo0 = A.info[id].lo0, h = (750 - len) * k;
+    if (SIM.has(id)) return h;
     if (h >= lo0) return h;
     return len <= TOP_FULL ? lo0 : lo0 - (len - TOP_FULL) * k;
   }
   function topLen(id, h) {
     const k = A.H / 728, lo0 = A.info[id].lo0;
+    if (SIM.has(id)) return 750 - h / k;
     return h >= lo0 ? 750 - h / k : TOP_FULL + (lo0 - h) / k;
   }
   /* neckline: 5 points per side (two ends on the shoulder line, two in between, one in the middle).
@@ -1109,13 +1129,72 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = uSock;`);
     const hi = i > 0 ? pts[i - 1][1] - gap : 9, lo = i < NC - 1 ? pts[i + 1][1] + gap : -9;
     pts[i] = [clamp(x, xmin, xmax), clamp(y, lo, hi)];
   }
+  /* ---------- the sewn top's pattern from the editor's state ---------- */
+  // sleeve length: the editor's sleeve values (cards: cap, short, 5부, 7부, long) <-> cm from the top of the sleeve cap
+  const SLV = [[cc.SLEEVELESS, 0], [214, 7], [236, 20], [290, 33], [345, 45], [398, 58]];
+  const patBase = () => A.kind === 'm' ? PAT_M : PAT_F;
+  function sleeveCm(v) {
+    const arm = patBase().arm, f = arm / 58;
+    if (v <= SLV[0][0]) return 0;
+    for (let i = 1; i < SLV.length; i++) if (v <= SLV[i][0]) return lerp(SLV[i - 1][1], SLV[i][1], (v - SLV[i - 1][0]) / (SLV[i][0] - SLV[i - 1][0])) * f;
+    return arm;
+  }
+  function sleeveVal(cm) {
+    const f = patBase().arm / 58, c = cm / f;
+    if (c <= 0) return SLV[0][0];
+    for (let i = 1; i < SLV.length; i++) if (c <= SLV[i][1]) return lerp(SLV[i - 1][0], SLV[i][0], (c - SLV[i - 1][1]) / (SLV[i][1] - SLV[i - 1][1]));
+    return SLV[SLV.length - 1][0];
+  }
+  const strapOf = T => T.strapW ?? (T.strap === 2 ? .8 : T.strap === 1 ? 3 : null);
+  // each side's sleeve as one number: cm of sleeve, or below 0 how far the shoulder has narrowed toward a strap
+  function sleeveVals(T) {
+    const bp = patBase(), full = bp.sw - bp.nw;
+    if (T.sleeve <= cc.SLEEVELESS) { const w = strapOf(T), v = w == null ? 0 : -(full - w); return [v, v]; }
+    const u = sleeveCm(T.sleeve), adj = T.sleeveAdj || [0, 0];
+    return [0, 1].map(i => Math.max(0, u + adj[i] * bp.arm));
+  }
+  function setSleeveVals(T, l, r) {
+    const bp = patBase(), full = bp.sw - bp.nw, lo = -(full - .6);
+    l = clamp(l, lo, bp.arm); r = clamp(r, lo, bp.arm);
+    if (l < 1.2 && r < 1.2) {
+      const m = Math.min(l, r);
+      T.sleeve = 190; T.sleeveAdj = null; T.strapW = m < 0 ? r4(full + m) : null; T.strap = 0;
+    } else {
+      const base = Math.max(l, r);
+      T.sleeve = Math.round(sleeveVal(base) * 10) / 10; T.strapW = null; T.strap = 0;
+      const a = [Math.max(0, l) - base, Math.max(0, r) - base].map(d => r4(d / bp.arm));
+      T.sleeveAdj = a[0] || a[1] ? a : null;
+    }
+    T.armF = T.armB = null;
+  }
+  function simParams(T) {
+    const k = A.H / 728, px = k * 100, bp = patBase(), D = cc.DEF[T.kind] || cc.DEF.tee;   // px: cm per editor unit
+    const [l, r] = sleeveVals(T), e = Math.max(-1.5, (T.fit - D.fit) * px);
+    return {
+      base: A.kind, L: r4(clamp((A.sim.hps - (750 - T.len) * k) * 100, 26, 115)),
+      sleeveL: r4(Math.max(0, l)), sleeveR: r4(Math.max(0, r)), strap: l < 0 || r < 0 ? r4(bp.sw - bp.nw + Math.min(l, r)) : null,
+      cw: r4(bp.cw + e), hw: r4(bp.hw + e + Math.max(0, T.flare || 0) * px),
+      sw: r4(bp.sw + Math.max(0, (T.drop ?? D.drop) - D.drop) * px * .8),
+      bw: r4(bp.bw + (T.sfit - D.sfit) * px * .8), cuff: r4(bp.cuff + (T.sfit - D.sfit) * px * .6), wrist: r4(bp.wrist + Math.max(0, T.sfit - D.sfit) * px * .4),
+      waist: r4(clamp(((T.cling ?? .35) - .35) / .65, 0, 1) * 4),
+    };
+  }
+  // what the edit tools know about the sewn top, worked out again for its new shape
+  function simInfo(asset, mesh) {
+    asset.info[mesh.name] = analyse(mesh, asset.H);
+    mesh.userData.reg = null; mesh.userData.at = null;
+    mesh.boundingSphere = null; mesh.boundingBox = null;
+    if (asset === A) dirty = true;
+  }
+
   function applyState() {
     const st = cc.state, pr = cc.prefs, Y = cc.Y, B = cc.BODY, H = A.H, k = H / 728;
     const toH = y => (750 - y) * k;
     const M = A.meshes, T = st.top, Bt = st.bottom;
     const topMesh = meshOf('top', T), botMesh = meshOf('bottom', Bt);
     for (const id of GARMENTS) if (M[id]) M[id].visible = id === topMesh || id === botMesh;
-    M.body.material.userData.U.uWear.value.set(topMesh === 'tee' ? 1 : 0, topMesh === 'long' ? 1 : 0, botMesh === 'jeans' ? 1 : 0, botMesh === 'skirt' ? 1 : 0);
+    // (a sewn top hangs on the body's real surface: nothing to push in under it)
+    M.body.material.userData.U.uWear.value.set(0, 0, botMesh === 'jeans' ? 1 : 0, botMesh === 'skirt' ? 1 : 0);
     M.body.material.userData.U.uWear2.value.set(topMesh === 'shirt' ? 1 : 0, topMesh === 'hoodie' ? 1 : 0);
     const f = FIN[pr.finish] || FIN.white;
     M.body.material.color.set(f.color); M.body.material.roughness = f.roughness; M.body.material.clearcoat = f.clearcoat;
@@ -1158,12 +1237,15 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = uSock;`);
       for (let i = 0; i < HP; i++) U.uHemOff.value[i] = (off[i] || 0) * H;
       U.uHover.value = hoverCut && hoverCut.mesh === id && !hoverCut.sleeve ? hoverCut.h : -10;
     };
+    const sewn = SIM.has(topMesh);
+    if (sewn) { A.sim.use(M[topMesh]); A.sim.params(simParams(T)); }
     if (topMesh) {
       const U = M[topMesh].material.userData.U, wristY = B.armO[B.armO.length - 1][0], inf = A.info[topMesh];
       common(U, T, topMesh);
       U.uCutH.value = topCut(topMesh, T.len);
+      if (sewn) U.uCutH.value = inf.lo - .04;   // sewn to length: only the hem points cut (above the hem)
       // over a full skirt a top worn out ends just past the skirt's waistband (it can't hang down over the skirt's volume)
-      if (botMesh === 'skirt' && !T.tuck) U.uCutH.value = Math.max(U.uCutH.value, A.info.skirt.hi - .07);
+      if (botMesh === 'skirt' && !T.tuck && !sewn) U.uCutH.value = Math.max(U.uCutH.value, A.info.skirt.hi - .07);
       U.uSh.value.set(inf.hi - .06, inf.hi - .2);
       U.uRaw.value = T.rawHem ? 1 : 0;
       const sp = v => (v - B.st0[1]) / (wristY - B.st0[1]), v0 = (cc.DEF[T.kind] || T).sleeve, vMax = cc.LIMIT['top.sleeve'][1];
@@ -1173,6 +1255,7 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = uSock;`);
       }
       const adj = T.sleeveAdj || [0, 0];
       U.uSleeveCut.value.set(clamp(sb + adj[0], .02, 2), clamp(sb + adj[1], .02, 2));
+      if (sewn) U.uSleeveCut.value.set(2, 2);   // sewn to length
       U.uRawS.value = T.rawSleeve ? 1 : 0;
       U.uTuckH.value = T.tuck && botMesh ? A.info[botMesh].hi - .025 : -1;   // tucked: ends just inside the waistband (jeans or skirt)
       U.uHandOn.value = 1;
@@ -1181,7 +1264,7 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = uSock;`);
       nf.forEach((q, i) => U.uNeckF.value[i].set(q[0], q[1])); nb.forEach((q, i) => U.uNeckB.value[i].set(q[0], q[1]));
       U.uNeckOn.value = 1;
       U.uHoodOff.value = T.hoodOff ? 1 : 0;
-      U.uArmOn.value = T.sleeve <= cc.SLEEVELESS && inf.arm ? 1 : 0;
+      U.uArmOn.value = T.sleeve <= cc.SLEEVELESS && inf.arm && !sewn ? 1 : 0;
       U.uStrapY.value = U.uArmOn.value ? inf.arm[NC - 1][1] + .02 : 99;
       if (U.uArmOn.value) {
         U.uSleeveCut.value.set(0, 0);   // no sleeve fabric at all: the armhole is the edge
@@ -1199,11 +1282,13 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = uSock;`);
       const slim = clamp((5 - T.fit) / 7, 0, 1), cl = T.cling ?? .35;
       const waist = Math.min(1 - slim, cl >= .35 ? (cl - .35) / .65 : -.5 * (.35 - cl) / .35);
       const loose_waist = -loose * clamp((cl - .35) / .65, 0, 1);   // pulling the waist in also takes out the oversize room there
-      morph(M[topMesh], oj ? { slim, waist, loose_waist, loose_jeans: loose, ext_jeans: ext, over_jeans: 1 - loose - ext }
+      if (!sewn) morph(M[topMesh], oj ? { slim, waist, loose_waist, loose_jeans: loose, ext_jeans: ext, over_jeans: 1 - loose - ext }
         : { slim, waist, loose_waist, loose, ext, over_skirt: botMesh === 'skirt' ? over : 0 });
       U.uFit.value.set(clamp((T.fit - 26) * k * .5, 0, .04), clamp((T.sfit - 2) * k * .4, -.002, .03), Math.max(0, T.flare) * .05, 0);
+      if (sewn) { U.uFit.value.set(0, 0, 0, 0); U.uFold.value = 0; }   // the pattern has the ease; the cloth makes its own folds
       U.uFitH.value.set(toH(Y.waist), 0, 0, 0);
       U.uHem.value.set(Math.abs(U.uCutH.value - inf.lo0) > .01 || (T.hemOff || []).some(v => v) ? 1 : 0, Math.min(U.uSleeveCut.value.x, U.uSleeveCut.value.y) < inf.smax - .03 ? 1 : 0);
+      if (sewn) U.uHem.value.set((T.hemOff || []).some(v => v) ? 1 : 0, 0);
       U.uBand.value.set(0, 0, 0);
     }
     if (botMesh) {
@@ -1242,6 +1327,11 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = uSock;`);
       const U = M[topMesh].material.userData.U;
       if (botMesh && !T.tuck) { const [zc, hi, top] = botTable(botMesh); U.uBotFr.value.set(zc, hi, top, 1); }
       else U.uBotFr.value.w = 0;
+      if (sewn) {   // the cloth itself hangs over the bottom's real shape (tucked in: no bottom in the way)
+        U.uBotFr.value.w = 0;
+        if (botMesh && !T.tuck) { const [zc, , top] = botTable(botMesh); A.sim.bottom({ D: botTex.image.data.slice(), W: BTW, N: BTH, zc, top }, botTex.userData.key, M[botMesh]); }
+        else A.sim.bottom(null, 'none');
+      }
     }
     const clip = A.clips[pr.pose] || A.clips.relaxed;
     if (A.pose !== clip) { A.mixer.stopAllAction(); A.mixer.clipAction(clip).play(); A.mixer.setTime(0); A.pose = clip; }
@@ -1328,6 +1418,7 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = uSock;`);
   (function frame() {
     requestAnimationFrame(frame);
     if (dirty) { dirty = false; rebuild(); needs = true; }
+    if (A && A.sim) A.sim.tick();
     if (controls.update() || needs) { needs = false; updateHands(); draw(); placeHandles(); placeGSel(); }
   })();
   controls.addEventListener('change', () => { needs = true; });
@@ -1417,6 +1508,9 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = uSock;`);
         const ax = lc ? Math.abs(vx) - lc : vx, ang = Math.atan2(ax, vz), da = Math.atan2(Math.sin(ang - a), Math.cos(ang - a));
         return da * da * 0.02 + Math.max(0, ch - vh) ** 2 * 400 + (vh - ch) ** 2 * 40;
       });
+    } else if (SIM.has(mesh.name) && A.sim.info && !A.sim.info.has[hd.side === 0 ? 'l' : 'r']) {
+      const sx = hd.side === 0 ? 1 : -1;
+      hd.vi = nearestVertex(mesh, (vx, vy, vz, vh, vs) => vs > .02 || Math.sign(vx) !== sx ? 1e9 : -(vy + Math.abs(vx) * .6) + vz * vz * .5);
     } else {
       const sc = mesh.material.userData.U.uSleeveCut.value, sx = hd.side === 0 ? 1 : -1;
       const target = Math.min(hd.side === 0 ? sc.x : sc.y, A.info[mesh.name].smax) - .01;
@@ -1480,7 +1574,7 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = uSock;`);
         const mesh = A.meshes[meshOf(slot, g)];
         for (let i = 0; i < HP; i++) add('hem', mesh, { slot, i });
       }
-      if (T && T.sleeve > cc.SLEEVELESS) {
+      if (T && (T.sleeve > cc.SLEEVELESS || SIM.has(meshOf('top', T)))) {
         const mesh = A.meshes[meshOf('top', T)];
         for (const side of [0, 1]) add('sl', mesh, { side, slot: 'top' });
       } else if (T && A.info[meshOf('top', T)].arm) {   // sleeveless: the armhole points
@@ -1550,6 +1644,7 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = uSock;`);
     else if (hd.kind === 'af' || hd.kind === 'ab') hd.start = armCtrl(st.top, meshOf('top', st.top), hd.side).map(p => p.slice());
     else if (hd.kind === 'sh') profStart(st[hd.slot], hd);   // this part's points, so the drag works from where it started
     else if (hd.kind === 'hem') hd.start = (st[hd.slot].hemOff || new Array(HP).fill(0)).slice();
+    else if (SIM.has(hd.mesh.name)) hd.start = sleeveVals(st.top);
     else hd.start = (st.top.sleeveAdj || [0, 0]).slice();
     hd.mpp = mPerPx(hd.world || controls.target);
     const move = ev => dragMove(ev, hd), up = () => {
@@ -1614,6 +1709,13 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = uSock;`);
       off[hd.i] = r4(clamp(hd.start[hd.i] + dy / H, (A.info[id].lo - base) / H, (A.info[id].hi - .08 - base) / H));   // can't add fabric below the hem
       if (sym) { const j = (HP - hd.i) % HP; if (j !== hd.i) off[j] = off[hd.i]; }   // left ↔ right around the body
       g.hemOff = off;
+    } else if (SIM.has(hd.mesh.name)) {
+      // one number per side, all the way: down / out the sleeve grows, up / in it shortens, past nothing the
+      // shoulder narrows into a strap
+      const T = st.top, out = (hd.side === 0 ? 1 : -1) * camSide, v = hd.start.slice();
+      v[hd.side] = hd.start[hd.side] + (-dy + dx * out * .6) * 80;
+      if (sym) v[1 - hd.side] = v[hd.side];
+      setSleeveVals(T, v[0], v[1]);
     } else {
       const T = st.top, adj = hd.start.slice();
       adj[hd.side] = Math.round((hd.start[hd.side] - dy * 1.6) * 1e3) / 1e3;
@@ -2076,6 +2178,12 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = uSock;`);
       const T = cc.state.top;
       if (!T || !A) return;
       const id = meshOf('top', T), H = A.H, inf = A.info[id];
+      if (SIM.has(id)) {
+        const bp = patBase(), full = bp.sw - bp.nw, w = level === 2 ? .8 : level === 1 ? 3 : null;
+        setSleeveVals(T, w == null ? 0 : w - full, w == null ? 0 : w - full);
+        T.strap = level; T.neckF = T.neckB = null;
+        return;
+      }
       const had = (T.strap || 0) > 0;
       T.strap = level; T.armF = T.armB = null;
       if (!level || !inf.arm) { if (had) { T.neckF = T.neckB = null; } return; }   // back to a plain tank: its own neckline
