@@ -18,7 +18,7 @@ const $ = id => document.getElementById(id);
 const PI = Math.PI;
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const r1 = v => Math.round(v * 10) / 10;
-const ASSET_VER = 13, KEY = 'clothes-custom:studio:v1';
+const ASSET_VER = 2, KEY = 'clothes-custom:studio:v1';
 
 /* ---------- the garment's numbers ---------- */
 // sl: each sleeve as one number (cm of sleeve; below 0, cm the shoulder has narrowed toward a strap), L: length from
@@ -163,7 +163,7 @@ const BODIES = {};
 let A = null;   // the shown body: { root, meshes, H, kind, hps, z0, bones }
 async function loadBody(kind) {
   if (BODIES[kind]) return BODIES[kind];
-  const g = await loader.loadAsync(`assets/body_${kind}.glb?v=${ASSET_VER}`);
+  const g = await loader.loadAsync(`assets/studio_${kind}.glb?v=${ASSET_VER}`);
   const root = g.scene, meshes = {};
   root.traverse(o => { if (o.isMesh) { meshes[o.name] = o; o.castShadow = o.receiveShadow = true; o.frustumCulled = false; } });
   for (const [n, m] of Object.entries(meshes)) m.visible = n === 'body' || n === 'jeans' || n === 'shoes';
