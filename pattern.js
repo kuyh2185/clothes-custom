@@ -11,14 +11,16 @@ const lerp = (a, b, t) => a + (b - a) * t;
 const sstep = t => { t = clamp(t, 0, 1); return t * t * (3 - 2 * t); };
 
 // women's regular-fit tee on the 177 cm model (cm). sleeve = length from the top of the cap (0 = none);
-// strap = shoulder width left (only without sleeves; full = sw - nw); arm = the arm's length shoulder → wrist
+// strap = shoulder width left (only without sleeves; full = sw - nw); arm = the arm's length shoulder → wrist;
+// over: how far a sleeve can run on past the wrist, over the hand; hand: its half width there, wide enough to go round
+// the hand and thumb (the widest of the hand is about 7 cm past the wrist)
 // sleeveL / sleeveR: each sleeve's own length (default: sleeve); waist: cm the side seams come in at the waist;
 // nw: half the neck's width at the shoulder, ndF / ndB: its depth front and back, neckV: 0 round … 1 V
 export const BASE = { nw: 9.6, ndF: 10.0, ndB: 2.6, sw: 19.0, ss: 4.6, ad: 23.5, cw: 25.5, hw: 26.0, L: 65.0,
-  bw: 18.0, cuff: 16.8, wrist: 11.5, ease: -0.4, sleeve: 20, strap: null, arm: 58, waist: 0 };
+  bw: 18.0, cuff: 16.8, wrist: 11.5, ease: -0.4, sleeve: 20, strap: null, arm: 58, over: 15, hand: 19, waist: 0 };
 // men's regular tee on the 188 cm model
 export const BASE_M = { ...BASE, nw: 10.6, ndF: 9.0, ndB: 2.6, sw: 22.6, ss: 5.0, ad: 26.0, cw: 29.0, hw: 28.5, L: 72.0,
-  bw: 20.5, cuff: 19.0, wrist: 12.5, arm: 63 };
+  bw: 20.5, cuff: 19.0, wrist: 12.5, arm: 63, over: 16, hand: 22.5 };
 
 /* ---------- 2D curves (arrays of [x, y]) ---------- */
 function bez(p0, p1, p2, p3, n = 48) {
@@ -120,14 +122,20 @@ function sleeveOutline(P, frontLen, backLen) {
     const err = (frontLen + backLen + 2 * P.ease) - (plen(cap(ch, -1)) + plen(cap(ch, 1)));
     ch = Math.max(4, ch + err * .5);
   }
-  // half width down the sleeve: bicep at the underarm, the tee's cuff at 20 cm, a wrist at the arm's length
-  const knots = [[ch, bw], [20, P.cuff], [P.arm, P.wrist]];
-  const halfW = y => {
+  // half width down a sleeve of length u: bicep at the underarm, the tee's cuff at 20 cm, a wrist at the arm's length,
+  // then past the wrist out round the hand (a sleeve that narrows on would start inside the hand and pass through it).
+  // Once the sleeve runs on over the hand its narrowest part draws back up the arm, clear of the thumb's root.
+  const knotsOf = u => {
+    const w = P.arm - clamp(u - P.arm, 0, 6);
+    return [[ch, bw], [20, P.cuff], [w, P.wrist], [w + 6, Math.max(P.wrist, P.hand)]];
+  };
+  const halfW = (y, u) => {
+    const knots = knotsOf(u);
     if (y <= knots[0][0]) return knots[0][1];
     for (let i = 1; i < knots.length; i++) if (y <= knots[i][0]) return lerp(knots[i - 1][1], knots[i][1], (y - knots[i - 1][0]) / (knots[i][0] - knots[i - 1][0]));
     return knots[knots.length - 1][1];
   };
-  return { capf: cap(ch, -1), capb: cap(ch, 1), ch, halfW, knots };
+  return { capf: cap(ch, -1), capb: cap(ch, 1), ch, halfW, knotsOf };
 }
 
 /* ---------- flat mesh of a piece ---------- */
@@ -194,7 +202,7 @@ export function build(params) {
   const P = { ...(params.base === 'm' ? BASE_M : BASE), ...params };
   const full = P.sw - P.nw;
   // each sleeve its own length; a sleeve shorter than this is none at all
-  const uS = { l: Math.min(P.sleeveL ?? P.sleeve, P.arm), r: Math.min(P.sleeveR ?? P.sleeve, P.arm) };
+  const uS = { l: Math.min(P.sleeveL ?? P.sleeve, P.arm + P.over), r: Math.min(P.sleeveR ?? P.sleeve, P.arm + P.over) };
   const has = { l: uS.l >= 1.2, r: uS.r >= 1.2 };
   if (has.l || has.r) P.strap = null;   // a strap only once both sleeves are gone
   const F = bodyHalf(P, true), B = bodyHalf(P, false);
@@ -249,8 +257,8 @@ export function build(params) {
       const hemN = Math.max(1, Math.round(dist(cf[cf.length - 1], cb[cb.length - 1]) / S));
       segs = [['hem', [cf[cf.length - 1], cb[cb.length - 1]], hemN, false], ['capb', rev(cb), d.nbS, true], ['capf', cf, d.nfS, false]];
     } else {
-      const und = sg => { const out = []; for (let i = 0; i <= 24; i++) { const y = lerp(sl.ch, u, i / 24); out.push([sg * sl.halfW(y), -y]); } return out; };
-      const uf = und(-1), ub = und(1), nu = nseg(uf), hw = sl.halfW(u);
+      const und = sg => { const out = []; for (let i = 0; i <= 24; i++) { const y = lerp(sl.ch, u, i / 24); out.push([sg * sl.halfW(y, u), -y]); } return out; };
+      const uf = und(-1), ub = und(1), nu = nseg(uf), hw = sl.halfW(u, u);
       segs = [['hem', line([-hw, -u], [hw, -u]), Math.max(1, Math.round(2 * hw / S)), false], ['und_b', rev(ub), nu, true],
         ['capb', rev(sl.capb), d.nbS, true], ['capf', sl.capf, d.nfS, false], ['und_f', uf, nu, false]];
     }
@@ -258,7 +266,7 @@ export function build(params) {
     seams.push([2, ['front', 'armS_' + half], [name, 'capf']], [2, ['back', 'armS_' + half], [name, 'capb']]);
     if (!d.capCut) seams.push([4, [name, 'und_b'], [name, 'und_f']]);
   }
-  const sleeve = { ch: sl.ch, bw: P.bw, u: Math.max(uS.l, uS.r), uL: uS.l, uR: uS.r, knots: sl.knots };
+  const sleeve = { ch: sl.ch, bw: P.bw, u: Math.max(uS.l, uS.r), uL: uS.l, uR: uS.r, knotsL: sl.knotsOf(uS.l), knotsR: sl.knotsOf(uS.r) };
   // where the hem and the shoulder sit (cm below the high shoulder point), for the site's edit points
   return { pieces, seams, info: { P, sleeve, full, has, hemL: P.L + .5 } };
 }

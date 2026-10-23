@@ -12,7 +12,7 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { smoothChest, tuckUnder } from './mannequin.js?v=1';
-import { BASE, BASE_M } from './pattern.js?v=4';
+import { BASE, BASE_M } from './pattern.js?v=10';
 
 const $ = id => document.getElementById(id);
 const PI = Math.PI;
@@ -53,7 +53,7 @@ function params() {
 }
 const LIM = () => {
   const b = base(), full = fullOf(state.top);
-  return { sl: [-(full - .6), b.arm], L: [b.ad + 6, 118], ease: [-8, 20], flare: [-4, 22], dNw: [-2, 8], ndF: [3, 30], ndB: [1.5, 26], neckV: [0, 1] };
+  return { sl: [-(full - .6), b.arm + b.over], L: [b.ad + 6, 118], ease: [-8, 20], flare: [-4, 22], dNw: [-2, 8], ndF: [3, 30], ndB: [1.5, 26], neckV: [0, 1] };
 };
 function fix(T) {
   const L = LIM();
@@ -66,7 +66,7 @@ function sleeveName(v) {
   const a = base().arm / 58;
   if (v < 0) return `끈 ${(fullOf(state.top) + v).toFixed(1)}cm`;
   if (v < 1.2) return '민소매';
-  const n = v < 10 * a ? '캡' : v < 26 * a ? '반팔' : v < 39 * a ? '5부' : v < 51 * a ? '7부' : '긴팔';
+  const n = v < 10 * a ? '캡' : v < 26 * a ? '반팔' : v < 39 * a ? '5부' : v < 51 * a ? '7부' : v < base().arm + 2 ? '긴팔' : '손 덮는 긴팔';
   return `${n} ${Math.round(v)}cm`;
 }
 const lenName = L => (L < 50 ? '크롭' : L < 70 ? '기본' : L < 86 ? '롱' : '원피스') + ` ${Math.round(L)}cm`;
@@ -197,7 +197,7 @@ const world = mesh => {   // rest pose = bind pose = world here (the asset's roo
 };
 
 /* ---------- the cloth ---------- */
-const worker = new Worker('cloth.js?v=9', { type: 'module' });
+const worker = new Worker('cloth.js?v=23', { type: 'module' });
 worker.onerror = e => console.error('[cloth]', e.message);
 const fabricU = { uC1: { value: new THREE.Color() }, uC2: { value: new THREE.Color() }, uPat: { value: 0 }, uScale: { value: 1 } };
 const fabric = new THREE.MeshPhysicalMaterial({ roughness: .86, sheen: .6, sheenRoughness: .8, side: THREE.DoubleSide });

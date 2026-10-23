@@ -4,7 +4,7 @@
 //   in : {t:'init', body:{pos,nrm}, bottom:{pos,nrm}|null, bones:{l:[J,E], r:[J,E]}, hps, z0}
 //        {t:'params', p}      {t:'tick'}   (one frame per tick; answered with {t:'frame'})
 //   out: {t:'topo', ...} when the mesh changes, {t:'frame', pos, nrm, awake, ms}
-import { build, BASE, BASE_M } from './pattern.js?v=4';
+import { build, BASE, BASE_M } from './pattern.js?v=10';
 
 const G = -9.8, SUB = 12, DT = 1 / 60, TH = 0.004;
 let sdf = null, ctx = null, cloth = null, pending = null, awake = 0, calm = 0;
@@ -18,7 +18,7 @@ function handle(m) {
   if (m.t === 'init') {   // (again for another body: the cloth starts over round it)
     ctx = m; cloth = null; bot = null;
     const t0 = performance.now();
-    useSDF(buildSDF(m.body, m.bottom));
+    useSDF(buildSDF(m.body, m.bottom, m.bones));
     ctx.axis = { l: armAxis(m.body.pos, m.bones.l), r: armAxis(m.body.pos, m.bones.r) };
     postMessage({ t: 'log', s: `sdf ${(performance.now() - t0).toFixed(0)} ms, ${sdf.nx}×${sdf.ny}×${sdf.nz}` });
   } else if (m.t === 'params') pending = m.p;
@@ -56,7 +56,7 @@ function tick(m0) {
 }
 
 /* ---------- collision field: signed distance to the body (and the bottom worn under the top) ---------- */
-function buildSDF(body, bottom) {
+function buildSDF(body, bottom, bones) {
   const h = 0.008, B = body.pos;
   let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9, z0 = 1e9, z1 = -1e9;
   for (let i = 0; i < B.length; i += 3) {
@@ -108,12 +108,96 @@ function buildSDF(body, bottom) {
     }
     front = nxt;
   }
+  for (const k of ['l', 'r']) HAND[k] = mitten(val, B, bones[k], { nx, ny, nz, h, x0, y0, z0 });
   if (bottom) {   // an open shell: only near its surface
     const b2 = new Float32Array(N).fill(Infinity), bv = new Float32Array(N);
     splat(bottom, 3, b2, bv);
     for (let i = 0; i < N; i++) if (b2[i] !== Infinity) val[i] = Math.min(val[i], bv[i]);
   }
   return { val, nx, ny, nz, h, x0, y0, z0 };
+}
+// each hand as a mitten: across the hand, slice by slice, the field is that of the slice's convex outline, so a sleeve
+// over the hand slides round it instead of catching between the fingers (and the fingers poking through the cloth).
+// The outlines are kept (HAND.l / .r) to lay a sleeve round the hand.
+const HAND = {};
+function mitten(val, B, [, E, W], g) {
+  const { nx, ny, nz, h, x0, y0, z0 } = g;
+  const fl = Math.hypot(W[0] - E[0], W[1] - E[1], W[2] - E[2]), d = [0, 1, 2].map(k => (W[k] - E[k]) / fl);
+  let u = [d[1], -d[0], 0];
+  const ul = Math.hypot(...u); u = u.map(c => c / ul);
+  const v = [d[1] * u[2] - d[2] * u[1], d[2] * u[0] - d[0] * u[2], d[0] * u[1] - d[1] * u[0]];
+  // the hand's vertices by slice along the forearm's line on past the wrist
+  const A0 = 0, A1 = 0.24, n = Math.ceil((A1 - A0) / h), sl = Array.from({ length: n }, () => []);
+  for (let i = 0; i < B.length; i += 3) {
+    const rx = B[i] - W[0], ry = B[i + 1] - W[1], rz = B[i + 2] - W[2], a = rx * d[0] + ry * d[1] + rz * d[2];
+    if (a < A0 || a >= A1) continue;
+    const pu = rx * u[0] + ry * u[1] + rz * u[2], pv = rx * v[0] + ry * v[1] + rz * v[2];
+    if (pu * pu + pv * pv > 0.12 * 0.12) continue;
+    sl[Math.floor((a - A0) / h)].push([pu, pv]);
+  }
+  const hulls = sl.map(pts => pts.length >= 3 ? hull2(pts) : null);
+  let lo = [1e9, 1e9, 1e9], hi = [-1e9, -1e9, -1e9];
+  for (let i = 0; i < B.length; i += 3) {
+    const rx = B[i] - W[0], ry = B[i + 1] - W[1], rz = B[i + 2] - W[2], a = rx * d[0] + ry * d[1] + rz * d[2];
+    if (a < A0 - h || a >= A1 || rx * rx + ry * ry + rz * rz - a * a > 0.12 * 0.12) continue;
+    for (let k = 0; k < 3; k++) { lo[k] = Math.min(lo[k], B[i + k]); hi[k] = Math.max(hi[k], B[i + k]); }
+  }
+  if (lo[0] > hi[0]) return null;
+  const pad = 0.03, c0 = [0, 1, 2].map(k => lo[k] - pad), c1 = [0, 1, 2].map(k => hi[k] + pad);
+  const gx0 = Math.max(0, Math.floor((c0[0] - x0) / h)), gx1 = Math.min(nx - 1, Math.ceil((c1[0] - x0) / h));
+  const gy0 = Math.max(0, Math.floor((c0[1] - y0) / h)), gy1 = Math.min(ny - 1, Math.ceil((c1[1] - y0) / h));
+  const gz0 = Math.max(0, Math.floor((c0[2] - z0) / h)), gz1 = Math.min(nz - 1, Math.ceil((c1[2] - z0) / h));
+  for (let k = gz0; k <= gz1; k++) for (let j = gy0; j <= gy1; j++) for (let q = gx0; q <= gx1; q++) {
+    const rx = x0 + q * h - W[0], ry = y0 + j * h - W[1], rz = z0 + k * h - W[2], a = rx * d[0] + ry * d[1] + rz * d[2];
+    const hl = a >= A0 && a < A1 && hulls[Math.floor((a - A0) / h)];
+    if (!hl) continue;
+    // a little fuller than the outline: the smoothing below rounds it in, and the thumb would show through the cloth
+    const dd = polyDist(hl, rx * u[0] + ry * u[1] + rz * u[2], rx * v[0] + ry * v[1] + rz * v[2]) - 0.012, id = (k * ny + j) * nx + q;
+    if (dd < val[id]) val[id] = dd;
+  }
+  // smoothed (the slices step from one outline to the next; cloth sliding over the steps never comes to rest)
+  const bx = gx1 - gx0 + 1, by = gy1 - gy0 + 1, bz = gz1 - gz0 + 1, tmp = new Float32Array(bx * by * bz);
+  for (let pass = 0; pass < 2; pass++) {
+    for (let k = 0; k < bz; k++) for (let j = 0; j < by; j++) for (let q = 0; q < bx; q++) {
+      let sum = 0, cnt = 0;
+      for (let c = -1; c <= 1; c++) for (let b = -1; b <= 1; b++) for (let a = -1; a <= 1; a++) {
+        const K = gz0 + k + c, J = gy0 + j + b, Q = gx0 + q + a;
+        if (K < 0 || J < 0 || Q < 0 || K >= nz || J >= ny || Q >= nx) continue;
+        sum += val[(K * ny + J) * nx + Q]; cnt++;
+      }
+      tmp[(k * by + j) * bx + q] = sum / cnt;
+    }
+    for (let k = 0; k < bz; k++) for (let j = 0; j < by; j++) for (let q = 0; q < bx; q++) val[((gz0 + k) * ny + gy0 + j) * nx + gx0 + q] = tmp[(k * by + j) * bx + q];
+  }
+  return { W, d, u, v, A0, h, hulls };
+}
+// from a point inside a convex polygon, how far along (dx, dy) to its outline
+function rayOut(H, x, y, dx, dy) {
+  let best = 1e9;
+  for (let i = 0; i < H.length; i++) {
+    const a = H[i], b = H[(i + 1) % H.length], ex = b[0] - a[0], ey = b[1] - a[1], den = dx * ey - dy * ex;
+    if (Math.abs(den) < 1e-12) continue;
+    const t = ((a[0] - x) * ey - (a[1] - y) * ex) / den, s = ((a[0] - x) * dy - (a[1] - y) * dx) / den;
+    if (t > 0 && s >= 0 && s <= 1) best = Math.min(best, t);
+  }
+  return best < 1e9 ? best : 0;
+}
+function hull2(pts) {   // convex hull, counter-clockwise (monotone chain)
+  pts.sort((p, q) => p[0] - q[0] || p[1] - q[1]);
+  const cr = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]), lo = [], up = [];
+  for (const p of pts) { while (lo.length >= 2 && cr(lo[lo.length - 2], lo[lo.length - 1], p) <= 0) lo.pop(); lo.push(p); }
+  for (let i = pts.length - 1; i >= 0; i--) { const p = pts[i]; while (up.length >= 2 && cr(up[up.length - 2], up[up.length - 1], p) <= 0) up.pop(); up.push(p); }
+  return lo.slice(0, -1).concat(up.slice(0, -1));
+}
+function polyDist(H, x, y) {   // signed distance to a convex polygon (CCW), negative inside
+  let out = -1e9, edge = 1e9;
+  for (let i = 0; i < H.length; i++) {
+    const a = H[i], b = H[(i + 1) % H.length], ex = b[0] - a[0], ey = b[1] - a[1], el = Math.hypot(ex, ey) || 1e-9;
+    out = Math.max(out, ((x - a[0]) * ey - (y - a[1]) * ex) / el);   // > 0 outside this edge
+    const t = Math.max(0, Math.min(1, ((x - a[0]) * ex + (y - a[1]) * ey) / (el * el)));
+    edge = Math.min(edge, Math.hypot(a[0] + ex * t - x, a[1] + ey * t - y));
+  }
+  return out > 0 ? edge : out;
 }
 // the field's grid, kept in plain variables (the hot path reads them millions of times a second)
 let SV, SNX, SNY, SNZ, SH, SX0, SY0, SZ0;
@@ -186,8 +270,11 @@ function assemble(g, old) {
       // a panel made wider or narrower is looked up across the old one in proportion (side seam on side seam);
       // stepped out past the old side, front and back would cross there and leave a fold the cloth can't undo
       const p = o && pc.pc < 2 ? [p0[0] * halfOf(old.info.P, -p0[1]) / halfOf(g.info.P, -p0[1]), p0[1]] : p0;
-      let w = loc && loc(p[0], p[1]);
-      if (!w && loc) {
+      // sleeve past the wrist is laid round the hand afresh each time: carried on from the old cloth (an end hanging
+      // below the hand, or caught on the thumb) the hand would come out through the sleeve
+      const hand = pc.pc >= 2 && -p0[1] > g.info.sleeve[pc.pc === 2 ? 'knotsL' : 'knotsR'][2][0];
+      let w = !hand && loc && loc(p[0], p[1]);
+      if (!w && loc && !hand) {
         const k = loc.nearest(p[0], p[1]);
         if (k >= 0) {
           const a = place(pc, p, g.info), b = place(pc, o.pts[k], g.info), q0 = old.map[o.off + k] * 3;
@@ -351,8 +438,8 @@ function place(pc, p, gi) {
     return [x, y, front ? z0 + z : z0 - z];
   }
   const axis = pc.pc === 2 ? ctx.axis.l : ctx.axis.r;
-  const info = gi.sleeve || { bw: 18, ch: 10, knots: [[10, 18], [20, 16.8], [58, 11.5]] };
-  const y = -p[1], kn = info.knots;
+  const kn = gi.sleeve ? gi.sleeve[pc.pc === 2 ? 'knotsL' : 'knotsR'] : [[10, 18], [20, 16.8], [58, 11.5], [64, 19]];
+  const y = -p[1];
   let hw = kn[kn.length - 1][1];
   if (y <= kn[0][0]) hw = kn[0][1];
   else for (let i = 1; i < kn.length; i++) if (y <= kn[i][0]) { hw = kn[i - 1][1] + (kn[i][1] - kn[i - 1][1]) * (y - kn[i - 1][0]) / (kn[i][0] - kn[i - 1][0]); break; }
@@ -372,12 +459,53 @@ function place(pc, p, gi) {
   const fl = Math.hypot(fx, fy, fz); fx /= fl; fy /= fl; fz /= fl;
   // the row wrapped once round, loose: well clear of the arm, the cloth pulls itself in
   const ar = A0.r + (A1.r - A0.r) * tt, phi = p[0] / hw * Math.PI, r = Math.max(ar + 0.02, 2 * hw / 100 / (2 * Math.PI) * 1.2);
-  return [c[0] + (ux * Math.cos(phi) - fx * Math.sin(phi)) * r, c[1] + (uy * Math.cos(phi) - fy * Math.sin(phi)) * r + lift, c[2] + (uz * Math.cos(phi) - fz * Math.sin(phi)) * r];
+  const ox = ux * Math.cos(phi) - fx * Math.sin(phi), oy = uy * Math.cos(phi) - fy * Math.sin(phi), oz = uz * Math.cos(phi) - fz * Math.sin(phi);
+  // over the hand: round the hand's outline there, a little clear of it, spaced evenly along the outline (a circle clear
+  // of the thumb is so much wider than the sleeve that the cloth snaps in and cuts through the thumb; spaced by angle,
+  // the cloth over the thumb would start stretched apart and the thumb come through between)
+  const HD = HAND[pc.pc === 2 ? 'l' : 'r'];
+  if (HD) {
+    const rx = c[0] - HD.W[0], ry = c[1] - HD.W[1], rz = c[2] - HD.W[2], a = rx * HD.d[0] + ry * HD.d[1] + rz * HD.d[2];
+    const H = a >= HD.A0 && HD.hulls[Math.floor((a - HD.A0) / HD.h)];
+    if (H) {
+      const to2 = (x, y, z) => [x * HD.u[0] + y * HD.u[1] + z * HD.u[2], x * HD.v[0] + y * HD.v[1] + z * HD.v[2]];
+      const d0 = to2(ux, uy, uz), d1 = to2(-fx, -fy, -fz);   // the directions of phi = 0 and phi = π/2
+      const ccw = d0[0] * d1[1] - d0[1] * d1[0] > 0;
+      let cu = 0, cv = 0;
+      for (const q of H) { cu += q[0]; cv += q[1]; }
+      cu /= H.length; cv /= H.length;
+      // where phi = 0 meets the outline (edge i0, at s0 along it), then on round it by phi's share of its length
+      const n = H.length, len = H.map((q, i) => Math.hypot(H[(i + 1) % n][0] - q[0], H[(i + 1) % n][1] - q[1]));
+      const per = len.reduce((x, y) => x + y, 0), dl = Math.hypot(...d0) || 1, t0 = rayOut(H, cu, cv, d0[0] / dl, d0[1] / dl);
+      const hx = cu + d0[0] / dl * t0, hy = cv + d0[1] / dl * t0;
+      let i0 = 0, s0 = 0, bd = 1e9;
+      for (let i = 0; i < n; i++) {
+        const A = H[i], B = H[(i + 1) % n], ex = B[0] - A[0], ey = B[1] - A[1];
+        const t = Math.max(0, Math.min(1, ((hx - A[0]) * ex + (hy - A[1]) * ey) / (len[i] * len[i] || 1e-12)));
+        const dd = Math.hypot(A[0] + ex * t - hx, A[1] + ey * t - hy);
+        if (dd < bd) { bd = dd; i0 = i; s0 = t * len[i]; }
+      }
+      const fr = ((phi / (2 * Math.PI)) % 1 + 1) % 1;
+      // arc length from vertex 0 going counter-clockwise
+      let base = s0;
+      for (let i = 0; i < i0; i++) base += len[i];
+      let at = ccw ? base + fr * per : base - fr * per;
+      at = ((at % per) + per) % per;
+      let i = 0;
+      while (i < n - 1 && at > len[i]) { at -= len[i]; i++; }
+      const A = H[i], B = H[(i + 1) % n], ex = (B[0] - A[0]) / (len[i] || 1), ey = (B[1] - A[1]) / (len[i] || 1);
+      const pu = A[0] + ex * at + ey * 0.025, pv = A[1] + ey * at - ex * 0.025;   // (ey, -ex): out of a counter-clockwise outline
+      return [0, 1, 2].map(k => HD.W[k] + HD.d[k] * a + HD.u[k] * pu + HD.v[k] * pv + (k === 1 ? lift : 0));
+    }
+  }
+  return [c[0] + ox * r, c[1] + oy * r + lift, c[2] + oz * r];
 }
 
-// centre line of an arm: slices across the shoulder→elbow→wrist bones, each the middle of the arm's surface there
+// centre line of an arm: slices across the shoulder→elbow→wrist bones, each the middle of the arm's surface there, and
+// on past the wrist through the hand (a sleeve longer than the arm is laid round the hand, clear of it)
 function armAxis(B, [J, E, W]) {
-  const seg = [[J, E], [E, W]], out = [];
+  const fl = Math.hypot(W[0] - E[0], W[1] - E[1], W[2] - E[2]), F = [0, 1, 2].map(k => W[k] + (W[k] - E[k]) / fl * 0.22);
+  const seg = [[J, E], [E, W], [W, F]], out = [];
   let s0 = 0;
   for (const [A, C] of seg) {
     const L = Math.hypot(C[0] - A[0], C[1] - A[1], C[2] - A[2]), d = [(C[0] - A[0]) / L, (C[1] - A[1]) / L, (C[2] - A[2]) / L];
