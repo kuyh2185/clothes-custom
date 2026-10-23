@@ -83,11 +83,11 @@ function bodyHalf(P, front) {
   const full = P.sw - P.nw, w = P.strap == null ? full : clamp(P.strap, 0.5, full);
   const r = sstep((full - w) / (full - 1.2));   // 0 full shoulder … 1 a thin strap (camisole)
   const shY = x => -P.ss * (x - P.nw) / full;
-  // the strap moves in toward the neck as it narrows: out on the shoulder's slope it would slide off
-  const c = lerp((P.nw + P.sw) / 2, P.nw + 1.8, r), xi = Math.max(P.nw, c - w / 2), xo = xi + w;
+  // the strap moves in a little as it narrows (a thin one far out on the shoulder's slope would slide off)
+  const c = lerp((P.nw + P.sw) / 2, P.nw + 3.2, r), xi = Math.max(P.nw, c - w / 2), xo = xi + w;
   const I = [xi, shY(xi)], O = [xo, shY(xo)];
-  // a camisole's top edge: straight across the chest from the strap, neck and armhole both drop
-  const nd = lerp(front ? P.ndF : P.ndB, Math.max(front ? P.ndF : P.ndB, front ? P.ad - 7 : P.ad - 9), r);
+  // the neckline keeps its own depth: only its width opens out to the strap (a camisole's low edge is a deep neckline)
+  const nd = front ? P.ndF : P.ndB;
   const neck = bez([0, -nd], [xi * lerp(.55, .8, r), -nd], [xi, I[1] + (-nd - I[1]) * lerp(.45, .92, r)], I);
   if (P.neckV) neck.forEach((q, i) => {   // toward a V: the curve straightens into a line from the point to the shoulder
     const t = i / (neck.length - 1);

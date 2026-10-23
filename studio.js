@@ -12,7 +12,7 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { smoothChest, tuckUnder } from './mannequin.js?v=1';
-import { BASE, BASE_M } from './pattern.js?v=3';
+import { BASE, BASE_M } from './pattern.js?v=4';
 
 const $ = id => document.getElementById(id);
 const PI = Math.PI;
@@ -37,19 +37,23 @@ function load() {
 const base = () => state.body === 'm' ? BASE_M : BASE;
 const shoulderOf = T => base().sw + Math.max(0, T.ease - 3) * .5;   // an oversized top's shoulder drops off the shoulder
 const fullOf = T => shoulderOf(T) - (base().nw + T.dNw);   // the shoulder seam's length: how far a strap can narrow
+// below the slim fit the top is cut smaller than the body from a knit that stretches round it (rib tank, fitted tee):
+// the side seams follow the waist, the hem eases off less (narrower than the hips it rides up), the sleeves hug the arm
+const tightOf = e => clamp(-e - 1.5, 0, 6.5);
 function params() {
-  const b = base(), T = state.top, full = fullOf(T), [l, r] = T.sl;
+  const b = base(), T = state.top, full = fullOf(T), [l, r] = T.sl, t = tightOf(T.ease), e = T.ease;
   return {
     base: state.body, L: r1(T.L), sleeveL: r1(Math.max(0, l)), sleeveR: r1(Math.max(0, r)),
     strap: l < 1.2 && r < 1.2 && Math.min(l, r) < 0 ? r1(clamp(full + Math.min(l, r), .6, full)) : null,
-    cw: r1(b.cw + T.ease), hw: r1(b.hw + T.ease + T.flare), sw: r1(shoulderOf(T)), nw: r1(b.nw + T.dNw),
+    cw: r1(b.cw + T.ease), hw: r1(b.hw + (e > 0 ? e : e * .5) + T.flare), sw: r1(shoulderOf(T)), nw: r1(b.nw + T.dNw),
     ndF: r1(T.ndF), ndB: r1(T.ndB), neckV: r1(T.neckV),
-    bw: r1(b.bw + Math.max(0, T.ease) * .4), cuff: r1(b.cuff + Math.max(0, T.ease) * .3),
+    bw: r1(b.bw + (e > 0 ? e * .4 : e * .3)), cuff: r1(b.cuff + (e > 0 ? e * .3 : e * .2)),
+    waist: r1(t * 1.35), stretch: Math.round(clamp(t / 2, 0, 1) * 100) / 100,
   };
 }
 const LIM = () => {
   const b = base(), full = fullOf(state.top);
-  return { sl: [-(full - .6), b.arm], L: [b.ad + 6, 118], ease: [-1.5, 20], flare: [-4, 22], dNw: [-2, 8], ndF: [3, 30], ndB: [1.5, 26], neckV: [0, 1] };
+  return { sl: [-(full - .6), b.arm], L: [b.ad + 6, 118], ease: [-8, 20], flare: [-4, 22], dNw: [-2, 8], ndF: [3, 30], ndB: [1.5, 26], neckV: [0, 1] };
 };
 function fix(T) {
   const L = LIM();
@@ -66,7 +70,7 @@ function sleeveName(v) {
   return `${n} ${Math.round(v)}cm`;
 }
 const lenName = L => (L < 50 ? '크롭' : L < 70 ? '기본' : L < 86 ? '롱' : '원피스') + ` ${Math.round(L)}cm`;
-const fitName = e => (e < -.5 ? '슬림' : e < 2 ? '기본' : e < 6 ? '여유' : '오버') + ` ${e >= 0 ? '+' : ''}${e.toFixed(1)}cm`;
+const fitName = e => (e < -2.5 ? '밀착' : e < -.5 ? '슬림' : e < 2 ? '기본' : e < 6 ? '여유' : '오버') + ` ${e >= 0 ? '+' : ''}${e.toFixed(1)}cm`;
 
 /* ---------- renderer, stage ---------- */
 const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
@@ -193,7 +197,7 @@ const world = mesh => {   // rest pose = bind pose = world here (the asset's roo
 };
 
 /* ---------- the cloth ---------- */
-const worker = new Worker('cloth.js?v=4', { type: 'module' });
+const worker = new Worker('cloth.js?v=9', { type: 'module' });
 worker.onerror = e => console.error('[cloth]', e.message);
 const fabricU = { uC1: { value: new THREE.Color() }, uC2: { value: new THREE.Color() }, uPat: { value: 0 }, uScale: { value: 1 } };
 const fabric = new THREE.MeshPhysicalMaterial({ roughness: .86, sheen: .6, sheenRoughness: .8, side: THREE.DoubleSide });
@@ -273,7 +277,7 @@ async function showBody(kind) {
 /* ---------- panel ---------- */
 // little drawings for the cards: a flat top with these sleeves / length / ease / neckline
 function topIcon(o) {
-  const T = { ...state.top, ...o }, sl = T.sl[0], e = clamp(T.ease, -1, 9), L = clamp(T.L, 38, 100), fl = Math.max(0, T.flare) * .12;
+  const T = { ...state.top, ...o }, sl = T.sl[0], e = clamp(T.ease, -4, 9), L = clamp(T.L, 38, 100), fl = Math.max(0, T.flare) * .12;
   const cx = 20, nwid = 3.2 + T.dNw * .35, nd = 1.5 + T.ndF * .2, top = 5, shY = 7.5, sh = 8.5 + e * .25, w = 7 + e * .35, armY = 15, hem = 7 + L * .3;
   const half = sgn => {   // one side, neck → hem
     const pts = [[nwid, top]];
@@ -288,14 +292,16 @@ function topIcon(o) {
   d += T.neckV > .5 ? `L${cx} ${top + nd}Z` : `Q${cx} ${top + nd * 1.6} ${R[0][0]} ${R[0][1]}Z`;
   return `<svg viewBox="0 2 40 36" aria-hidden="true"><path d="${d}" fill="${state.top.c1}" stroke="#8d8a83" stroke-width=".8" stroke-linejoin="round"/></svg>`;
 }
+// a rib tank in one go: a 4 cm strap, a scooped neck, cut smaller than the body (each still its own card / bar after)
+const TANK = () => { const s = 4 - (base().sw - base().nw - 1.5); return { sl: [s, s], ease: -5, flare: 0, dNw: 1.5, ndF: 13, ndB: 4, neckV: 0 }; };
 const CARDS = {
   sleeve: () => {
     const a = base().arm / 58, full = fullOf(state.top);
     return [['긴팔', { sl: [base().arm, base().arm] }], ['7부', { sl: [45 * a, 45 * a] }], ['5부', { sl: [33 * a, 33 * a] }], ['반팔', { sl: [20 * a, 20 * a] }],
-      ['캡', { sl: [7, 7] }], ['민소매', { sl: [0, 0] }], ['넓은 끈', { sl: [3 - full, 3 - full] }], ['얇은 끈', { sl: [.8 - full, .8 - full] }]];
+      ['캡', { sl: [7, 7] }], ['민소매', { sl: [0, 0] }], ['넓은 끈', { sl: [3 - full, 3 - full] }], ['얇은 끈', { sl: [.8 - full, .8 - full] }], ['탱크톱', TANK()]];
   },
   len: () => { const k = state.body === 'm' ? 1.1 : 1; return [['크롭', { L: 42 * k }], ['기본', { L: 62 * k }], ['롱', { L: 76 * k }], ['원피스', { L: 96 * k }]]; },
-  fit: () => [['슬림', { ease: -1.2, flare: 0 }], ['기본', { ease: 0, flare: 0 }], ['여유', { ease: 4, flare: 1 }], ['오버', { ease: 9, flare: 2 }]],
+  fit: () => [['밀착', { ease: -5, flare: 0 }], ['슬림', { ease: -1.2, flare: 0 }], ['기본', { ease: 0, flare: 0 }], ['여유', { ease: 4, flare: 1 }], ['오버', { ease: 9, flare: 2 }]],
   neck: () => [['라운드', { dNw: 0, ndF: 10, ndB: 2.6, neckV: 0 }], ['U넥', { dNw: 1.5, ndF: 17, ndB: 3, neckV: 0 }], ['V넥', { dNw: .5, ndF: 15, ndB: 2.6, neckV: 1 }],
     ['깊은 V', { dNw: 1, ndF: 23, ndB: 3, neckV: 1 }], ['보트넥', { dNw: 5, ndF: 4, ndB: 4, neckV: 0 }]],
 };

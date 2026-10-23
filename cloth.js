@@ -4,7 +4,7 @@
 //   in : {t:'init', body:{pos,nrm}, bottom:{pos,nrm}|null, bones:{l:[J,E], r:[J,E]}, hps, z0}
 //        {t:'params', p}      {t:'tick'}   (one frame per tick; answered with {t:'frame'})
 //   out: {t:'topo', ...} when the mesh changes, {t:'frame', pos, nrm, awake, ms}
-import { build } from './pattern.js?v=3';
+import { build, BASE, BASE_M } from './pattern.js?v=4';
 
 const G = -9.8, SUB = 12, DT = 1 / 60, TH = 0.004;
 let sdf = null, ctx = null, cloth = null, pending = null, awake = 0, calm = 0;
@@ -40,13 +40,15 @@ function tick(m0) {
   if (pending && sdf) {
     const p = pending; pending = null;
     cloth = assemble(build(p), cloth);
+    cloth.stretch = p.stretch || 0;
     postTopo();
     awake = 1; calm = 0;
   }
   if (!cloth) { postMessage({ t: 'frame', pos: null }); return; }
   if (awake && !m0) {
-    const vmax = step(cloth);
-    calm = vmax < 0.02 ? calm + 1 : 0;
+    // still = all but a few particles (one caught where the body and the bottom meet can tremble for ever, unseen)
+    const moving = step(cloth);
+    calm = moving <= Math.max(4, cloth.nP * .002) ? calm + 1 : 0;
     if (calm > 20) awake = 0;
   }
   const pos = cloth.p.slice(), nrm = normals(cloth), { cl, cn } = toBody(cloth);
@@ -172,11 +174,18 @@ function assemble(g, old) {
 
   // start positions: where that spot of fabric was (old cloth), else the first placement round the body
   const pos = new Float32Array(nP * 3), cnt = new Float32Array(nP), fresh = new Float32Array(nP * 3), fcnt = new Float32Array(nP);
+  // a big jump in width (a card, not a drag) lays the body out afresh: squeezed into the old places the extra cloth
+  // buckles into a fold at the side seam that friction then holds
+  let jump = 0;
+  if (old) for (let yd = 0; yd <= g.info.P.L; yd += 4) jump = Math.max(jump, Math.abs(halfOf(g.info.P, yd) - halfOf(old.info.P, yd)));
   for (const pc of pieces) {
-    const o = old && old.pieces.find(q => q.name === pc.name);
+    const o = old && !(jump > 2.5 && pc.pc < 2) && old.pieces.find(q => q.name === pc.name);
     const loc = o ? locator(o, old) : null;
-    pc.pts.forEach((p, i) => {
+    pc.pts.forEach((p0, i) => {
       const v = pc.off + i, q = map[v];
+      // a panel made wider or narrower is looked up across the old one in proportion (side seam on side seam);
+      // stepped out past the old side, front and back would cross there and leave a fold the cloth can't undo
+      const p = o && pc.pc < 2 ? [p0[0] * halfOf(old.info.P, -p0[1]) / halfOf(g.info.P, -p0[1]), p0[1]] : p0;
       let w = loc && loc(p[0], p[1]);
       if (!w && loc) {
         const k = loc.nearest(p[0], p[1]);
@@ -186,7 +195,7 @@ function assemble(g, old) {
         }
       }
       if (w) { pos[q * 3] += w[0]; pos[q * 3 + 1] += w[1]; pos[q * 3 + 2] += w[2]; cnt[q]++; }
-      else { const f = place(pc, p, g.info); fresh[q * 3] += f[0]; fresh[q * 3 + 1] += f[1]; fresh[q * 3 + 2] += f[2]; fcnt[q]++; }
+      else { const f = place(pc, p0, g.info); fresh[q * 3] += f[0]; fresh[q * 3 + 1] += f[1]; fresh[q * 3 + 2] += f[2]; fcnt[q]++; }
     });
   }
   for (let q = 0; q < nP; q++) for (let k = 0; k < 3; k++) pos[q * 3 + k] = cnt[q] ? pos[q * 3 + k] / cnt[q] : fresh[q * 3 + k] / fcnt[q];
@@ -230,7 +239,9 @@ function assemble(g, old) {
       if (pi === pj) continue;
       const kk = key(pi, pj);
       const L = Math.hypot(flat[i * 2] - flat[j * 2], flat[i * 2 + 1] - flat[j * 2 + 1]);
-      if (!edges.has(kk)) edges.set(kk, [pi, pj, L, 1]); else { const E = edges.get(kk); E[2] += L; E[3]++; }
+      // how much the edge runs across the grain (round the body / arm): a knit gives that way, hardly at all lengthwise
+      const wx = ((flat[i * 2] - flat[j * 2]) / (L || 1e-9)) ** 2;
+      if (!edges.has(kk)) edges.set(kk, [pi, pj, L, 1, wx]); else { const E = edges.get(kk); E[2] += L; E[3]++; E[4] += wx; }
       // far corner k relative to the edge i→j (canonical direction: lower particle id first)
       const [ia, ib] = pi < pj ? [i, j] : [j, i];
       const ex = flat[ib * 2] - flat[ia * 2], ey = flat[ib * 2 + 1] - flat[ia * 2 + 1], el = Math.hypot(ex, ey) || 1e-9;
@@ -240,9 +251,9 @@ function assemble(g, old) {
       hinge.get(kk).push([pk, s, hgt]);
     }
   }
-  const nE = edges.size, ec = new Int32Array(nE * 2), er = new Float32Array(nE);
+  const nE = edges.size, ec = new Int32Array(nE * 2), er = new Float32Array(nE), ew = new Float32Array(nE);
   let i = 0;
-  for (const [a, b, L, n] of edges.values()) { ec[i * 2] = a; ec[i * 2 + 1] = b; er[i] = L / n; i++; }
+  for (const [a, b, L, n, wx] of edges.values()) { ec[i * 2] = a; ec[i * 2 + 1] = b; er[i] = L / n; ew[i] = wx / n; i++; }
   const bl = [];
   for (const hs of hinge.values()) if (hs.length === 2 && hs[0][0] !== hs[1][0]) bl.push(hs[0][0], hs[1][0], Math.hypot(hs[0][2] + hs[1][2], hs[0][1] - hs[1][1]));
   const nB = bl.length / 3, bc = new Int32Array(nB * 2), br = new Float32Array(nB);
@@ -254,7 +265,7 @@ function assemble(g, old) {
     flip: Object.fromEntries(pieces.map(pc => [pc.name, pc.flip])),
     nV, nP, map, uv, pcA, seamOf, index: new Uint32Array(index), ptri,
     p: pos, v: new Float32Array(nP * 3), q: new Float32Array(nP * 3),
-    ec, er, bc, br, info: g.info,
+    ec, er, ew, bc, br, info: g.info,
   };
 }
 
@@ -311,6 +322,10 @@ function locator(o, old) {
 }
 
 // first placement: panels wrapped round an ellipse about the torso, sleeves as tubes round the upper arms
+// a body panel's half width (cm) at depth yd below the high shoulder point (without the waist shaping)
+function halfOf(P, yd) {
+  return yd <= P.ad ? P.cw : P.cw + (P.hw - P.cw) * Math.min(1, (yd - P.ad) / Math.max(1, P.L - P.ad));
+}
 function place(pc, p, gi) {
   const { hps, z0, bones } = ctx;
   const lift = 0.02;
@@ -318,11 +333,14 @@ function place(pc, p, gi) {
     const front = pc.pc === 0, y = hps + p[1] / 100 + lift, hz = -p[1] / 100;
     // the ellipse's quarter round is the panel's own half width there, so front and back side seams start together
     // at the side (started apart they slide past each other and leave a fold the cloth can't undo)
-    const P = gi.P, yd = -p[1], half = (yd <= P.ad ? P.cw : P.cw + (P.hw - P.cw) * Math.min(1, (yd - P.ad) / Math.max(1, P.L - P.ad))) / 100;
+    const P = gi.P, yd = -p[1];
+    // a fitted knit smaller than the body starts round the regular tee's ellipse, stretched, and draws itself in
+    // (started round its own smaller ellipse it would begin inside the body)
+    const B0 = P.base === 'm' ? BASE_M : BASE, own = halfOf(P, yd) / 100, half = Math.max(own, halfOf({ ...P, cw: B0.cw, hw: B0.hw }, yd) / 100), spread = half / own;
     const ratio = (0.11 + 0.065 * Math.min(1, hz / 0.18)) / (0.205 + 0.045 * Math.min(1, hz / 0.25));
     const Q = Math.PI / 4 * (3 * (1 + ratio) - Math.sqrt((3 + ratio) * (1 + 3 * ratio)));   // Ramanujan, for a = 1
     const a = half / Q, b = a * ratio;
-    const arc = Math.abs(p[0] / 100);
+    const arc = Math.abs(p[0] / 100) * spread;
     let th = 0, acc = 0;
     const d = 0.004;
     while (acc < arc && th < Math.PI) {
@@ -398,12 +416,13 @@ function triN(P, a, b, c) {
 }
 
 /* ---------- one frame: SUB small steps, one constraint pass each ---------- */
-const K = { stretch: 0, squash: 4e-7, bend: 6e-6, damp: 2.5, fric: 0.6 };
+// knit: how far a fully stretchy fabric (stretch 1, a fitted top smaller than the body) gives across the grain
+const K = { stretch: 0, knit: 1.2e-5, squash: 4e-7, bend: 6e-6, damp: 2.5, fric: 0.6 };
 function step(c) {
-  const { p, v, q, ec, er, bc, br, nP } = c, h = DT / SUB;
-  const aS = K.stretch / (h * h), aC = K.squash / (h * h), aB = K.bend / (h * h);
+  const { p, v, q, ec, er, ew, bc, br, nP } = c, h = DT / SUB;
+  const aS = K.stretch / (h * h), aK = K.knit * (c.stretch || 0) / (h * h), aC = K.squash / (h * h), aB = K.bend / (h * h);
   const damp = Math.exp(-K.damp * h);
-  let vmax = 0;
+  let moving = 0;
   for (let s = 0; s < SUB; s++) {
     for (let i = 0; i < nP; i++) {
       const k = i * 3;
@@ -412,9 +431,9 @@ function step(c) {
       q[k] = p[k]; q[k + 1] = p[k + 1]; q[k + 2] = p[k + 2];
       p[k] += v[k] * h; p[k + 1] += v[k + 1] * h; p[k + 2] += v[k + 2] * h;
     }
-    dist(p, ec, er, aS, aC);
+    dist(p, ec, er, aS, aC, ew, aK);
     dist(p, bc, br, aB, aB);
-    dist(p, ec, er, aS, aC);   // a second pass on length: a thin strap carries the whole panel
+    dist(p, ec, er, aS, aC, ew, aK);   // a second pass on length: a thin strap carries the whole panel
     for (let i = 0; i < nP; i++) {
       const k = i * 3, x = p[k], y = p[k + 1], z = p[k + 2], d = sample(x, y, z);
       if (d < TH) {
@@ -431,10 +450,10 @@ function step(c) {
     for (let i = 0; i < nP; i++) {
       const k = i * 3;
       v[k] = (p[k] - q[k]) / h; v[k + 1] = (p[k + 1] - q[k + 1]) / h; v[k + 2] = (p[k + 2] - q[k + 2]) / h;
-      if (s === SUB - 1) vmax = Math.max(vmax, Math.abs(v[k]) + Math.abs(v[k + 1]) + Math.abs(v[k + 2]));
+      if (s === SUB - 1 && Math.abs(v[k]) + Math.abs(v[k + 1]) + Math.abs(v[k + 2]) >= 0.02) moving++;
     }
   }
-  return vmax;
+  return moving;
 }
 // cloth over a bottom bridges every hollow (between the legs, the small of the back): each height's outline becomes
 // its convex hull, so the hem hangs across the gap instead of being drawn into it
@@ -497,13 +516,13 @@ function toBody(c) {
   }
   return { cl, cn };
 }
-function dist(p, C, R, aS, aC) {
+function dist(p, C, R, aS, aC, W, aK) {
   for (let e = 0, n = R.length; e < n; e++) {
     const a = C[e * 2] * 3, b = C[e * 2 + 1] * 3;
     const dx = p[b] - p[a], dy = p[b + 1] - p[a + 1], dz = p[b + 2] - p[a + 2];
     const l = Math.sqrt(dx * dx + dy * dy + dz * dz);
     if (l < 1e-9) continue;
-    const C0 = l - R[e], al = C0 > 0 ? aS : aC;
+    const C0 = l - R[e], al = C0 > 0 ? (W ? aS + aK * W[e] : aS) : aC;
     const lam = -C0 / (2 + al), sx = dx / l * lam * .5, sy = dy / l * lam * .5, sz = dz / l * lam * .5;
     p[a] -= sx; p[a + 1] -= sy; p[a + 2] -= sz;
     p[b] += sx; p[b + 1] += sy; p[b + 2] += sz;
