@@ -12,7 +12,8 @@ const sstep = t => { t = clamp(t, 0, 1); return t * t * (3 - 2 * t); };
 
 // women's regular-fit tee on the 177 cm model (cm). sleeve = length from the top of the cap (0 = none);
 // strap = shoulder width left (only without sleeves; full = sw - nw); arm = the arm's length shoulder → wrist
-// sleeveL / sleeveR: each sleeve's own length (default: sleeve); waist: cm the side seams come in at the waist
+// sleeveL / sleeveR: each sleeve's own length (default: sleeve); waist: cm the side seams come in at the waist;
+// nw: half the neck's width at the shoulder, ndF / ndB: its depth front and back, neckV: 0 round … 1 V
 export const BASE = { nw: 9.6, ndF: 10.0, ndB: 2.6, sw: 19.0, ss: 4.6, ad: 23.5, cw: 25.5, hw: 26.0, L: 65.0,
   bw: 18.0, cuff: 16.8, wrist: 11.5, ease: -0.4, sleeve: 20, strap: null, arm: 58, waist: 0 };
 // men's regular tee on the 188 cm model
@@ -88,6 +89,10 @@ function bodyHalf(P, front) {
   // a camisole's top edge: straight across the chest from the strap, neck and armhole both drop
   const nd = lerp(front ? P.ndF : P.ndB, Math.max(front ? P.ndF : P.ndB, front ? P.ad - 7 : P.ad - 9), r);
   const neck = bez([0, -nd], [xi * lerp(.55, .8, r), -nd], [xi, I[1] + (-nd - I[1]) * lerp(.45, .92, r)], I);
+  if (P.neckV) neck.forEach((q, i) => {   // toward a V: the curve straightens into a line from the point to the shoulder
+    const t = i / (neck.length - 1);
+    q[0] = lerp(q[0], xi * t, P.neckV); q[1] = lerp(q[1], -nd + (I[1] + nd) * t, P.neckV);
+  });
   const shoulder = line(I, O);
   const k = front ? 0.55 : 0.75;
   const ad = P.ad;

@@ -4,7 +4,7 @@
 //   in : {t:'init', body:{pos,nrm}, bottom:{pos,nrm}|null, bones:{l:[J,E], r:[J,E]}, hps, z0}
 //        {t:'params', p}      {t:'tick'}   (one frame per tick; answered with {t:'frame'})
 //   out: {t:'topo', ...} when the mesh changes, {t:'frame', pos, nrm, awake, ms}
-import { build } from './pattern.js?v=2';
+import { build } from './pattern.js?v=3';
 
 const G = -9.8, SUB = 12, DT = 1 / 60, TH = 0.004;
 let sdf = null, ctx = null, cloth = null, pending = null, awake = 0, calm = 0;
@@ -249,6 +249,7 @@ function assemble(g, old) {
   for (let k = 0; k < nB; k++) { bc[k * 2] = bl[k * 3]; bc[k * 2 + 1] = bl[k * 3 + 1]; br[k] = bl[k * 3 + 2]; }
 
   return {
+    marks: marks(pieces),
     pieces: pieces.map(pc => ({ name: pc.name, pc: pc.pc, pts: pc.pts, tris: pc.tris, off: pc.off })),
     flip: Object.fromEntries(pieces.map(pc => [pc.name, pc.flip])),
     nV, nP, map, uv, pcA, seamOf, index: new Uint32Array(index), ptri,
@@ -519,7 +520,21 @@ function normals(c) {
   return n;
 }
 
+// display vertices at the garment's landmarks, for the editor's drag points: sleeve ends (middle of the sleeve hem),
+// shoulder ends (where the shoulder seam meets the armhole), hem middles, the side seams a third of the way down,
+// neckline middles and the neckline's ends at the shoulder. Each [left, right] or [front, back].
+function marks(pieces) {
+  const at = (name, seg, f) => { const pc = pieces.find(p => p.name === name), b = pc && pc.bound[seg]; return b ? pc.off + b[Math.round((b.length - 1) * f)] : -1; };
+  return {
+    sleeve: [at('sleeve_l', 'hem', .5), at('sleeve_r', 'hem', .5)],
+    shoulder: [at('front', 'sh_p', 1), at('front', 'sh_m', 1)],
+    hem: [at('front', 'hem_p', 1), at('back', 'hem_p', 1)],
+    side: [at('front', 'side_p', .35), at('front', 'side_m', .35)],
+    neck: [at('front', 'neck_p', 0), at('back', 'neck_p', 0)],
+    neckSide: [at('front', 'neck_p', 1), at('front', 'neck_m', 1)],
+  };
+}
 function postTopo() {
   const c = cloth;
-  postMessage({ t: 'topo', nV: c.nV, nP: c.nP, map: c.map, uv: c.uv, pc: c.pcA, seam: c.seamOf, index: c.index, info: c.info });
+  postMessage({ t: 'topo', nV: c.nV, nP: c.nP, map: c.map, uv: c.uv, pc: c.pcA, seam: c.seamOf, index: c.index, info: c.info, marks: c.marks });
 }
