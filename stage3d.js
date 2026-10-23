@@ -1281,12 +1281,18 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = uSock;`);
     applyState();
     buildMs = performance.now() - t0;
   }
+  let shiftX = 0;
   function fit() {
     const r = wrap.getBoundingClientRect(), w = Math.max(1, r.width), h = Math.max(1, r.height);
     renderer.setSize(w, h, false);
     composer.setPixelRatio(renderer.getPixelRatio());
     composer.setSize(w, h);
     camera.aspect = w / h;
+    // the side panels float over the canvas: centre the figure in the open part between them
+    const pw = document.querySelector('.wardrobe').getBoundingClientRect(), pr = document.querySelector('.rail').getBoundingClientRect();
+    const over = pw.top < r.bottom && pw.bottom > r.top && pr.top < r.bottom && pr.bottom > r.top;
+    shiftX = over ? ((pw.right - r.left) + (pr.left - r.left)) / 2 - w / 2 : 0;
+    camera.setViewOffset(w, h, -shiftX, 0, w, h);
     camera.updateProjectionMatrix();
     const H = A ? A.H : 1.8, t = Math.tan(camera.fov * PI / 360);
     controls.target.set(0, H * 0.5, 0);
@@ -2092,13 +2098,13 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = uSock;`);
       noGuide = false;
       renderer.setPixelRatio(1); renderer.setSize(w, h, false);
       composer.setPixelRatio(1); composer.setSize(w, h);
-      camera.aspect = w / h; camera.updateProjectionMatrix();
+      camera.aspect = w / h; camera.clearViewOffset();
       draw();
       canvas.toBlob(b => {
         hoverCut = hv;
         renderer.setPixelRatio(pr); renderer.setSize(prev.x, prev.y, false);
         composer.setPixelRatio(pr); composer.setSize(prev.x, prev.y);
-        camera.aspect = pa; camera.updateProjectionMatrix(); dirty = needs = true;
+        camera.aspect = pa; camera.setViewOffset(prev.x, prev.y, -shiftX, 0, prev.x, prev.y); camera.updateProjectionMatrix(); dirty = needs = true;
         if (!b) return cc.say('저장에 실패했어요');
         const a = document.createElement('a');
         a.href = URL.createObjectURL(b); a.download = '고쳐입기.png'; a.click();
