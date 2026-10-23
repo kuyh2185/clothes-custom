@@ -406,11 +406,14 @@ let images = {};
 const blobUrls = {};
 // look of the studio, kept apart from the undo history
 const PREFS = 'clothes-custom:prefs';
-let prefs = { body: 'f', pose: 'relaxed', finish: 'black', backdrop: 'studio', guides: true };   // black: light clothes show up on it
+let prefs = { body: 'f', pose: 'relaxed', finish: 'skin', backdrop: 'stage', guides: true, look: 2 };
 try {
   const s = JSON.parse(localStorage.getItem(STORE) || 'null');
   if (s) { state.top = upgrade(s.top ?? null); state.bottom = upgrade(s.bottom ?? null); images = s.images || {}; }
-  Object.assign(prefs, JSON.parse(localStorage.getItem(PREFS) || '{}'));
+  const sp = JSON.parse(localStorage.getItem(PREFS) || '{}');
+  // look 2 (the lit stage): everyone starts on it once, whatever backdrop they had picked before
+  if (sp.look !== 2) { delete sp.backdrop; delete sp.finish; }
+  Object.assign(prefs, sp, { look: 2 });
 } catch (e) { /* storage unavailable: start fresh */ }
 const savePrefs = () => { try { localStorage.setItem(PREFS, JSON.stringify(prefs)); } catch (e) { /* ignore */ } };
 useBody(prefs.body);
@@ -430,14 +433,15 @@ const L = id => document.getElementById('L-' + id);
 const OUTLINE = 'rgba(20,18,16,.36)';
 /* Display-mannequin finishes (matte FRP) and seamless-paper backdrops. Light comes from the upper left everywhere. */
 const FINISH = {
+  skin: { name: '피부', base: '#d9b6a1', rim: '#4a2e22', k: .3, hi: .4, line: '#a07e6c' },
   white: { name: '화이트', base: '#edeae5', rim: '#4a4239', k: .3, hi: .55, line: '#a29b90' },
   stone: { name: '스톤', base: '#c8c0b4', rim: '#3a3229', k: .34, hi: .34, line: '#8a8174' },
   black: { name: '블랙', base: '#2f2e2c', rim: '#000', k: .5, hi: .13, line: '#121211' },
 };
 const BACKDROP = {
+  stage: { name: '무대', c0: '#22305a', c1: '#05070d', floor: '#0a0f1e' },
   studio: { name: '스튜디오', c0: '#ece8e2', c1: '#b9b3aa', floor: '#9c968c' },
   grey: { name: '그레이', c0: '#bebbb5', c1: '#83807a', floor: '#6c6964' },
-  dark: { name: '다크', c0: '#43423f', c1: '#1c1c1b', floor: '#0e0e0d' },
 };
 const blur = (id, s) => `<filter id="${id}" filterUnits="userSpaceOnUse" x="-100" y="-100" width="600" height="1000"><feGaussianBlur stdDeviation="${s}"/></filter>`;
 const dropF = (id, s, dx, dy, a) => `<filter id="${id}" filterUnits="userSpaceOnUse" x="-100" y="-100" width="600" height="1000"><feGaussianBlur in="SourceAlpha" stdDeviation="${s}"/><feOffset dx="${dx}" dy="${dy}"/><feComponentTransfer><feFuncA type="linear" slope="${a}"/></feComponentTransfer><feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge></filter>`;
@@ -472,6 +476,8 @@ function drawBackdrop() {
     `<linearGradient id="floor" gradientUnits="userSpaceOnUse" x1="0" y1="660" x2="0" y2="800"><stop offset="0" stop-color="${B.floor}" stop-opacity="0"/><stop offset="1" stop-color="${B.floor}" stop-opacity=".55"/></linearGradient>` +
     `<rect x="-800" y="-600" width="2000" height="2000" fill="url(#bd)"/><rect x="-800" y="660" width="2000" height="800" fill="url(#floor)"/>`;
   $('.stage-wrap').style.background = B.c1;
+  $('.stage-wrap').classList.toggle('lit', prefs.backdrop === 'stage');
+  if (window.__s3) window.__s3.update();
 }
 
 // mannequin, rebuilt from the body tables whenever the body or finish changes

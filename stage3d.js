@@ -13,6 +13,10 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 
 const cc = window.__cc;
 const PI = Math.PI, TAU = PI * 2;
@@ -91,7 +95,8 @@ function start() {
   controls.maxPolarAngle = PI * 0.56;
   camera.position.set(0, 1.0, 5);
 
-  scene.add(new THREE.HemisphereLight(0xffffff, 0x8d847a, 0.55));
+  const hemi = new THREE.HemisphereLight(0xffffff, 0x8d847a, 0.55);
+  scene.add(hemi);
   const key = new THREE.DirectionalLight(0xfff6ee, 2.3);
   key.position.set(-2.4, 4.6, 3.6);
   key.castShadow = true;
@@ -106,8 +111,34 @@ function start() {
   fill.position.set(3, 2.2, 3);
   const rim = new THREE.DirectionalLight(0xffffff, 1.0);
   rim.position.set(1, 3.4, -3.6);
-  scene.add(fill, rim);
-  const BACK = { studio: '#e4e1dc', grey: '#a9a6a0', dark: '#373634' };
+  const rim2 = new THREE.DirectionalLight(0xffffff, 0);   // second, warm back light: only on the stage
+  rim2.position.set(2.4, 2.8, -3.0);
+  scene.add(fill, rim, rim2);
+  const BACK = { studio: '#e4e1dc', grey: '#a9a6a0', stage: '#0b1122' };
+  // light set per backdrop: the paper studio is even product light; the stage is a dark set lit from above,
+  // with a cool and a warm light behind so the figure's outline glows (character-select style)
+  const LIGHTS = {
+    paper: { hemi: [0xffffff, 0x8d847a, .55], key: [0xfff6ee, 2.3, -2.4, 4.6, 3.6], fill: [0xf1f3ff, .7], rim: [0xffffff, 1, 1, 3.4, -3.6], rim2: 0, env: .45 },
+    stage: { hemi: [0xaebfff, 0x0a0d18, .22], key: [0xfff1e4, 2.7, -.9, 5.2, 2.8], fill: [0xb8c6ff, .3], rim: [0x86a8ff, 4.6, -2.3, 2.6, -3.2], rim2: 3.4, env: .28 },
+  };
+  function setLights(id) {
+    const L = LIGHTS[id];
+    hemi.color.set(L.hemi[0]); hemi.groundColor.set(L.hemi[1]); hemi.intensity = L.hemi[2];
+    key.color.set(L.key[0]); key.intensity = L.key[1]; key.position.set(L.key[2], L.key[3], L.key[4]);
+    fill.color.set(L.fill[0]); fill.intensity = L.fill[1];
+    rim.color.set(L.rim[0]); rim.intensity = L.rim[1]; rim.position.set(L.rim[2], L.rim[3], L.rim[4]);
+    rim2.color.set(0xffc49a); rim2.intensity = L.rim2;
+    scene.environmentIntensity = L.env;
+  }
+  // stage backdrop: a deep blue glow behind the figure fading to near black at the edges
+  const stageSky = (() => {
+    const c = document.createElement('canvas'); c.width = c.height = 512;
+    const x = c.getContext('2d'), g = x.createRadialGradient(256, 230, 10, 256, 256, 400);
+    g.addColorStop(0, '#22305a'); g.addColorStop(.45, '#0e1630'); g.addColorStop(1, '#03050b');
+    x.fillStyle = g; x.fillRect(0, 0, 512, 512);
+    const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
+    return t;
+  })();
   const floorMat = new THREE.MeshStandardMaterial({ color: BACK.studio, roughness: 1 });
   const floor = new THREE.Mesh(new THREE.CircleGeometry(30, 96), floorMat);
   floor.rotation.x = -PI / 2;
@@ -119,6 +150,32 @@ function start() {
   plate.position.y = -0.0125;
   plate.receiveShadow = true;
   scene.add(plate);
+  // stage only: the pool of light on the floor and a glowing ring round the plate (the ring is what blooms)
+  const pool = new THREE.Mesh(new THREE.CircleGeometry(2.4, 96), new THREE.MeshBasicMaterial({
+    map: (() => {
+      const c = document.createElement('canvas'); c.width = c.height = 256;
+      const x = c.getContext('2d'), g = x.createRadialGradient(128, 128, 0, 128, 128, 128);
+      g.addColorStop(0, 'rgba(205,220,255,.55)'); g.addColorStop(.18, 'rgba(150,175,255,.3)'); g.addColorStop(.5, 'rgba(70,95,190,.1)'); g.addColorStop(1, 'rgba(40,60,140,0)');
+      x.fillStyle = g; x.fillRect(0, 0, 256, 256);
+      const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
+      return t;
+    })(),
+    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+  }));
+  pool.rotation.x = -PI / 2;
+  pool.position.y = -0.024;
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.318, 0.0035, 8, 160), new THREE.MeshBasicMaterial({ color: new THREE.Color('#bcd0ff').multiplyScalar(5) }));
+  ring.rotation.x = -PI / 2;
+  ring.position.y = -0.004;
+  scene.add(pool, ring);
+
+  /* ---------- post: bloom on the stage's lights only (threshold well above any lit fabric, so garment colours stay true) ---------- */
+  const composer = new EffectComposer(renderer, new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples: 4 }));
+  composer.addPass(new RenderPass(scene, camera));
+  const bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), .55, .5, 2.4);
+  composer.addPass(bloom);
+  composer.addPass(new OutputPass());
+  const draw = () => composer.render();
 
   /* ---------- assets ---------- */
   const draco = new DRACOLoader().setDecoderPath('https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/libs/draco/gltf/');
@@ -275,6 +332,7 @@ function start() {
 
   /* ---------- materials ---------- */
   const FIN = {
+    skin: { color: '#d4ad97', roughness: .5, clearcoat: .05, sheen: .5 },
     white: { color: '#e9e6e0', roughness: .55, clearcoat: .08 },
     stone: { color: '#b3aa9c', roughness: .7, clearcoat: 0 },
     black: { color: '#121213', roughness: .45, clearcoat: .25 },
@@ -1061,6 +1119,8 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = uSock;`);
     M.body.material.userData.U.uWear2.value.set(topMesh === 'shirt' ? 1 : 0, topMesh === 'hoodie' ? 1 : 0);
     const f = FIN[pr.finish] || FIN.white;
     M.body.material.color.set(f.color); M.body.material.roughness = f.roughness; M.body.material.clearcoat = f.clearcoat;
+    // skin: a soft warm sheen stands in for light scattering under the skin
+    M.body.material.sheen = f.sheen || 0; M.body.material.sheenColor.set('#ffc9b0'); M.body.material.sheenRoughness = .6;
     if (M.shoes) M.shoes.material.userData.uSock.value.set(f.color);
     const morph = (mesh, w) => { const d = mesh.morphTargetDictionary, inf = mesh.morphTargetInfluences; if (d && inf) for (const n in d) inf[d[n]] = w[n] || 0; };
     const common = (U, g, id) => {
@@ -1202,11 +1262,14 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = uSock;`);
     const t0 = performance.now(), pr = cc.prefs;
     if (pr.backdrop !== backKey) {
       backKey = pr.backdrop;
-      const col = BACK[backKey] || BACK.studio;
-      floorMat.color.set(col);
-      scene.background = new THREE.Color(col);
-      scene.fog = new THREE.Fog(col, 8, 22);
-      wrap.style.background = col;
+      const lit = backKey === 'stage', col = BACK[backKey] || BACK.studio;
+      floorMat.color.set(lit ? '#0d1428' : col);
+      scene.background = lit ? stageSky : new THREE.Color(col);
+      scene.fog = new THREE.Fog(lit ? '#060a16' : col, lit ? 5 : 8, lit ? 14 : 22);
+      wrap.style.background = lit ? '#03050b' : col;
+      pool.visible = ring.visible = bloom.enabled = lit;
+      floor.visible = !lit;   // no horizon on the stage: the backdrop glow runs straight down into the pool of light
+      setLights(lit ? 'stage' : 'paper');
     }
     const kind = pr.body === 'm' ? 'm' : 'f';
     if (!ASSETS[kind]) {
@@ -1221,6 +1284,8 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = uSock;`);
   function fit() {
     const r = wrap.getBoundingClientRect(), w = Math.max(1, r.width), h = Math.max(1, r.height);
     renderer.setSize(w, h, false);
+    composer.setPixelRatio(renderer.getPixelRatio());
+    composer.setSize(w, h);
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
     const H = A ? A.H : 1.8, t = Math.tan(camera.fov * PI / 360);
@@ -1231,7 +1296,7 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = uSock;`);
     if (dir.length() < .5) dir.set(0, 0, 1);
     dir.normalize();
     camera.position.copy(controls.target).addScaledVector(dir, d);
-    camera.position.y = H * 0.55;
+    camera.position.y = H * 0.46;   // a touch below the waist, looking up a little: a fashion-shoot angle
     controls.minDistance = d * 0.35;
     controls.maxDistance = d * 1.4;
     controls.update();
@@ -1257,7 +1322,7 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = uSock;`);
   (function frame() {
     requestAnimationFrame(frame);
     if (dirty) { dirty = false; rebuild(); needs = true; }
-    if (controls.update() || needs) { needs = false; updateHands(); renderer.render(scene, camera); placeHandles(); placeGSel(); }
+    if (controls.update() || needs) { needs = false; updateHands(); draw(); placeHandles(); placeGSel(); }
   })();
   controls.addEventListener('change', () => { needs = true; });
 
@@ -2026,11 +2091,13 @@ if (vH > ${(top * 0.72).toFixed(4)}) diffuseColor.rgb = uSock;`);
       if (A) applyState();
       noGuide = false;
       renderer.setPixelRatio(1); renderer.setSize(w, h, false);
+      composer.setPixelRatio(1); composer.setSize(w, h);
       camera.aspect = w / h; camera.updateProjectionMatrix();
-      renderer.render(scene, camera);
+      draw();
       canvas.toBlob(b => {
         hoverCut = hv;
         renderer.setPixelRatio(pr); renderer.setSize(prev.x, prev.y, false);
+        composer.setPixelRatio(pr); composer.setSize(prev.x, prev.y);
         camera.aspect = pa; camera.updateProjectionMatrix(); dirty = needs = true;
         if (!b) return cc.say('저장에 실패했어요');
         const a = document.createElement('a');
