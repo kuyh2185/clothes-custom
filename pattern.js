@@ -99,9 +99,9 @@ function bodyHalf(P, front) {
   const k = front ? 0.55 : 0.75;
   const ad = P.ad;
   const arm = bez(O, [O[0] - lerp(.8, 0, r), O[1] + (-ad - O[1]) * lerp(.45, .8, r)],
-    [lerp(P.cw - (P.cw - P.sw + 2.2) * (1 - k) - 1.2, O[0] + (P.cw - O[0]) * .35, r), -ad + lerp(.3, .1, r)], [P.cw, -ad]);
+    [lerp(P.cw - (P.cw - P.sw + 2.2) * (1 - k) - 3.5, O[0] + (P.cw - O[0]) * .35, r), -ad], [P.cw, -ad]);
   const L = Math.max(P.L, ad + 6), dl = L - ad;
-  const side = bez([P.cw, -ad], [P.cw + .2, -ad - dl * .29], [P.hw - .3, -L + dl * .33], [P.hw, -L]);
+  const side = bez([P.cw, -ad], [P.cw, -ad - dl * .29], [P.hw - .3, -L + dl * .33], [P.hw, -L]);
   if (P.waist) {   // taken in round the waist (17 cm under the arm), easing out above and below
     const yw = -(ad + 17);
     for (const q of side) q[0] -= P.waist * Math.exp(-(((q[1] - yw) / 7.5) ** 2));
@@ -113,23 +113,34 @@ function bodyHalf(P, front) {
 }
 
 // set-in sleeve, x < 0 the front half. Cap height solved so the cap's two halves match their armholes.
-function sleeveOutline(P, frontLen, backLen) {
-  const bw = P.bw;
+function sleeveOutline(P, frontLen, backLen, chMax) {
+  let bw = P.bw;
   const cap = (ch, s) => {
     const dip = s < 0 ? 0.55 : 0.4;
-    return bez([0, 0], [s * bw * .42, 0], [s * bw * (1 - dip * .45), -ch * .78], [s * bw, -ch]);
+    return bez([0, 0], [s * bw * .42, 0], [s * bw * (1 - dip * .6), -ch], [s * bw, -ch]);
   };
   let ch = 10;
   for (let i = 0; i < 60; i++) {
     const err = (frontLen + backLen + 2 * P.ease) - (plen(cap(ch, -1)) + plen(cap(ch, 1)));
     ch = Math.max(4, ch + err * .5);
   }
+  // a deep, dropped armhole (a wide body) would want a cap nearly as tall as a short sleeve, which then stands off the
+  // arm and rolls up: as on a real oversized tee the cap stays low and the sleeve gets wider instead
+  if (ch > chMax) {
+    ch = chMax;
+    for (let i = 0; i < 60; i++) {
+      const err = (frontLen + backLen + 2 * P.ease) - (plen(cap(ch, -1)) + plen(cap(ch, 1)));
+      bw = Math.max(P.bw, bw + err * .25);
+    }
+  }
+  // a sleeve widened for its cap is as much wider at the short sleeve's hem (else it narrows sharply under the arm)
+  const cuff = P.cuff + (bw - P.bw);
   // half width down a sleeve of length u: bicep at the underarm, the tee's cuff at 20 cm, a wrist at the arm's length,
   // then past the wrist out round the hand (a sleeve that narrows on would start inside the hand and pass through it).
   // Once the sleeve runs on over the hand its narrowest part draws back up the arm, clear of the thumb's root.
   const knotsOf = u => {
     const w = P.arm - clamp(u - P.arm, 0, 6);
-    return [[ch, bw], [20, P.cuff], [w, P.wrist], [w + 6, Math.max(P.wrist, P.hand)]];
+    return [[ch, bw], [Math.max(20, ch + 10), cuff], [w, P.wrist], [w + 6, Math.max(P.wrist, P.hand)]];
   };
   const halfW = (y, u) => {
     const knots = knotsOf(u);
@@ -137,7 +148,7 @@ function sleeveOutline(P, frontLen, backLen) {
     for (let i = 1; i < knots.length; i++) if (y <= knots[i][0]) return lerp(knots[i - 1][1], knots[i][1], (y - knots[i - 1][0]) / (knots[i][0] - knots[i - 1][0]));
     return knots[knots.length - 1][1];
   };
-  return { capf: cap(ch, -1), capb: cap(ch, 1), ch, halfW, knotsOf };
+  return { capf: cap(ch, -1), capb: cap(ch, 1), ch, bw, halfW, knotsOf };
 }
 
 /* ---------- flat mesh of a piece ---------- */
@@ -209,7 +220,8 @@ export function build(params) {
   if (has.l || has.r) P.strap = null;   // a strap only once both sleeves are gone
   const F = bodyHalf(P, true), B = bodyHalf(P, false);
   const fl = plen(F.arm), bl = plen(B.arm);
-  const sl = sleeveOutline(P, fl, bl);
+  // the cap no taller than about half the regular armhole's depth
+  const sl = sleeveOutline(P, fl, bl, (params.base === 'm' ? BASE_M : BASE).ad * .5 + 1);
   // per side: how much of each armhole is sewn to the sleeve (arc fraction from the shoulder), cap cut or not
   const n = { neckF: nseg(F.neck), neckB: nseg(B.neck), sh: Math.max(1, Math.round(plen(F.shoulder) / S)), side: nseg(F.side),
     hem: nseg(F.hem), armF: nseg(F.arm), armB: nseg(B.arm) };
@@ -268,7 +280,7 @@ export function build(params) {
     seams.push([2, ['front', 'armS_' + half], [name, 'capf']], [2, ['back', 'armS_' + half], [name, 'capb']]);
     if (!d.capCut) seams.push([4, [name, 'und_b'], [name, 'und_f']]);
   }
-  const sleeve = { ch: sl.ch, bw: P.bw, u: Math.max(uS.l, uS.r), uL: uS.l, uR: uS.r, knotsL: sl.knotsOf(uS.l), knotsR: sl.knotsOf(uS.r) };
+  const sleeve = { ch: sl.ch, bw: sl.bw, u: Math.max(uS.l, uS.r), uL: uS.l, uR: uS.r, knotsL: sl.knotsOf(uS.l), knotsR: sl.knotsOf(uS.r) };
   // where the hem and the shoulder sit (cm below the high shoulder point), for the site's edit points
   return { pieces, seams, info: { P, sleeve, full, has, hemL: P.L + .5 } };
 }

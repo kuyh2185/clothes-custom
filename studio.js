@@ -12,7 +12,7 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { smoothChest, tuckUnder } from './mannequin.js?v=1';
-import { BASE, BASE_M } from './pattern.js?v=11';
+import { BASE, BASE_M } from './pattern.js?v=12';
 
 const $ = id => document.getElementById(id);
 const PI = Math.PI;
@@ -37,6 +37,9 @@ function load() {
 const base = () => state.body === 'm' ? BASE_M : BASE;
 const shoulderOf = T => base().sw + Math.max(0, T.ease - 3) * .5;   // an oversized top's shoulder drops off the shoulder
 const fullOf = T => shoulderOf(T) - (base().nw + T.dNw);   // the shoulder seam's length: how far a strap can narrow
+// a wider body puts the underarm further out along the sloping arm: the armhole drops with it, or the underarm would
+// sit inside the arm and the cloth twist over or under it
+const adOf = T => base().ad + Math.max(0, T.ease - 2) * .85;
 // below the slim fit the top is cut smaller than the body from a knit that stretches round it (rib tank, fitted tee):
 // the side seams follow the waist, the hem eases off less (narrower than the hips it rides up), the sleeves hug the arm
 const tightOf = e => clamp(-e - 1.5, 0, 6.5);
@@ -46,6 +49,7 @@ function params() {
     base: state.body, L: r1(T.L), sleeveL: r1(Math.max(0, l)), sleeveR: r1(Math.max(0, r)),
     strap: l < 1.2 && r < 1.2 && Math.min(l, r) < 0 ? r1(clamp(full + Math.min(l, r), .6, full)) : null,
     cw: r1(b.cw + T.ease), hw: r1(b.hw + (e > 0 ? e : e * .5) + T.flare), sw: r1(shoulderOf(T)), nw: r1(b.nw + T.dNw),
+    ad: r1(adOf(T)),
     ndF: r1(T.ndF), ndB: r1(T.ndB), neckV: r1(T.neckV),
     bw: r1(b.bw + (e > 0 ? e * .4 : e * .3)), cuff: r1(b.cuff + (e > 0 ? e * .3 : e * .2)),
     waist: r1(t * 1.35), stretch: Math.round(clamp(t / 2, 0, 1) * 100) / 100,
@@ -53,7 +57,7 @@ function params() {
 }
 const LIM = () => {
   const b = base(), full = fullOf(state.top);
-  return { sl: [-(full - .6), b.arm + b.over], L: [b.ad + 6, 118], ease: [-8, 20], flare: [-4, 22], dNw: [-2, 8], ndF: [3, 30], ndB: [1.5, 26], neckV: [0, 1] };
+  return { sl: [-(full - .6), b.arm + b.over], L: [adOf(state.top) + 6, 118], ease: [-8, 20], flare: [-4, 22], dNw: [-2, 8], ndF: [3, 30], ndB: [1.5, 26], neckV: [0, 1] };
 };
 function fix(T) {
   const L = LIM();
@@ -197,7 +201,7 @@ const world = mesh => {   // rest pose = bind pose = world here (the asset's roo
 };
 
 /* ---------- the cloth ---------- */
-const worker = new Worker('cloth.js?v=24', { type: 'module' });
+const worker = new Worker('cloth.js?v=26', { type: 'module' });
 worker.onerror = e => console.error('[cloth]', e.message);
 const fabricU = { uC1: { value: new THREE.Color() }, uC2: { value: new THREE.Color() }, uPat: { value: 0 }, uScale: { value: 1 } };
 const fabric = new THREE.MeshPhysicalMaterial({ roughness: .86, sheen: .6, sheenRoughness: .8, side: THREE.DoubleSide });

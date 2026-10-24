@@ -4,7 +4,7 @@
 //   in : {t:'init', body:{pos,nrm}, bottom:{pos,nrm}|null, bones:{l:[J,E], r:[J,E]}, hps, z0}
 //        {t:'params', p}      {t:'tick'}   (one frame per tick; answered with {t:'frame'})
 //   out: {t:'topo', ...} when the mesh changes, {t:'frame', pos, nrm, awake, ms}
-import { build, BASE, BASE_M } from './pattern.js?v=11';
+import { build, BASE, BASE_M } from './pattern.js?v=12';
 
 const G = -9.8, SUB = 12, DT = 1 / 60, TH = 0.004;
 let sdf = null, ctx = null, cloth = null, pending = null, awake = 0, calm = 0;
@@ -443,8 +443,12 @@ function place(pc, p, gi) {
   let hw = kn[kn.length - 1][1];
   if (y <= kn[0][0]) hw = kn[0][1];
   else for (let i = 1; i < kn.length; i++) if (y <= kn[i][0]) { hw = kn[i - 1][1] + (kn[i][1] - kn[i - 1][1]) * (y - kn[i - 1][0]) / (kn[i][0] - kn[i - 1][0]); break; }
-  // the arm's own centre line, from the shoulder joint on down
-  const along = 0.015 + y / 100;
+  // the arm's own centre line, from the shoulder joint on down: the cap runs from where the shoulder seam ends to where
+  // the body's underarm sits (far down the arm for a wide, dropped armhole), then the sleeve on at its own length, back
+  // onto its usual place by the wrist (past it the sleeve is laid round the hand)
+  const [aO, aU] = capAlong(pc.pc === 2 ? 1 : -1, gi, axis), ch = gi.sleeve ? gi.sleeve.ch : 10, yw = kn[2][0];
+  const along = y <= ch ? aO + (aU - aO) * y / ch
+    : y < yw ? aU + (y - ch) / 100 - (aU - 0.015 - ch / 100) * (y - ch) / Math.max(1, yw - ch) : 0.015 + y / 100;
   let k = 1;
   while (k < axis.length - 1 && axis[k].s < along) k++;
   const A0 = axis[k - 1], A1 = axis[k], tt = (along - A0.s) / Math.max(1e-6, A1.s - A0.s);
@@ -499,6 +503,28 @@ function place(pc, p, gi) {
     }
   }
   return [c[0] + ox * r, c[1] + oy * r + lift, c[2] + oz * r];
+}
+
+// how far down the arm's centre line (m from the shoulder joint) the body's shoulder seam ends and its underarm sits, as
+// first placed: a sleeve's cap is laid between the two. sg: +1 the left side (+x)
+function capAlong(sg, gi, axis) {
+  const key = sg > 0 ? 'capL' : 'capR';
+  if (gi[key]) return gi[key];
+  const P = gi.P, body = { pc: 0 };
+  const onAxis = w => {   // nearest point of the centre line → its distance along
+    let best = 1e9, s = 0;
+    for (let i = 1; i < axis.length; i++) {
+      const A = axis[i - 1].c, B = axis[i].c, d = [B[0] - A[0], B[1] - A[1], B[2] - A[2]], dd = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
+      const t = Math.max(0, Math.min(1, ((w[0] - A[0]) * d[0] + (w[1] - A[1]) * d[1] + (w[2] - A[2]) * d[2]) / dd));
+      const e = Math.hypot(A[0] + d[0] * t - w[0], A[1] + d[1] * t - w[1], A[2] + d[2] * t - w[2]);
+      if (e < best) { best = e; s = axis[i - 1].s + (axis[i].s - axis[i - 1].s) * t; }
+    }
+    return s;
+  };
+  const ch = gi.sleeve ? gi.sleeve.ch : 10;
+  const aO = Math.max(0.015, onAxis(place(body, [sg * P.sw, -P.ss], gi)));
+  const aU = Math.max(aO + ch / 100 * .5, onAxis(place(body, [sg * P.cw, -P.ad], gi)));
+  return (gi[key] = [aO, aU]);
 }
 
 // centre line of an arm: slices across the shoulder→elbow→wrist bones, each the middle of the arm's surface there, and
