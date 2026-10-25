@@ -126,16 +126,28 @@ function bodyHalf(P, front) {
 }
 
 // set-in sleeve, x < 0 the front half. Cap height solved so the cap's two halves match their armholes.
+// fitted (P.fit.arm[y] = the arm's half round y cm down the sleeve): the sleeve is cut to the arm, P.fit.w of the way
 function sleeveOutline(P, frontLen, backLen, chMax) {
+  const fa = P.fit && P.fit.arm, fw = fa ? P.fit.w : 0;
+  const armAt = y => { const i = clamp(y, 0, fa.length - 1.001), j = Math.floor(i); return lerp(fa[j], fa[j + 1], i - j); };
   let bw = P.bw;
   const cap = (ch, s) => {
     const dip = s < 0 ? 0.55 : 0.4;
     return bez([0, 0], [s * bw * .42, 0], [s * bw * (1 - dip * .6), -ch], [s * bw, -ch]);
   };
   let ch = 10;
-  for (let i = 0; i < 60; i++) {
-    const err = (frontLen + backLen + 2 * P.ease) - (plen(cap(ch, -1)) + plen(cap(ch, 1)));
-    ch = Math.max(4, ch + err * .5);
+  const solve = () => {
+    for (let i = 0; i < 60; i++) {
+      const err = (frontLen + backLen + 2 * P.ease) - (plen(cap(ch, -1)) + plen(cap(ch, 1)));
+      ch = Math.max(4, ch + err * .5);
+    }
+  };
+  solve();
+  // a fitted sleeve: as narrow as the arm round the underarm (the arm a little below the shoulder, at 0.6 of the
+  // armhole's depth: nearer the shoulder its slices take in the deltoid), its cap as much taller (a set-in sleeve's)
+  if (fw > 0) {
+    bw = lerp(P.bw, Math.min(P.bw, armAt(P.ad * .6)), fw); solve();
+    chMax = lerp(chMax, Math.max(chMax, ch), fw);
   }
   // a deep, dropped armhole (a wide body) would want a cap nearly as tall as a short sleeve, which then stands off the
   // arm and rolls up: as on a real oversized tee the cap stays low and the sleeve gets wider instead
@@ -151,9 +163,17 @@ function sleeveOutline(P, frontLen, backLen, chMax) {
   // half width down a sleeve of length u: bicep at the underarm, the tee's cuff at 20 cm, a wrist at the arm's length,
   // then past the wrist out round the hand (a sleeve that narrows on would start inside the hand and pass through it).
   // Once the sleeve runs on over the hand its narrowest part draws back up the arm, clear of the thumb's root.
+  // Fitted, the knots run down the arm every 3 cm to the wrist (the hand's part is the tee's: it has to go over the hand)
   const knotsOf = u => {
     const w = P.arm - clamp(u - P.arm, 0, 6);
-    return [[ch, bw], [Math.max(20, ch + 10), cuff], [w, P.wrist], [w + 6, Math.max(P.wrist, P.hand)]];
+    const tee = [[ch, bw], [Math.max(20, ch + 10), cuff], [w, P.wrist], [w + 6, Math.max(P.wrist, P.hand)]];
+    if (!fw) return tee;
+    const at = y => { for (let i = 1; i < 3; i++) if (y <= tee[i][0]) return lerp(tee[i - 1][1], tee[i][1], (y - tee[i - 1][0]) / (tee[i][0] - tee[i - 1][0])); return tee[2][1]; };
+    const out = [[ch, bw]];
+    // (no wider than the underarm down the upper arm, where the slices still take in some of the shoulder)
+    for (let y = ch + 3; y < w - 1.5; y += 3) out.push([y, Math.min(y < 25 ? bw : 99, lerp(at(y), Math.min(at(y), armAt(y)), fw))]);
+    out.push([w, lerp(P.wrist, Math.min(P.wrist, armAt(w)), fw)], tee[3]);
+    return out;
   };
   const halfW = (y, u) => {
     const knots = knotsOf(u);

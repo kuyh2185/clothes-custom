@@ -4,7 +4,7 @@
 //   in : {t:'init', body:{pos,nrm}, bottom:{pos,nrm}|null, bones:{l:[J,E], r:[J,E]}, hps, z0}
 //        {t:'params', p}      {t:'tick'}   (one frame per tick; answered with {t:'frame'})
 //   out: {t:'topo', ...} when the mesh changes, {t:'frame', pos, nrm, awake, ms}
-import { build, fitSide, BASE, BASE_M } from './pattern.js?v=14';
+import { build, fitSide, BASE, BASE_M } from './pattern.js?v=15';
 
 const G = -9.8, SUB = 12, DT = 1 / 60, TH = 0.004;
 let sdf = null, ctx = null, cloth = null, pending = null, awake = 0, calm = 0, snap = null, frames = 0, still = 0;
@@ -281,7 +281,7 @@ function assemble(g, old) {
       const p = o && pc.pc < 2 ? [p0[0] * halfOf(old.info.P, -p0[1]) / halfOf(g.info.P, -p0[1]), p0[1]] : p0;
       // sleeve past the wrist is laid round the hand afresh each time: carried on from the old cloth (an end hanging
       // below the hand, or caught on the thumb) the hand would come out through the sleeve
-      const hand = pc.pc >= 2 && -p0[1] > g.info.sleeve[pc.pc === 2 ? 'knotsL' : 'knotsR'][2][0];
+      const hand = pc.pc >= 2 && -p0[1] > g.info.sleeve[pc.pc === 2 ? 'knotsL' : 'knotsR'].at(-2)[0];
       let w = !hand && loc && loc(p[0], p[1]);
       if (!w && loc && !hand) {
         const k = loc.nearest(p[0], p[1]);
@@ -457,7 +457,7 @@ function place(pc, p, gi) {
   // the arm's own centre line, from the shoulder joint on down: the cap runs from where the shoulder seam ends to where
   // the body's underarm sits (far down the arm for a wide, dropped armhole), then the sleeve on at its own length, back
   // onto its usual place by the wrist (past it the sleeve is laid round the hand)
-  const [aO, aU] = capAlong(pc.pc === 2 ? 1 : -1, gi, axis), ch = gi.sleeve ? gi.sleeve.ch : 10, yw = kn[2][0];
+  const [aO, aU] = capAlong(pc.pc === 2 ? 1 : -1, gi, axis), ch = gi.sleeve ? gi.sleeve.ch : 10, yw = kn[kn.length - 2][0];
   const along = y <= ch ? aO + (aU - aO) * y / ch
     : y < yw ? aU + (y - ch) / 100 - (aU - 0.015 - ch / 100) * (y - ch) / Math.max(1, yw - ch) : 0.015 + y / 100;
   let k = 1;

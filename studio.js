@@ -12,7 +12,7 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { smoothChest, tuckUnder } from './mannequin.js?v=1';
-import { BASE, BASE_M } from './pattern.js?v=14';
+import { BASE, BASE_M } from './pattern.js?v=15';
 
 const $ = id => document.getElementById(id);
 const PI = Math.PI;
@@ -70,7 +70,12 @@ function params() {
       const v = qm(y) + off * (1 - low);
       q.push(r1(lerp(v, Math.max(v, qm(y)) + band, hem)));
     }
-    fit = { w: Math.round(w * 100) / 100, y0, q };
+    // the sleeve: half the arm's round (a sleeve's cm sit about as far down the bones), a little under it on the upper
+    // arm like the body, a little over it past the elbow (pulled tight round the bony wrist, the skin came through)
+    const ar = m.arm, last = ar.findLastIndex(v => v > 0), arm = [], [J, E] = A.bones.l;
+    const elbow = Math.hypot(E[0] - J[0], E[1] - J[1], E[2] - J[2]) * 100;
+    for (let y = 0; y <= b.arm + 1; y++) arm.push(r1(ar[Math.min(last, y)] / 2 + lerp(off * .25, .5, sstep((y - elbow + 3) / 6))));
+    fit = { w: Math.round(w * 100) / 100, y0, q, arm };
     cw = lerp(cw, q[0] + (q[1] - q[0]) * (ad - y0), w);
   }
   return {
@@ -253,7 +258,37 @@ function measure() {
   for (let y = armpit + 8; y < armpit + 34; y++) if (q[y] < q[waist]) waist = y;
   for (let y = waist; y < waist + 34; y++) if (q[y] > q[hip]) hip = y;
   for (let y = hip; y < N; y++) q[y] = q[hip];
-  return (A[k] = { q, armpit, waist, hip });
+  return (A[k] = { q, armpit, waist, hip, arm: A.arm || (A.arm = armRound(A.bare, isArm, SI, SW)) });
+}
+// the arm's round (cm) by cm down its bones from the shoulder joint: convex outline of the slice square to the bone
+// (left arm, the two are alike; the vertex goes to the bone it lies nearest, so the elbow is not sliced twice), on
+// 7 cm past the wrist: a long sleeve ends on the back of the hand
+function armRound(P, isArm, SI, SW) {
+  const [J, E, W] = A.bones.l, sg = Math.sign(E[0]), N = 80, slices = Array.from({ length: N }, () => []);
+  let s0 = 0;
+  const segs = [[J, E], [E, W]].map(([a, b]) => {
+    const d = new THREE.Vector3(b[0] - a[0], b[1] - a[1], b[2] - a[2]), L = d.length(); d.normalize();
+    const u = new THREE.Vector3().crossVectors(d, new THREE.Vector3(0, 0, 1)).normalize(), w = new THREE.Vector3().crossVectors(d, u);
+    const g = { a: new THREE.Vector3(...a), d, u, w, L, s0 }; s0 += L; return g;
+  });
+  const r = new THREE.Vector3();
+  for (let v = 0; v < P.length / 3; v++) {
+    if (Math.sign(P[v * 3]) !== sg) continue;
+    let wa = 0; for (let j = 0; j < 4; j++) if (isArm[SI[v * 4 + j]]) wa += SW[v * 4 + j];
+    if (wa < .5) continue;
+    let best = null;
+    for (const g of segs) {
+      r.set(P[v * 3], P[v * 3 + 1], P[v * 3 + 2]).sub(g.a);
+      const t = r.dot(g.d); if (t < -.02 || t > g.L + (g.s0 ? .07 : 0)) continue;
+      const pu = r.dot(g.u), pw = r.dot(g.w), dd = Math.hypot(pu, pw);
+      if (!best || dd < best[2]) best = [g.s0 + t, [pu, pw], dd];
+    }
+    if (!best) continue;
+    const sc = best[0] * 100, i = Math.round(sc);
+    if (i >= 0 && i < N && Math.abs(sc - i) < .6) slices[i].push(best[1]);
+  }
+  const raw = slices.map(s => s.length > 8 ? hullLen(s) * 100 : 0);
+  return raw.map((_, y) => { let s = 0, n = 0; for (let j = y - 2; j <= y + 2; j++) if (raw[j]) { s += raw[j]; n++; } return n ? r1(s / n) : 0; });
 }
 function hullLen(pts) {
   pts.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
@@ -271,7 +306,7 @@ const world = mesh => {   // rest pose = bind pose = world here (the asset's roo
 };
 
 /* ---------- the cloth ---------- */
-const worker = new Worker('cloth.js?v=28', { type: 'module' });
+const worker = new Worker('cloth.js?v=29', { type: 'module' });
 worker.onerror = e => console.error('[cloth]', e.message);
 const fabricU = { uC1: { value: new THREE.Color() }, uC2: { value: new THREE.Color() }, uPat: { value: 0 }, uScale: { value: 1 } };
 const fabric = new THREE.MeshPhysicalMaterial({ roughness: .86, sheen: .6, sheenRoughness: .8, side: THREE.DoubleSide });
