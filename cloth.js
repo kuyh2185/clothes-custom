@@ -271,12 +271,16 @@ function assemble(g, old) {
 
   // start positions: where that spot of fabric was (old cloth), else the first placement round the body
   const pos = new Float32Array(nP * 3), cnt = new Float32Array(nP), fresh = new Float32Array(nP * 3), fcnt = new Float32Array(nP);
-  // a big jump in width (a card, not a drag) lays the body out afresh: squeezed into the old places the extra cloth
-  // buckles into a fold at the side seam that friction then holds
+  // a big jump in width (a card, not a drag) lays the cloth out afresh: squeezed into the old places the extra cloth
+  // buckles into a fold at the side seam that friction then holds. The sleeves too, as their armholes go with the body
+  // (a narrow sleeve carried on into a wide one tore open at the elbow)
   let jump = 0;
   if (old) for (let yd = 0; yd <= g.info.P.L; yd += 4) jump = Math.max(jump, Math.abs(halfOf(g.info.P, yd) - halfOf(old.info.P, yd)));
+  // so does a sleeve made much longer: carried on past the old hem (a wide short sleeve hangs open, off the arm) the
+  // new length starts beside the arm instead of round it, and the arm comes out through the sleeve
+  const grown = s => old && g.info.sleeve[s] - old.info.sleeve[s] > 6;
   for (const pc of pieces) {
-    const o = old && !(jump > 2.5 && pc.pc < 2) && old.pieces.find(q => q.name === pc.name);
+    const o = old && !(jump > 2.5) && !(pc.pc >= 2 && grown(pc.pc === 2 ? 'uL' : 'uR')) && old.pieces.find(q => q.name === pc.name);
     const loc = o ? locator(o, old) : null;
     pc.pts.forEach((p0, i) => {
       const v = pc.off + i, q = map[v];
