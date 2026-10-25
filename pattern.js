@@ -164,6 +164,10 @@ function sleeveOutline(P, frontLen, backLen, chMax) {
   // then past the wrist out round the hand (a sleeve that narrows on would start inside the hand and pass through it).
   // Once the sleeve runs on over the hand its narrowest part draws back up the arm, clear of the thumb's root.
   // Fitted, the knots run down the arm every 3 cm to the wrist (the hand's part is the tee's: it has to go over the hand)
+  // (letting go again as the sleeve runs on toward the hand: past the wrist it has to go round the hand)
+  const ribK = u => { const w = P.arm - clamp(u - P.arm, 0, 6); return P.rib && u < w - .5 ? sstep((u - P.rib.e) / 8) * sstep((w - .5 - u) / 3) : 0; };
+  // where the cuff starts coming in (sleeve cm), or null: the cloth lays it round the arm afresh (cloth.js)
+  const ribAt = u => ribK(u) > 0 ? Math.max(ch + 1, u - 5) : null;
   // A long sleeve ending on the forearm or at the wrist closes in over its last 5 cm to a rib cuff round the arm there
   // (P.rib = { r: half the arm's round + the rib's ease by sleeve cm, e: sleeve cm where it starts to come in}); a
   // tee's straight sleeve hung open round the thin wrist like a bell
@@ -178,8 +182,7 @@ function sleeveOutline(P, frontLen, backLen, chMax) {
       for (let y = ch + 3; y < w - 1.5; y += 3) out.push([y, Math.min(y < 25 ? bw : 99, lerp(at(y), Math.min(at(y), armAt(y)), fw))]);
       out.push([w, lerp(P.wrist, Math.min(P.wrist, armAt(w)), fw)], tee[3]);
     }
-    // (letting go again as the sleeve runs on toward the hand: past the wrist it has to go round the hand)
-    const k = P.rib && u < w - .5 ? sstep((u - P.rib.e) / 8) * sstep((w - .5 - u) / 3) : 0;
+    const k = ribK(u);
     if (k > 0) {
       const at = y => { for (let i = 1; i < out.length; i++) if (y <= out[i][0]) return lerp(out[i - 1][1], out[i][1], (y - out[i - 1][0]) / (out[i][0] - out[i - 1][0])); return out[out.length - 1][1]; };
       const ri = j => P.rib.r[clamp(Math.round(j), 0, P.rib.r.length - 1)];
@@ -194,7 +197,7 @@ function sleeveOutline(P, frontLen, backLen, chMax) {
     for (let i = 1; i < knots.length; i++) if (y <= knots[i][0]) return lerp(knots[i - 1][1], knots[i][1], (y - knots[i - 1][0]) / (knots[i][0] - knots[i - 1][0]));
     return knots[knots.length - 1][1];
   };
-  return { capf: cap(ch, -1), capb: cap(ch, 1), ch, bw, halfW, knotsOf };
+  return { capf: cap(ch, -1), capb: cap(ch, 1), ch, bw, halfW, knotsOf, ribAt };
 }
 
 /* ---------- flat mesh of a piece ---------- */
@@ -326,7 +329,7 @@ export function build(params) {
     seams.push([2, ['front', 'armS_' + half], [name, 'capf']], [2, ['back', 'armS_' + half], [name, 'capb']]);
     if (!d.capCut) seams.push([4, [name, 'und_b'], [name, 'und_f']]);
   }
-  const sleeve = { ch: sl.ch, bw: sl.bw, u: Math.max(uS.l, uS.r), uL: uS.l, uR: uS.r, knotsL: sl.knotsOf(uS.l), knotsR: sl.knotsOf(uS.r) };
+  const sleeve = { ch: sl.ch, bw: sl.bw, u: Math.max(uS.l, uS.r), uL: uS.l, uR: uS.r, knotsL: sl.knotsOf(uS.l), knotsR: sl.knotsOf(uS.r), ribL: sl.ribAt(uS.l), ribR: sl.ribAt(uS.r) };
   // where the hem and the shoulder sit (cm below the high shoulder point), for the site's edit points
   return { pieces, seams, info: { P, sleeve, full, has, hemL: P.L + .5 } };
 }

@@ -4,7 +4,7 @@
 //   in : {t:'init', body:{pos,nrm}, bottom:{pos,nrm}|null, bones:{l:[J,E], r:[J,E]}, hps, z0}
 //        {t:'params', p}      {t:'tick'}   (one frame per tick; answered with {t:'frame'})
 //   out: {t:'topo', ...} when the mesh changes, {t:'frame', pos, nrm, awake, ms}
-import { build, fitSide, BASE, BASE_M } from './pattern.js?v=16';
+import { build, fitSide, BASE, BASE_M } from './pattern.js?v=17';
 
 const G = -9.8, SUB = 12, DT = 1 / 60, TH = 0.004;
 let sdf = null, ctx = null, cloth = null, pending = null, awake = 0, calm = 0, snap = null, frames = 0, still = 0;
@@ -281,7 +281,9 @@ function assemble(g, old) {
       const p = o && pc.pc < 2 ? [p0[0] * halfOf(old.info.P, -p0[1]) / halfOf(g.info.P, -p0[1]), p0[1]] : p0;
       // sleeve past the wrist is laid round the hand afresh each time: carried on from the old cloth (an end hanging
       // below the hand, or caught on the thumb) the hand would come out through the sleeve
-      const hand = pc.pc >= 2 && -p0[1] > g.info.sleeve[pc.pc === 2 ? 'knotsL' : 'knotsR'].at(-2)[0];
+      // so is a rib cuff: carried on from a sleeve that ran over the hand, it stayed caught open on the hand's root
+      const sv = g.info.sleeve, rib = pc.pc >= 2 && sv[pc.pc === 2 ? 'ribL' : 'ribR'];
+      const hand = pc.pc >= 2 && (-p0[1] > sv[pc.pc === 2 ? 'knotsL' : 'knotsR'].at(-2)[0] || (rib != null && rib !== false && -p0[1] > rib));
       let w = !hand && loc && loc(p[0], p[1]);
       if (!w && loc && !hand) {
         const k = loc.nearest(p[0], p[1]);
