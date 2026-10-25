@@ -4,7 +4,7 @@
 //   in : {t:'init', body:{pos,nrm}, bottom:{pos,nrm}|null, bones:{l:[J,E], r:[J,E]}, hps, z0}
 //        {t:'params', p}      {t:'tick'}   (one frame per tick; answered with {t:'frame'})
 //   out: {t:'topo', ...} when the mesh changes, {t:'frame', pos, nrm, awake, ms}
-import { build, fitSide, BASE, BASE_M } from './pattern.js?v=15';
+import { build, fitSide, BASE, BASE_M } from './pattern.js?v=16';
 
 const G = -9.8, SUB = 12, DT = 1 / 60, TH = 0.004;
 let sdf = null, ctx = null, cloth = null, pending = null, awake = 0, calm = 0, snap = null, frames = 0, still = 0;

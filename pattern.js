@@ -164,15 +164,28 @@ function sleeveOutline(P, frontLen, backLen, chMax) {
   // then past the wrist out round the hand (a sleeve that narrows on would start inside the hand and pass through it).
   // Once the sleeve runs on over the hand its narrowest part draws back up the arm, clear of the thumb's root.
   // Fitted, the knots run down the arm every 3 cm to the wrist (the hand's part is the tee's: it has to go over the hand)
+  // A long sleeve ending on the forearm or at the wrist closes in over its last 5 cm to a rib cuff round the arm there
+  // (P.rib = { r: half the arm's round + the rib's ease by sleeve cm, e: sleeve cm where it starts to come in}); a
+  // tee's straight sleeve hung open round the thin wrist like a bell
   const knotsOf = u => {
     const w = P.arm - clamp(u - P.arm, 0, 6);
     const tee = [[ch, bw], [Math.max(20, ch + 10), cuff], [w, P.wrist], [w + 6, Math.max(P.wrist, P.hand)]];
-    if (!fw) return tee;
-    const at = y => { for (let i = 1; i < 3; i++) if (y <= tee[i][0]) return lerp(tee[i - 1][1], tee[i][1], (y - tee[i - 1][0]) / (tee[i][0] - tee[i - 1][0])); return tee[2][1]; };
-    const out = [[ch, bw]];
-    // (no wider than the underarm down the upper arm, where the slices still take in some of the shoulder)
-    for (let y = ch + 3; y < w - 1.5; y += 3) out.push([y, Math.min(y < 25 ? bw : 99, lerp(at(y), Math.min(at(y), armAt(y)), fw))]);
-    out.push([w, lerp(P.wrist, Math.min(P.wrist, armAt(w)), fw)], tee[3]);
+    let out = tee;
+    if (fw) {
+      const at = y => { for (let i = 1; i < 3; i++) if (y <= tee[i][0]) return lerp(tee[i - 1][1], tee[i][1], (y - tee[i - 1][0]) / (tee[i][0] - tee[i - 1][0])); return tee[2][1]; };
+      out = [[ch, bw]];
+      // (no wider than the underarm down the upper arm, where the slices still take in some of the shoulder)
+      for (let y = ch + 3; y < w - 1.5; y += 3) out.push([y, Math.min(y < 25 ? bw : 99, lerp(at(y), Math.min(at(y), armAt(y)), fw))]);
+      out.push([w, lerp(P.wrist, Math.min(P.wrist, armAt(w)), fw)], tee[3]);
+    }
+    // (letting go again as the sleeve runs on toward the hand: past the wrist it has to go round the hand)
+    const k = P.rib && u < w - .5 ? sstep((u - P.rib.e) / 8) * sstep((w - .5 - u) / 3) : 0;
+    if (k > 0) {
+      const at = y => { for (let i = 1; i < out.length; i++) if (y <= out[i][0]) return lerp(out[i - 1][1], out[i][1], (y - out[i - 1][0]) / (out[i][0] - out[i - 1][0])); return out[out.length - 1][1]; };
+      const ri = j => P.rib.r[clamp(Math.round(j), 0, P.rib.r.length - 1)];
+      const r = Math.min(ri(u), ri(u - 2), ri(u - 4)), y0 = Math.max(ch + 1, u - 5);   // the wrist, if the end is just past it
+      out = [...out.filter(q => q[0] < y0), [y0, at(y0)], [u, lerp(at(u), Math.min(at(u), r), k)], ...out.filter(q => q[0] > u)];
+    }
     return out;
   };
   const halfW = (y, u) => {

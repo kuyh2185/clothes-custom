@@ -12,7 +12,7 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { smoothChest, tuckUnder } from './mannequin.js?v=1';
-import { BASE, BASE_M } from './pattern.js?v=15';
+import { BASE, BASE_M } from './pattern.js?v=16';
 
 const $ = id => document.getElementById(id);
 const PI = Math.PI;
@@ -50,6 +50,9 @@ const adOf = T => {
   const ad = base().ad + Math.max(0, T.ease - 2) * .85, m = A && measure();
   return m ? lerp(ad, Math.min(ad, m.armpit + 2.5), fitOf(T.ease)) : ad;
 };
+// cm down the arm's bones from the shoulder joint to the elbow, and to the wrist (a sleeve's cm sit about as far down)
+const elbowOf = () => { const [J, E] = A.bones.l; return Math.hypot(E[0] - J[0], E[1] - J[1], E[2] - J[2]) * 100; };
+const wristOf = () => { const [, E, W] = A.bones.l; return elbowOf() + Math.hypot(W[0] - E[0], W[1] - E[1], W[2] - E[2]) * 100; };
 function params() {
   const b = base(), T = state.top, full = fullOf(T), [l, r] = T.sl, t = tightOf(T.ease), e = T.ease;
   const ad = adOf(T), w = fitOf(e), m = w > 0 && A ? measure() : null;
@@ -72,17 +75,23 @@ function params() {
     }
     // the sleeve: half the arm's round (a sleeve's cm sit about as far down the bones), a little under it on the upper
     // arm like the body, a little over it past the elbow (pulled tight round the bony wrist, the skin came through)
-    const ar = m.arm, last = ar.findLastIndex(v => v > 0), arm = [], [J, E] = A.bones.l;
-    const elbow = Math.hypot(E[0] - J[0], E[1] - J[1], E[2] - J[2]) * 100;
+    const ar = m.arm, last = ar.findLastIndex(v => v > 0), arm = [], elbow = elbowOf();
     for (let y = 0; y <= b.arm + 1; y++) arm.push(r1(ar[Math.min(last, y)] / 2 + lerp(off * .25, .5, sstep((y - elbow + 3) / 6))));
     fit = { w: Math.round(w * 100) / 100, y0, q, arm };
     cw = lerp(cw, q[0] + (q[1] - q[0]) * (ad - y0), w);
+  }
+  // a long sleeve's rib cuff: the arm's round where the sleeve ends and a little ease, starting past the elbow
+  let rib = null;
+  if (A) {
+    const ar = measure().arm, last = ar.findLastIndex(v => v > 0), r = [];
+    for (let y = 0; y <= last; y++) r.push(r1(ar[y] / 2 + 1 + Math.max(0, e) * .1));
+    rib = { r, e: r1(elbowOf() + 14) };
   }
   return {
     base: state.body, L: r1(T.L), sleeveL: r1(Math.max(0, l)), sleeveR: r1(Math.max(0, r)),
     strap: l < 1.2 && r < 1.2 && Math.min(l, r) < 0 ? r1(clamp(full + Math.min(l, r), .6, full)) : null,
     cw: r1(cw), hw: r1(b.hw + (e > 0 ? e : e * .5) + T.flare), sw: r1(shoulderOf(T)), nw: r1(b.nw + T.dNw),
-    ad: r1(ad), flare: r1(T.flare), fit,
+    ad: r1(ad), flare: r1(T.flare), fit, rib,
     ndF: r1(T.ndF), ndB: r1(T.ndB), neckV: r1(T.neckV),
     bw: r1(b.bw + (e > 0 ? e * .4 : e * .3)), cuff: r1(b.cuff + (e > 0 ? e * .3 : e * .2)),
     stretch: Math.round(clamp(t / 2, 0, 1) * 100) / 100,
@@ -306,7 +315,7 @@ const world = mesh => {   // rest pose = bind pose = world here (the asset's roo
 };
 
 /* ---------- the cloth ---------- */
-const worker = new Worker('cloth.js?v=29', { type: 'module' });
+const worker = new Worker('cloth.js?v=30', { type: 'module' });
 worker.onerror = e => console.error('[cloth]', e.message);
 const fabricU = { uC1: { value: new THREE.Color() }, uC2: { value: new THREE.Color() }, uPat: { value: 0 }, uScale: { value: 1 } };
 const fabric = new THREE.MeshPhysicalMaterial({ roughness: .86, sheen: .6, sheenRoughness: .8, side: THREE.DoubleSide });
@@ -406,7 +415,8 @@ const TANK = () => { const s = 4 - (base().sw - base().nw - 1.5); return { sl: [
 const CARDS = {
   sleeve: () => {
     const a = base().arm / 58, full = fullOf(state.top);
-    return [['긴팔', { sl: [base().arm, base().arm] }], ['7부', { sl: [45 * a, 45 * a] }], ['5부', { sl: [33 * a, 33 * a] }], ['반팔', { sl: [20 * a, 20 * a] }],
+    const long = A ? r1(wristOf() + 1.5) : base().arm;   // just past the wrist, where a rib cuff sits
+    return [['긴팔', { sl: [long, long] }], ['7부', { sl: [45 * a, 45 * a] }], ['5부', { sl: [33 * a, 33 * a] }], ['반팔', { sl: [20 * a, 20 * a] }],
       ['캡', { sl: [7, 7] }], ['민소매', { sl: [0, 0] }], ['넓은 끈', { sl: [3 - full, 3 - full] }], ['얇은 끈', { sl: [.8 - full, .8 - full] }], ['탱크톱', TANK()]];
   },
   len: () => { const k = state.body === 'm' ? 1.1 : 1; return [['크롭', { L: 42 * k }], ['기본', { L: 62 * k }], ['롱', { L: 76 * k }], ['원피스', { L: 96 * k }]]; },
