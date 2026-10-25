@@ -107,12 +107,21 @@ function bodyHalf(P, front) {
   const ad = P.ad;
   const arm = bez(O, [O[0] - lerp(.8, 0, r), O[1] + (-ad - O[1]) * lerp(.45, .8, r)],
     [lerp(P.cw - (P.cw - P.sw + 2.2) * (1 - k) - 3.5, O[0] + (P.cw - O[0]) * .35, r), -ad], [P.cw, -ad]);
-  const L = Math.max(P.L, ad + 6), dl = L - ad;
-  const side = bez([P.cw, -ad], [P.cw, -ad - dl * .29], [P.hw - .3, -L + dl * .33], [P.hw, -L]);
-  if (P.fit) for (const p of side) p[0] = fitSide(P, -p[1], p[0]);
+  const L = Math.max(P.L, ad + 6);
+  const sideTo = Ls => {
+    const dl = Ls - ad, s = bez([P.cw, -ad], [P.cw, -ad - dl * .29], [P.hw - .3, -Ls + dl * .33], [P.hw, -Ls]);
+    if (P.fit) for (const p of s) p[0] = fitSide(P, -p[1], p[0]);
+    return s;
+  };
+  // the hem leaves the side seam square to it: a side running out at the hem (a fitted crop over the hips) met by a
+  // straight hem made a sharp corner on each panel, and the two sewn together a point that folded up at the side.
+  // The corner rises by what squaring takes (m: cm out per cm down at the hem), the centre stays at the length
+  const end = s => { const a = s[s.length - 2], b = s[s.length - 1]; return Math.max(0, (b[0] - a[0]) / Math.max(.01, a[1] - b[1])); };
+  const s0 = sideTo(L), hx0 = s0[s0.length - 1][0], d = clamp(end(s0) * hx0 * .45, .5, 3);
+  const side = d > .5 ? sideTo(L + .5 - d) : s0;
   // the hem starts where the side seam ends (a fitted crop's hem sits in the waist: from P.hw it left a flap)
-  const hx = side[side.length - 1][0];
-  const hem = bez([hx, -L], [hx * .6, -L - .3], [hx * .2, -L - .5], [0, -L - .5]);
+  const cn = side[side.length - 1], hx = cn[0], m = end(side), h = Math.min(hx * .45, d / Math.max(m, 1e-3));
+  const hem = bez(cn, [hx - h, cn[1] - h * m], [hx * .2, -L - .5], [0, -L - .5]);
   return { neck, shoulder, arm, side, hem };
 }
 
