@@ -12,7 +12,7 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { smoothChest, tuckUnder } from './mannequin.js?v=1';
-import { BASE, BASE_M } from './pattern.js?v=21';
+import { BASE, BASE_M, fitSide } from './pattern.js?v=21';
 
 const $ = id => document.getElementById(id);
 const PI = Math.PI;
@@ -57,8 +57,8 @@ const adOf = T => {
 // cm down the arm's bones from the shoulder joint to the elbow, and to the wrist (a sleeve's cm sit about as far down)
 const elbowOf = () => { const [J, E] = A.bones.l; return Math.hypot(E[0] - J[0], E[1] - J[1], E[2] - J[2]) * 100; };
 const wristOf = () => { const [, E, W] = A.bones.l; return elbowOf() + Math.hypot(W[0] - E[0], W[1] - E[1], W[2] - E[2]) * 100; };
-function params() {
-  const b = base(), T = state.top, full = fullOf(T), [l, r] = T.sl, t = tightOf(T.ease), e = T.ease;
+function params(T = state.top) {
+  const b = base(), full = fullOf(T), [l, r] = T.sl, t = tightOf(T.ease), e = T.ease;
   const ad = adOf(T), w = fitOf(e), ws = shapeOf(e), m = ws > 0 && A ? measure() : null;
   // fitted: the quarter round of the body at each depth (cm below the high shoulder point) from the armhole down
   // past the hem, less a little round the chest (a stretch knit sits a few cm smaller than the body), back to the
@@ -101,9 +101,17 @@ function params() {
     stretch: Math.round(clamp(t / 2, 0, 1) * 100) / 100,
   };
 }
+// the hem taken in (the hem's corners dragged in, or the bar): down to the body's round at the hem, no further. A hem
+// cut under the hips slid up the slope and rolled at the waist; a crop's hem sits in the waist and comes in a long way
+const hemFloor = T => {
+  if (!A) return -12;   // not measured yet: a saved hem is not cut back before the mannequin is in
+  const P = params({ ...T, flare: 0 }), q = measure().q, L = Math.max(P.L, P.ad + 6);
+  const hem = P.fit ? fitSide(P, L, P.hw) : P.hw;
+  return clamp(r1(q[clamp(Math.round(L), 0, q.length - 1)] - hem), -12, 0);
+};
 const LIM = () => {
   const b = base(), full = fullOf(state.top);
-  return { sl: [-(full - .6), b.arm + b.over], L: [adOf(state.top) + 6, 118], ease: [-8, 20], flare: [-4, 22], dNw: [-2, 8], ndF: [3, 30], ndB: [1.5, 26], neckV: [0, 1] };
+  return { sl: [-(full - .6), b.arm + b.over], L: [adOf(state.top) + 6, 118], ease: [-8, 20], flare: [hemFloor(state.top), 22], dNw: [-2, 8], ndF: [3, 30], ndB: [1.5, 26], neckV: [0, 1] };
 };
 function fix(T) {
   const L = LIM();
@@ -319,7 +327,7 @@ const world = mesh => {   // rest pose = bind pose = world here (the asset's roo
 };
 
 /* ---------- the cloth ---------- */
-const worker = new Worker('cloth.js?v=37', { type: 'module' });
+const worker = new Worker('cloth.js?v=38', { type: 'module' });
 worker.onerror = e => console.error('[cloth]', e.message);
 const fabricU = { uC1: { value: new THREE.Color() }, uC2: { value: new THREE.Color() }, uPat: { value: 0 }, uScale: { value: 1 } };
 const fabric = new THREE.MeshPhysicalMaterial({ roughness: .86, sheen: .6, sheenRoughness: .8, side: THREE.DoubleSide });
@@ -453,7 +461,7 @@ const BARS = [
   ['sl1', '오른쪽 소매', () => LIM().sl, .5, T => T.sl[1], (T, v) => { T.sl[1] = v; if ($('sym').checked) T.sl[0] = v; }, sleeveName],
   ['L', '기장', () => LIM().L, .5, T => T.L, (T, v) => { T.L = v; }, lenName],
   ['ease', '품', () => LIM().ease, .1, T => T.ease, (T, v) => { T.ease = v; }, fitName],
-  ['flare', '밑단 퍼짐', () => LIM().flare, .1, T => T.flare, (T, v) => { T.flare = v; }, v => `${v >= 0 ? '+' : ''}${v.toFixed(1)}cm`],
+  ['flare', '밑단 폭', () => LIM().flare, .1, T => T.flare, (T, v) => { T.flare = v; }, v => `${v >= 0 ? '+' : ''}${v.toFixed(1)}cm`],
   ['ndF', '앞 목 깊이', () => LIM().ndF, .1, T => T.ndF, (T, v) => { T.ndF = v; }, v => `${v.toFixed(1)}cm`],
   ['ndB', '뒤 목 깊이', () => LIM().ndB, .1, T => T.ndB, (T, v) => { T.ndB = v; }, v => `${v.toFixed(1)}cm`],
   ['dNw', '목 넓이', () => LIM().dNw, .1, T => T.dNw, (T, v) => { T.dNw = v; }, v => `${v >= 0 ? '+' : ''}${v.toFixed(1)}cm`],
@@ -553,18 +561,18 @@ addEventListener('keydown', e => {
 });
 
 /* ---------- drag points on the garment ---------- */
-// sleeve ends (on a side with no sleeve: the end of the shoulder), the hem's middle, the sides, the neckline's middle
-// (front and back) and its ends. Each turns a drag into one of the pattern's numbers.
+// sleeve ends (on a side with no sleeve: the end of the shoulder), the hem's middle, its corners at the sides, the
+// sides, the neckline's middle (front and back) and its ends. Each turns a drag into one of the pattern's numbers.
 const tip = $('tip'), layer = $('layer');
 const DOTS = [
-  { k: 'sleeve', i: 0 }, { k: 'sleeve', i: 1 }, { k: 'hem', i: 0 }, { k: 'hem', i: 1 }, { k: 'side', i: 0 }, { k: 'side', i: 1 },
+  { k: 'sleeve', i: 0 }, { k: 'sleeve', i: 1 }, { k: 'hem', i: 0 }, { k: 'hem', i: 1 }, { k: 'hemSide', i: 0 }, { k: 'hemSide', i: 1 }, { k: 'side', i: 0 }, { k: 'side', i: 1 },
   { k: 'neck', i: 0 }, { k: 'neck', i: 1 }, { k: 'neckSide', i: 0 }, { k: 'neckSide', i: 1 },
 ];
-const LABEL = { sleeve: '소매 끝', hem: '밑단', side: '옆구리 (품)', neck: '목선', neckSide: '목 넓이' };
+const LABEL = { sleeve: '소매 끝', hem: '밑단', hemSide: '밑단 폭', side: '옆구리 (품)', neck: '목선', neckSide: '목 넓이' };
 DOTS.forEach(d => {
   d.el = document.createElement('button');
   d.el.type = 'button';
-  d.el.className = 'dot' + (d.k === 'hem' || d.k === 'side' ? ' sq' : '');
+  d.el.className = 'dot' + (d.k === 'hem' || d.k === 'hemSide' || d.k === 'side' ? ' sq' : '');
   d.el.setAttribute('aria-label', LABEL[d.k] + ' 점 — 끌어서 바꾸기');
   d.el.addEventListener('pointerdown', e => dragStart(e, d));
   d.el.addEventListener('pointerenter', () => { if (!drag) showTip(LABEL[d.k], d.sx, d.sy); });
@@ -595,7 +603,7 @@ function placeDots() {
     // neckline and hem points by which way they face round the body (a neck edge curls up or over: its normal says little)
     if (d.k === 'neck' || d.k === 'hem') { n3.set(0, 0, d.i ? -1 : 1); toCam.y = 0; }
     const facing = n3.dot(toCam.normalize());
-    const lim = d.k === 'sleeve' || d.k === 'side' ? -.55 : d.k === 'neckSide' ? -.3 : 0;
+    const lim = d.k === 'sleeve' || d.k === 'side' || d.k === 'hemSide' ? -.55 : d.k === 'neckSide' ? -.3 : 0;
     const [x, y] = project(v3);
     d.sx = x; d.sy = y; d.p = v3.clone();
     d.el.style.transform = `translate(${x}px, ${y}px)`;
@@ -637,6 +645,7 @@ function dragMove(e, d) {
     T.sl[d.i] = v; if ($('sym').checked) T.sl[1 - d.i] = v;
     fix(T); label = sleeveName(T.sl[d.i]);
   } else if (d.k === 'hem') { T.L = S.L + down * 100; fix(T); label = lenName(T.L); }
+  else if (d.k === 'hemSide') { T.flare = S.flare + out * 100; fix(T); label = `밑단 폭 ${T.flare >= 0 ? '+' : ''}${T.flare.toFixed(1)}cm`; }
   else if (d.k === 'side') { T.ease = S.ease + out * 100; fix(T); label = '품 ' + fitName(T.ease); }
   else if (d.k === 'neck') { const k = d.i ? 'ndB' : 'ndF'; T[k] = S[k] + down * 100; fix(T); label = `${d.i ? '뒤' : '앞'} 목 깊이 ${T[k].toFixed(1)}cm`; }
   else { T.dNw = S.dNw + out * 100; fix(T); label = `목 넓이 ${T.dNw >= 0 ? '+' : ''}${T.dNw.toFixed(1)}cm`; }
@@ -673,4 +682,4 @@ let lastStat = 0;
 fix(state.top);
 renderSeg(); apply(); undoState();
 showBody(state.body);
-window.__studio = { get state() { return state; }, apply, camera, controls, get cloth() { return cloth; }, get awake() { return awake; }, get A() { return A; }, composer, renderer, params };
+window.__studio = { get state() { return state; }, apply, showBody, camera, controls, get cloth() { return cloth; }, get awake() { return awake; }, get A() { return A; }, composer, renderer, params };

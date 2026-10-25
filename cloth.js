@@ -808,14 +808,15 @@ function normals(c) {
 }
 
 // display vertices at the garment's landmarks, for the editor's drag points: sleeve ends (middle of the sleeve hem),
-// shoulder ends (where the shoulder seam meets the armhole), hem middles, the side seams a third of the way down,
-// neckline middles and the neckline's ends at the shoulder. Each [left, right] or [front, back].
+// shoulder ends (where the shoulder seam meets the armhole), hem middles, the hem's side corners, the side seams a
+// third of the way down, neckline middles and the neckline's ends at the shoulder. Each [left, right] or [front, back].
 function marks(pieces) {
   const at = (name, seg, f) => { const pc = pieces.find(p => p.name === name), b = pc && pc.bound[seg]; return b ? pc.off + b[Math.round((b.length - 1) * f)] : -1; };
   return {
     sleeve: [at('sleeve_l', 'hem', .5), at('sleeve_r', 'hem', .5)],
     shoulder: [at('front', 'sh_p', 1), at('front', 'sh_m', 1)],
     hem: [at('front', 'hem_p', 1), at('back', 'hem_p', 1)],
+    hemSide: [at('front', 'hem_p', 0), at('front', 'hem_m', 0)],
     side: [at('front', 'side_p', .35), at('front', 'side_m', .35)],
     neck: [at('front', 'neck_p', 0), at('back', 'neck_p', 0)],
     neckSide: [at('front', 'neck_p', 1), at('front', 'neck_m', 1)],
