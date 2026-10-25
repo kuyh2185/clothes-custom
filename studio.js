@@ -12,12 +12,14 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { smoothChest, tuckUnder } from './mannequin.js?v=1';
-import { BASE, BASE_M } from './pattern.js?v=12';
+import { BASE, BASE_M } from './pattern.js?v=13';
 
 const $ = id => document.getElementById(id);
 const PI = Math.PI;
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const r1 = v => Math.round(v * 10) / 10;
+const lerp = (a, b, t) => a + (b - a) * t;
+const sstep = t => { t = clamp(t, 0, 1); return t * t * (3 - 2 * t); };
 const ASSET_VER = 2, KEY = 'clothes-custom:studio:v1';
 
 /* ---------- the garment's numbers ---------- */
@@ -37,22 +39,44 @@ function load() {
 const base = () => state.body === 'm' ? BASE_M : BASE;
 const shoulderOf = T => base().sw + Math.max(0, T.ease - 3) * .5;   // an oversized top's shoulder drops off the shoulder
 const fullOf = T => shoulderOf(T) - (base().nw + T.dNw);   // the shoulder seam's length: how far a strap can narrow
-// a wider body puts the underarm further out along the sloping arm: the armhole drops with it, or the underarm would
-// sit inside the arm and the cloth twist over or under it
-const adOf = T => base().ad + Math.max(0, T.ease - 2) * .85;
-// below the slim fit the top is cut smaller than the body from a knit that stretches round it (rib tank, fitted tee):
-// the side seams follow the waist, the hem eases off less (narrower than the hips it rides up), the sleeves hug the arm
+// below the slim fit the top is cut to the body from a knit that stretches round it (rib tank, fitted tee): fitOf
+// 0 … 1 is how far the side seams follow the mannequin's own outline (measure()) instead of the tee's straight side
 const tightOf = e => clamp(-e - 1.5, 0, 6.5);
+const fitOf = e => sstep(tightOf(e) / 3.5);
+// a wider body puts the underarm further out along the sloping arm: the armhole drops with it, or the underarm would
+// sit inside the arm and the cloth twist over or under it. A fitted one rises to just under the real armpit: the
+// tee's deep armhole would leave a web of cloth between the arm and the side, standing off the body under the arm
+const adOf = T => {
+  const ad = base().ad + Math.max(0, T.ease - 2) * .85, m = A && measure();
+  return m ? lerp(ad, Math.min(ad, m.armpit + 2.5), fitOf(T.ease)) : ad;
+};
 function params() {
   const b = base(), T = state.top, full = fullOf(T), [l, r] = T.sl, t = tightOf(T.ease), e = T.ease;
+  const ad = adOf(T), w = fitOf(e), m = w > 0 && A ? measure() : null;
+  // fitted: the quarter round of the body at each depth (cm below the high shoulder point) from the armhole down
+  // past the hem, less a little round the chest and waist (a stretch knit sits a few cm smaller than the body), the
+  // body's own round from the waist down and a little more than it at the hem: cloth pulled tight where the body
+  // widens downward (a crop's hem between waist and hips) slides up the slope to the waist and rolls over
+  let fit = null, cw = b.cw + e;
+  if (m) {
+    const off = (e + 2.5) * .4, q = [], y0 = Math.floor(ad), L = Math.max(T.L, ad + 6), n = Math.ceil(L) + 3 - y0;
+    const qm = y => m.q[clamp(Math.round(y), 0, m.q.length - 1)];
+    for (let i = 0; i <= n; i++) {
+      const y = y0 + i, low = sstep((y - m.waist + 4) / 8), hem = sstep((y - L + 7) / 5);
+      const v = qm(y) + off * (1 - low);
+      q.push(r1(lerp(v, Math.max(v, qm(y) + .3), hem)));
+    }
+    fit = { w: Math.round(w * 100) / 100, y0, q };
+    cw = lerp(cw, q[0] + (q[1] - q[0]) * (ad - y0), w);
+  }
   return {
     base: state.body, L: r1(T.L), sleeveL: r1(Math.max(0, l)), sleeveR: r1(Math.max(0, r)),
     strap: l < 1.2 && r < 1.2 && Math.min(l, r) < 0 ? r1(clamp(full + Math.min(l, r), .6, full)) : null,
-    cw: r1(b.cw + T.ease), hw: r1(b.hw + (e > 0 ? e : e * .5) + T.flare), sw: r1(shoulderOf(T)), nw: r1(b.nw + T.dNw),
-    ad: r1(adOf(T)),
+    cw: r1(cw), hw: r1(b.hw + (e > 0 ? e : e * .5) + T.flare), sw: r1(shoulderOf(T)), nw: r1(b.nw + T.dNw),
+    ad: r1(ad), flare: r1(T.flare), fit,
     ndF: r1(T.ndF), ndB: r1(T.ndB), neckV: r1(T.neckV),
     bw: r1(b.bw + (e > 0 ? e * .4 : e * .3)), cuff: r1(b.cuff + (e > 0 ? e * .3 : e * .2)),
-    waist: r1(t * 1.35), stretch: Math.round(clamp(t / 2, 0, 1) * 100) / 100,
+    stretch: Math.round(clamp(t / 2, 0, 1) * 100) / 100,
   };
 }
 const LIM = () => {
@@ -195,13 +219,55 @@ async function loadBody(kind) {
   const bones = { l: [bp('upperarm_l'), bp('lowerarm_l'), bp('hand_l')], r: [bp('upperarm_r'), bp('lowerarm_r'), bp('hand_r')] };
   return (BODIES[kind] = { root, meshes, H: h, kind, hps, z0: (Math.min(...zs) + Math.max(...zs)) / 2, bones, bare, tucked });
 }
+// the shown body's torso, measured for a fitted top (with the trousers when worn, they are what the hem sits on):
+// q[y] = a quarter of the round a cloth wrapped tight would take (convex outline of the slice, the arms left out by
+// their skin weights) y cm below the high shoulder point, held at the hips' round below the hips (a tight top hangs
+// straight from them); armpit and waist = cm below that point
+function measure() {
+  const jeans = state.bottom === 'jeans' && !!A.meshes.jeans, k = jeans ? 'mj' : 'm';
+  if (A[k]) return A[k];
+  const body = A.meshes.body, g = body.geometry, P = jeans ? A.tucked : A.bare;
+  const SI = g.attributes.skinIndex.array, SW = g.attributes.skinWeight.array;
+  const isArm = body.skeleton.bones.map(b => /upperarm|lowerarm|hand|thumb|index|middle|ring|pinky/i.test(b.name));
+  const N = 150, slices = Array.from({ length: N }, () => []), tmax = new Float32Array(N), amin = new Float32Array(N).fill(1);
+  const add = (Q, arm) => {
+    for (let i = 0; i < Q.length; i += 3) {
+      const yc = (A.hps - Q[i + 1]) * 100, y = Math.round(yc);
+      if (y < 0 || y >= N || Math.abs(yc - y) > .6) continue;
+      const ax = Math.abs(Q[i]);
+      if (arm && arm(i / 3)) { amin[y] = Math.min(amin[y], ax); continue; }
+      tmax[y] = Math.max(tmax[y], ax); slices[y].push([Q[i], Q[i + 2]]);
+    }
+  };
+  add(P, v => { let w = 0; for (let j = 0; j < 4; j++) if (isArm[SI[v * 4 + j]]) w += SW[v * 4 + j]; return w > .5; });
+  if (jeans) add(A.meshes.jeans.geometry.attributes.position.array, null);
+  const raw = slices.map(s => s.length > 2 ? hullLen(s) * 25 : 0);
+  let armpit = 0;
+  while (armpit < 40 && !(amin[armpit] - tmax[armpit] > .008 && armpit > 8)) armpit++;
+  const q = raw.map((_, y) => { let s = 0, n = 0; for (let j = y - 2; j <= y + 2; j++) if (raw[j]) { s += raw[j]; n++; } return n ? s / n : 0; });
+  let waist = armpit + 10, hip = waist;
+  for (let y = armpit + 8; y < armpit + 34; y++) if (q[y] < q[waist]) waist = y;
+  for (let y = waist; y < waist + 34; y++) if (q[y] > q[hip]) hip = y;
+  for (let y = hip; y < N; y++) q[y] = q[hip];
+  return (A[k] = { q, armpit, waist, hip });
+}
+function hullLen(pts) {
+  pts.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  const cr = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]), lo = [], up = [];
+  for (const p of pts) { while (lo.length > 1 && cr(lo[lo.length - 2], lo[lo.length - 1], p) <= 0) lo.pop(); lo.push(p); }
+  for (let i = pts.length - 1; i >= 0; i--) { const p = pts[i]; while (up.length > 1 && cr(up[up.length - 2], up[up.length - 1], p) <= 0) up.pop(); up.push(p); }
+  const h = lo.slice(0, -1).concat(up.slice(0, -1));
+  let s = 0;
+  for (let i = 0; i < h.length; i++) s += Math.hypot(h[i][0] - h[(i + 1) % h.length][0], h[i][1] - h[(i + 1) % h.length][1]);
+  return s;
+}
 const world = mesh => {   // rest pose = bind pose = world here (the asset's root has no transform)
   const P = mesh.geometry.attributes.position, N = mesh.geometry.attributes.normal;
   return { pos: new Float32Array(P.array), nrm: new Float32Array(N.array) };
 };
 
 /* ---------- the cloth ---------- */
-const worker = new Worker('cloth.js?v=26', { type: 'module' });
+const worker = new Worker('cloth.js?v=27', { type: 'module' });
 worker.onerror = e => console.error('[cloth]', e.message);
 const fabricU = { uC1: { value: new THREE.Color() }, uC2: { value: new THREE.Color() }, uPat: { value: 0 }, uScale: { value: 1 } };
 const fabric = new THREE.MeshPhysicalMaterial({ roughness: .86, sheen: .6, sheenRoughness: .8, side: THREE.DoubleSide });

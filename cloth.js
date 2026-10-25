@@ -4,10 +4,10 @@
 //   in : {t:'init', body:{pos,nrm}, bottom:{pos,nrm}|null, bones:{l:[J,E], r:[J,E]}, hps, z0}
 //        {t:'params', p}      {t:'tick'}   (one frame per tick; answered with {t:'frame'})
 //   out: {t:'topo', ...} when the mesh changes, {t:'frame', pos, nrm, awake, ms}
-import { build, BASE, BASE_M } from './pattern.js?v=12';
+import { build, fitSide, BASE, BASE_M } from './pattern.js?v=13';
 
 const G = -9.8, SUB = 12, DT = 1 / 60, TH = 0.004;
-let sdf = null, ctx = null, cloth = null, pending = null, awake = 0, calm = 0;
+let sdf = null, ctx = null, cloth = null, pending = null, awake = 0, calm = 0, snap = null, frames = 0, still = 0;
 // the bottom worn under the top: its outer radius round a vertical axis by height and angle (the site's botTable)
 let bot = null;
 
@@ -22,7 +22,7 @@ function handle(m) {
     ctx.axis = { l: armAxis(m.body.pos, m.bones.l), r: armAxis(m.body.pos, m.bones.r) };
     postMessage({ t: 'log', s: `sdf ${(performance.now() - t0).toFixed(0)} ms, ${sdf.nx}×${sdf.ny}×${sdf.nz}` });
   } else if (m.t === 'params') pending = m.p;
-  else if (m.t === 'bottom') { bot = m.tab && hull(m.tab); awake = 1; calm = 0; }
+  else if (m.t === 'bottom') { bot = m.tab && hull(m.tab); awake = 1; calm = 0; snap = null; }
   else if (m.t === 'tick') tick(m.hold);
   else if (m.t === 'probe') {   // test: field values across the arm at a few points down its centre line
     const out = [];
@@ -42,14 +42,23 @@ function tick(m0) {
     cloth = assemble(build(p), cloth);
     cloth.stretch = p.stretch || 0;
     postTopo();
-    awake = 1; calm = 0;
+    awake = 1; calm = 0; snap = null;
   }
   if (!cloth) { postMessage({ t: 'frame', pos: null }); return; }
   if (awake && !m0) {
     // still = all but a few particles (one caught where the body and the bottom meet can tremble for ever, unseen)
-    const moving = step(cloth);
-    calm = moving <= Math.max(4, cloth.nP * .002) ? calm + 1 : 0;
-    if (calm > 20) awake = 0;
+    const moving = step(cloth), few = Math.max(4, cloth.nP * .002);
+    calm = moving <= few ? calm + 1 : 0;
+    // or none of it getting anywhere: a tight knit over a hollow (the small of the back) can keep a dozen particles
+    // trembling on the spot, fast enough to count as moving but never more than a fraction of a millimetre away
+    if (!snap || snap.length !== cloth.p.length) { snap = cloth.p.slice(); frames = 0; still = 0; }
+    else if (++frames >= 15) {
+      let far = 0;
+      for (let i = 0; i < snap.length; i += 3) if ((cloth.p[i] - snap[i]) ** 2 + (cloth.p[i + 1] - snap[i + 1]) ** 2 + (cloth.p[i + 2] - snap[i + 2]) ** 2 > 2.5e-7) far++;
+      still = far <= few ? still + 1 : 0;
+      snap.set(cloth.p); frames = 0;
+    }
+    if (calm > 20 || still >= 3) { awake = 0; snap = null; }
   }
   const pos = cloth.p.slice(), nrm = normals(cloth), { cl, cn } = toBody(cloth);
   postMessage({ t: 'frame', pos, nrm, cl, cn, awake, ms: performance.now() - t0 }, [pos.buffer, nrm.buffer, cl.buffer, cn.buffer]);
@@ -409,9 +418,11 @@ function locator(o, old) {
 }
 
 // first placement: panels wrapped round an ellipse about the torso, sleeves as tubes round the upper arms
-// a body panel's half width (cm) at depth yd below the high shoulder point (without the waist shaping)
+// a body panel's half width (cm) at depth yd below the high shoulder point (the side seam's x)
 function halfOf(P, yd) {
-  return yd <= P.ad ? P.cw : P.cw + (P.hw - P.cw) * Math.min(1, (yd - P.ad) / Math.max(1, P.L - P.ad));
+  if (yd <= P.ad) return P.cw;
+  const x = P.cw + (P.hw - P.cw) * Math.min(1, (yd - P.ad) / Math.max(1, P.L - P.ad));
+  return P.fit ? fitSide(P, yd, x) : x;
 }
 function place(pc, p, gi) {
   const { hps, z0, bones } = ctx;
@@ -423,7 +434,7 @@ function place(pc, p, gi) {
     const P = gi.P, yd = -p[1];
     // a fitted knit smaller than the body starts round the regular tee's ellipse, stretched, and draws itself in
     // (started round its own smaller ellipse it would begin inside the body)
-    const B0 = P.base === 'm' ? BASE_M : BASE, own = halfOf(P, yd) / 100, half = Math.max(own, halfOf({ ...P, cw: B0.cw, hw: B0.hw }, yd) / 100), spread = half / own;
+    const B0 = P.base === 'm' ? BASE_M : BASE, own = halfOf(P, yd) / 100, half = Math.max(own, halfOf({ ...P, cw: B0.cw, hw: B0.hw, fit: null }, yd) / 100), spread = half / own;
     const ratio = (0.11 + 0.065 * Math.min(1, hz / 0.18)) / (0.205 + 0.045 * Math.min(1, hz / 0.25));
     const Q = Math.PI / 4 * (3 * (1 + ratio) - Math.sqrt((3 + ratio) * (1 + 3 * ratio)));   // Ramanujan, for a = 1
     const a = half / Q, b = a * ratio;

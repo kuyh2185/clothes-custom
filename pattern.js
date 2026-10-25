@@ -14,10 +14,10 @@ const sstep = t => { t = clamp(t, 0, 1); return t * t * (3 - 2 * t); };
 // strap = shoulder width left (only without sleeves; full = sw - nw); arm = the arm's length shoulder → wrist;
 // over: how far a sleeve can run on past the wrist, over the hand; hand: its half width there, wide enough to go round
 // the hand and thumb (the widest of the hand is about 7 cm past the wrist)
-// sleeveL / sleeveR: each sleeve's own length (default: sleeve); waist: cm the side seams come in at the waist;
+// sleeveL / sleeveR: each sleeve's own length (default: sleeve); fit: { w, y0, q } a fitted side seam (see bodyHalf);
 // nw: half the neck's width at the shoulder, ndF / ndB: its depth front and back, neckV: 0 round … 1 V
 export const BASE = { nw: 9.6, ndF: 10.0, ndB: 2.6, sw: 19.0, ss: 4.6, ad: 23.5, cw: 25.5, hw: 26.0, L: 65.0,
-  bw: 18.0, cuff: 16.8, wrist: 11.5, ease: -0.4, sleeve: 20, strap: null, arm: 58, over: 15, hand: 19, waist: 0 };
+  bw: 18.0, cuff: 16.8, wrist: 11.5, ease: -0.4, sleeve: 20, strap: null, arm: 58, over: 15, hand: 19, fit: null };
 // men's regular tee on the 188 cm model
 export const BASE_M = { ...BASE, nw: 10.6, ndF: 9.0, ndB: 2.6, sw: 22.6, ss: 5.0, ad: 26.0, cw: 29.0, hw: 28.5, L: 72.0,
   bw: 20.5, cuff: 19.0, wrist: 12.5, arm: 63, over: 16, hand: 22.5 };
@@ -79,6 +79,13 @@ function fracAtY(pts, y) {
 const nseg = pts => Math.max(1, Math.round(plen(pts) / S));
 
 /* ---------- the pattern ---------- */
+// fitted (P.fit = { w, y0, q }, q[i] the body's quarter round i cm below y0): the side seam's x at depth y follows
+// the body's outline from the underarm, w of the way from the tee's straight side x0
+export function fitSide(P, y, x0) {
+  const { w, y0, q } = P.fit, L = Math.max(P.L, P.ad + 6), s = clamp((y - P.ad) / Math.max(1, L - P.ad), 0, 1);
+  const qa = y => { const i = clamp(y - y0, 0, q.length - 1.001), j = Math.floor(i); return lerp(q[j], q[j + 1], i - j); };
+  return lerp(x0, P.cw + qa(y) - qa(P.ad) + (P.flare || 0) * s * s, w);
+}
 // the +x half of a body panel, every curve in its natural direction: neck centre → shoulder, shoulder neck → out,
 // armhole shoulder → underarm, side underarm → hem, hem side → centre
 function bodyHalf(P, front) {
@@ -102,11 +109,8 @@ function bodyHalf(P, front) {
     [lerp(P.cw - (P.cw - P.sw + 2.2) * (1 - k) - 3.5, O[0] + (P.cw - O[0]) * .35, r), -ad], [P.cw, -ad]);
   const L = Math.max(P.L, ad + 6), dl = L - ad;
   const side = bez([P.cw, -ad], [P.cw, -ad - dl * .29], [P.hw - .3, -L + dl * .33], [P.hw, -L]);
-  if (P.waist) {   // taken in round the waist (17 cm under the arm), easing out above and below
-    const yw = -(ad + 17);
-    for (const q of side) q[0] -= P.waist * Math.exp(-(((q[1] - yw) / 7.5) ** 2));
-  }
-  // the hem starts where the side seam ends (a crop's hem sits in the waist's taking-in: from P.hw it left a flap)
+  if (P.fit) for (const p of side) p[0] = fitSide(P, -p[1], p[0]);
+  // the hem starts where the side seam ends (a fitted crop's hem sits in the waist: from P.hw it left a flap)
   const hx = side[side.length - 1][0];
   const hem = bez([hx, -L], [hx * .6, -L - .3], [hx * .2, -L - .5], [0, -L - .5]);
   return { neck, shoulder, arm, side, hem };
