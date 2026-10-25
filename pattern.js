@@ -80,11 +80,22 @@ const nseg = pts => Math.max(1, Math.round(plen(pts) / S));
 
 /* ---------- the pattern ---------- */
 // fitted (P.fit = { w, y0, q }, q[i] the body's quarter round i cm below y0): the side seam's x at depth y follows
-// the body's outline from the underarm, w of the way from the tee's straight side x0
+// the body's outline from the underarm, w of the way from the tee's straight side x0. Slim (ws, before w): ws of the
+// way in to the waist with that outline, but below the waist it keeps the waist's width until the hips come within
+// 2 cm of it: kept the underarm's ease down the hip slope, a crop's hem stood off the body in a flare. Never out past
+// x0, and soft min / max (none at the underarm, where they start together) so the side doesn't turn corners
 export function fitSide(P, y, x0) {
-  const { w, y0, q } = P.fit, L = Math.max(P.L, P.ad + 6), s = clamp((y - P.ad) / Math.max(1, L - P.ad), 0, 1);
+  const { w, ws = 0, y0, q } = P.fit, L = Math.max(P.L, P.ad + 6), s = clamp((y - P.ad) / Math.max(1, L - P.ad), 0, 1);
   const qa = y => { const i = clamp(y - y0, 0, q.length - 1.001), j = Math.floor(i); return lerp(q[j], q[j + 1], i - j); };
-  return lerp(x0, P.cw + qa(y) - qa(P.ad) + (P.flare || 0) * s * s, w);
+  const fl = (P.flare || 0) * s * s, t = P.cw + qa(y) - qa(P.ad) + fl;
+  if (!ws) return lerp(x0, t, w);
+  const k = 4 * clamp((y - P.ad) / 6, 0, 1), sm = (a, b, d, j = k) => (a + b + d * Math.sqrt((a - b) * (a - b) + j * j)) / 2;
+  let lo = qa(P.ad);
+  for (let v = P.ad; v < y; v++) lo = Math.min(lo, qa(v));
+  lo = Math.min(lo, qa(y));
+  const ease = clamp(P.cw - qa(P.ad), 0, 2);
+  const slim = sm(x0, sm(P.cw + lo - qa(P.ad), qa(y) + ease, 1, k * 2) + fl, -1);
+  return lerp(lerp(x0, slim, ws), t, w);
 }
 // the +x half of a body panel, every curve in its natural direction: neck centre → shoulder, shoulder neck → out,
 // armhole shoulder → underarm, side underarm → hem, hem side → centre

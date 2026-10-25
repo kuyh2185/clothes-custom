@@ -12,7 +12,7 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { smoothChest, tuckUnder } from './mannequin.js?v=1';
-import { BASE, BASE_M } from './pattern.js?v=17';
+import { BASE, BASE_M } from './pattern.js?v=21';
 
 const $ = id => document.getElementById(id);
 const PI = Math.PI;
@@ -43,6 +43,10 @@ const fullOf = T => shoulderOf(T) - (base().nw + T.dNw);   // the shoulder seam'
 // 0 … 1 is how far the side seams follow the mannequin's own outline (measure()) instead of the tee's straight side
 const tightOf = e => clamp(-e - 1.5, 0, 6.5);
 const fitOf = e => sstep(tightOf(e) / 3.5);
+// a slim top is shaped, not just narrower: from the regular fit's edge its side seams take in at the waist with the
+// mannequin's outline (fully by the fitted), never out past the tee's straight side. Only the side: the knit, the
+// armhole and the sleeves stay the tee's until the fitted (fitOf); cut straight, a slim top was the regular one 1 cm in
+const shapeOf = e => sstep((-e - .5) / 1.5);
 // a wider body puts the underarm further out along the sloping arm: the armhole drops with it, or the underarm would
 // sit inside the arm and the cloth twist over or under it. A fitted one rises to just under the real armpit: the
 // tee's deep armhole would leave a web of cloth between the arm and the side, standing off the body under the arm
@@ -55,7 +59,7 @@ const elbowOf = () => { const [J, E] = A.bones.l; return Math.hypot(E[0] - J[0],
 const wristOf = () => { const [, E, W] = A.bones.l; return elbowOf() + Math.hypot(W[0] - E[0], W[1] - E[1], W[2] - E[2]) * 100; };
 function params() {
   const b = base(), T = state.top, full = fullOf(T), [l, r] = T.sl, t = tightOf(T.ease), e = T.ease;
-  const ad = adOf(T), w = fitOf(e), m = w > 0 && A ? measure() : null;
+  const ad = adOf(T), w = fitOf(e), ws = shapeOf(e), m = ws > 0 && A ? measure() : null;
   // fitted: the quarter round of the body at each depth (cm below the high shoulder point) from the armhole down
   // past the hem, less a little round the chest (a stretch knit sits a few cm smaller than the body), back to the
   // body's own round by the waist and at the hem: cloth pulled tight where the body widens downward (a crop's hem
@@ -77,7 +81,7 @@ function params() {
     // arm like the body, a little over it past the elbow (pulled tight round the bony wrist, the skin came through)
     const ar = m.arm, last = ar.findLastIndex(v => v > 0), arm = [], elbow = elbowOf();
     for (let y = 0; y <= b.arm + 1; y++) arm.push(r1(ar[Math.min(last, y)] / 2 + lerp(off * .25, .5, sstep((y - elbow + 3) / 6))));
-    fit = { w: Math.round(w * 100) / 100, y0, q, arm };
+    fit = { w: Math.round(w * 100) / 100, ws: Math.round(ws * 100) / 100, y0, q, arm };
     cw = lerp(cw, q[0] + (q[1] - q[0]) * (ad - y0), w);
   }
   // a long sleeve's rib cuff: the arm's round where the sleeve ends and a little ease, starting past the elbow
@@ -315,7 +319,7 @@ const world = mesh => {   // rest pose = bind pose = world here (the asset's roo
 };
 
 /* ---------- the cloth ---------- */
-const worker = new Worker('cloth.js?v=33', { type: 'module' });
+const worker = new Worker('cloth.js?v=37', { type: 'module' });
 worker.onerror = e => console.error('[cloth]', e.message);
 const fabricU = { uC1: { value: new THREE.Color() }, uC2: { value: new THREE.Color() }, uPat: { value: 0 }, uScale: { value: 1 } };
 const fabric = new THREE.MeshPhysicalMaterial({ roughness: .86, sheen: .6, sheenRoughness: .8, side: THREE.DoubleSide });
