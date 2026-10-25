@@ -533,7 +533,8 @@ function placeDots() {
   const ok = cloth && cloth.userData.marks && !next;
   for (const d of DOTS) {
     const vi = ok ? vertexOf(d) : -1;
-    if (vi == null || vi < 0) { d.el.hidden = true; continue; }
+    // the point in hand stays where it is while the cloth is re-meshed under it (hiding it lost the drag)
+    if (vi == null || vi < 0) { d.el.hidden = drag !== d; continue; }
     const P = cloth.geometry.attributes.position, N = cloth.geometry.attributes.normal;
     v3.fromBufferAttribute(P, vi); n3.fromBufferAttribute(N, vi);
     // shown only on the side you look at (sleeves and sides sit on the outline: shown unless well behind)
@@ -559,18 +560,19 @@ let drag = null;
 function dragStart(e, d) {
   e.preventDefault(); e.stopPropagation();
   drag = d; controls.enabled = false;
-  d.el.setPointerCapture(e.pointerId);
   d.x0 = e.clientX; d.y0 = e.clientY; d.start = structuredClone(state.top);
   // which way is "out" on screen: from the body's middle line at that height to the point
   const [ax, ay] = project(new THREE.Vector3(0, d.p.y, A.z0));
   const ox = d.sx - ax, oy = d.sy - ay, ol = Math.hypot(ox, oy);
   d.out = ol > 6 ? [ox / ol, oy / ol] : [1, 0];
   d.mpp = 2 * camera.position.distanceTo(d.p) * Math.tan(camera.fov * PI / 360) / canvas.getBoundingClientRect().height;
-  const move = ev => dragMove(ev, d), up = () => {
-    d.el.removeEventListener('pointermove', move); d.el.removeEventListener('pointerup', up); d.el.removeEventListener('pointercancel', up);
+  // followed on the window, not the point: the point moves (and can be re-placed) under the pointer
+  const id = e.pointerId, move = ev => { if (ev.pointerId === id) dragMove(ev, d); }, up = ev => {
+    if (ev.pointerId !== id) return;
+    removeEventListener('pointermove', move); removeEventListener('pointerup', up); removeEventListener('pointercancel', up);
     drag = null; controls.enabled = true; tip.classList.remove('show'); commit(); apply();
   };
-  d.el.addEventListener('pointermove', move); d.el.addEventListener('pointerup', up); d.el.addEventListener('pointercancel', up);
+  addEventListener('pointermove', move); addEventListener('pointerup', up); addEventListener('pointercancel', up);
 }
 function dragMove(e, d) {
   const dx = e.clientX - d.x0, dy = e.clientY - d.y0, down = dy * d.mpp, out = (dx * d.out[0] + dy * d.out[1]) * d.mpp;
