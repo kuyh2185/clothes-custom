@@ -57,15 +57,18 @@ function params() {
   // past the hem, less a little round the chest (a stretch knit sits a few cm smaller than the body), back to the
   // body's own round by the waist and at the hem: cloth pulled tight where the body widens downward (a crop's hem
   // between waist and hips) slides up the slope to the waist and rolls over. Let out only below the waist, a short
-  // crop on the men's long flat waist was cut wider at the hem than the body there and stood out at the side seams
+  // crop on the men's long flat waist was cut wider at the hem than the body there and stood out at the side seams.
+  // A hem on the widening slope (a crop between waist and hips) is cut a little under the body, as a fitted tee's hem
+  // hugs: cut to the body, the cloth at the squared side corner stood out from the slope like a small ear
   let fit = null, cw = b.cw + e;
   if (m) {
     const off = (e + 2.5) * .4, q = [], y0 = Math.floor(ad), L = Math.max(T.L, ad + 6), n = Math.ceil(L) + 3 - y0;
     const qm = y => m.q[clamp(Math.round(y), 0, m.q.length - 1)];
+    const band = -.8 * clamp((qm(L) - qm(L - 4)) / 4 / .3, 0, 1);
     for (let i = 0; i <= n; i++) {
       const y = y0 + i, low = sstep((y - m.waist + 8) / 8), hem = sstep((y - L + 7) / 5);
       const v = qm(y) + off * (1 - low);
-      q.push(r1(lerp(v, Math.max(v, qm(y)), hem)));
+      q.push(r1(lerp(v, Math.max(v, qm(y)) + band, hem)));
     }
     fit = { w: Math.round(w * 100) / 100, y0, q };
     cw = lerp(cw, q[0] + (q[1] - q[0]) * (ad - y0), w);
