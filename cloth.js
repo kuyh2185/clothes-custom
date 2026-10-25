@@ -7,6 +7,10 @@
 import { build, fitSide, BASE, BASE_M } from './pattern.js?v=17';
 
 const G = -9.8, SUB = 12, DT = 1 / 60, TH = 0.004;
+// cloth against itself: two particles not near each other along the cloth stay SC apart (a little over the widest gap
+// between a triangle's corners and its middle at the mesh spacing, so one layer can't slip through the other); VMAX
+// keeps a frame's travel short enough for the pairs found before it to cover it
+const SC = 0.009, VMAX = 1;
 let sdf = null, ctx = null, cloth = null, pending = null, awake = 0, calm = 0, snap = null, frames = 0, still = 0;
 // the bottom worn under the top: its outer radius round a vertical axis by height and angle (the site's botTable)
 let bot = null;
@@ -357,7 +361,9 @@ function assemble(g, old) {
   const nB = bl.length / 3, bc = new Int32Array(nB * 2), br = new Float32Array(nB);
   for (let k = 0; k < nB; k++) { bc[k * 2] = bl[k * 3]; bc[k * 2 + 1] = bl[k * 3 + 1]; br[k] = bl[k * 3 + 2]; }
 
+  const near = nearOnCloth(ptri, nP);
   return {
+    near, sp: new Int32Array(1 << 16), nS: 0, R: 0, trav: 0, rub: false,
     marks: marks(pieces),
     pieces: pieces.map(pc => ({ name: pc.name, pc: pc.pc, pts: pc.pts, tris: pc.tris, off: pc.off })),
     flip: Object.fromEntries(pieces.map(pc => [pc.name, pc.flip])),
@@ -365,6 +371,26 @@ function assemble(g, old) {
     p: pos, v: new Float32Array(nP * 3), q: new Float32Array(nP * 3),
     ec, er, ew, bc, br, info: g.info,
   };
+}
+
+// each particle's neighbours two steps out along the cloth (seams included: a sewn pair is one particle): they may come
+// closer than SC — a fold brings them no nearer than that — every other pair is kept apart (start / list, CSR)
+function nearOnCloth(ptri, nP) {
+  const nb = Array.from({ length: nP }, () => new Set());
+  for (let t = 0; t < ptri.length; t += 3) {
+    const a = ptri[t], b = ptri[t + 1], c = ptri[t + 2];
+    nb[a].add(b).add(c); nb[b].add(a).add(c); nb[c].add(a).add(b);
+  }
+  const st = new Int32Array(nP + 1), out = [];
+  for (let i = 0; i < nP; i++) {
+    const s = new Set(nb[i]);
+    for (const j of nb[i]) for (const k of nb[j]) s.add(k);
+    s.delete(i);
+    st[i] = out.length;
+    for (const j of s) out.push(j);
+  }
+  st[nP] = out.length;
+  return { st, list: Int32Array.from(out) };
 }
 
 // where a pattern point (cm) of an old piece sits now: inside one of its triangles, or carried on past the nearest one
@@ -584,12 +610,25 @@ function triN(P, a, b, c) {
 
 /* ---------- one frame: SUB small steps, one constraint pass each ---------- */
 // knit: how far a fully stretchy fabric (stretch 1, a fitted top smaller than the body) gives across the grain
-const K = { stretch: 0, knit: 1.2e-5, squash: 4e-7, bend: 6e-6, damp: 2.5, fric: 0.6 };
+const K = { stretch: 0, knit: 1.2e-5, squash: 4e-7, bend: 6e-6, damp: 2.5, fric: 0.6, sfric: 0.2 };
 function step(c) {
   const { p, v, q, ec, er, ew, bc, br, nP } = c, h = DT / SUB;
   const aS = K.stretch / (h * h), aK = K.knit * (c.stretch || 0) / (h * h), aC = K.squash / (h * h), aB = K.bend / (h * h);
   const damp = Math.exp(-K.damp * h);
-  let moving = 0;
+  let moving = 0, vm = 0;
+  for (let i = 0; i < nP * 3; i += 3) {
+    const l = Math.hypot(v[i], v[i + 1], v[i + 2]);
+    if (l > VMAX) { const f = VMAX / l; v[i] *= f; v[i + 1] *= f; v[i + 2] *= f; }
+    vm = Math.max(vm, Math.min(l, VMAX));
+  }
+  // the pairs hold while nothing has moved more than half the margin past SC since they were found: found again only then
+  // (a settling cloth goes several frames on one search)
+  const go = vm * DT * 1.5;   // (the constraints move a particle a little past its own velocity)
+  if (!c.R || c.trav + go > (c.R - SC) / 2) { c.R = SC + Math.max(0.008, 2.2 * go); pairs(c, c.R); c.trav = 0; }
+  c.trav += go;
+  // rubbing starts once the cloth is nearly still and holds until it moves again in earnest (switched on and off at one
+  // speed it would flicker, and the cloth never come to rest)
+  c.rub = c.rub ? vm < 0.2 : vm < 0.05;
   for (let s = 0; s < SUB; s++) {
     for (let i = 0; i < nP; i++) {
       const k = i * 3;
@@ -601,6 +640,7 @@ function step(c) {
     dist(p, ec, er, aS, aC, ew, aK);
     dist(p, bc, br, aB, aB);
     dist(p, ec, er, aS, aC, ew, aK);   // a second pass on length: a thin strap carries the whole panel
+    apart(p, q, c.sp, c.nS, c.rub);
     for (let i = 0; i < nP; i++) {
       const k = i * 3, x = p[k], y = p[k + 1], z = p[k + 2], d = sample(x, y, z);
       if (d < TH) {
@@ -621,6 +661,63 @@ function step(c) {
     }
   }
   return moving;
+}
+// pairs of particles within R that the cloth doesn't hold near each other (c.sp, c.nS), found through a spatial hash;
+// the small steps then only keep those pairs SC apart
+const HALF = [0, 0, 0];
+for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) for (let d = -1; d <= 1; d++) if (a * 9 + b * 3 + d > 0) HALF.push(a, b, d);
+function pairs(c, R) {
+  const { p, nP, near } = c, inv = 1 / R, N = 2 * nP, R2 = R * R, st = near.st, nl = near.list;
+  const gx = new Int32Array(nP), gy = new Int32Array(nP), gz = new Int32Array(nP), cell = new Int32Array(nP);
+  const start = new Int32Array(N + 1), ent = new Int32Array(nP);
+  const hash = (x, y, z) => ((Math.imul(x, 92837111) ^ Math.imul(y, 689287499) ^ Math.imul(z, 283923481)) >>> 0) % N;
+  for (let i = 0; i < nP; i++) {
+    gx[i] = Math.floor(p[i * 3] * inv); gy[i] = Math.floor(p[i * 3 + 1] * inv); gz[i] = Math.floor(p[i * 3 + 2] * inv);
+    const h = cell[i] = hash(gx[i], gy[i], gz[i]);
+    start[h]++;
+  }
+  for (let k = 0, s = 0; k <= N; k++) { s += start[k]; start[k] = s; }
+  for (let i = 0; i < nP; i++) ent[--start[cell[i]]] = i;
+  let sp = c.sp, n = 0;
+  for (let i = 0; i < nP; i++) {
+    const x = p[i * 3], y = p[i * 3 + 1], z = p[i * 3 + 2], X = gx[i], Y = gy[i], Z = gz[i];
+    // its own cell and the 13 on one side of it: each pair of cells is looked at once
+    for (let o = 0; o < 42; o += 3) {
+      const h = hash(X + HALF[o], Y + HALF[o + 1], Z + HALF[o + 2]);
+      for (let k = start[h], e = start[h + 1]; k < e; k++) {
+        const j = ent[k];
+        if (o === 0 ? j <= i : j === i) continue;
+        const dx = p[j * 3] - x, dy = p[j * 3 + 1] - y, dz = p[j * 3 + 2] - z;
+        if (dx * dx + dy * dy + dz * dz > R2) continue;
+        let m = st[i];
+        while (m < st[i + 1] && nl[m] !== j) m++;
+        if (m < st[i + 1]) continue;
+        if (n * 2 + 2 > sp.length) { const g = new Int32Array(sp.length * 2); g.set(sp); sp = c.sp = g; }
+        sp[n * 2] = i; sp[n * 2 + 1] = j; n++;
+      }
+    }
+  }
+  c.nS = n;
+}
+// two layers of cloth closer than SC are pushed apart along the line between them, half each, and once the cloth is
+// nearly still (rub) they rub: their sliding past each other is held back, so a fold settles instead of creeping on for
+// ever. While the cloth still falls into place they slide freely, or a fold caught on the way down would stay
+function apart(p, q, sp, n, rub) {
+  for (let e = 0; e < n; e++) {
+    const a = sp[e * 2] * 3, b = sp[e * 2 + 1] * 3;
+    const dx = p[b] - p[a], dy = p[b + 1] - p[a + 1], dz = p[b + 2] - p[a + 2], d2 = dx * dx + dy * dy + dz * dz;
+    if (d2 >= SC * SC || d2 < 1e-14) continue;
+    const d = Math.sqrt(d2), push = SC - d, f = push / d * .5;
+    p[a] -= dx * f; p[a + 1] -= dy * f; p[a + 2] -= dz * f;
+    p[b] += dx * f; p[b + 1] += dy * f; p[b + 2] += dz * f;
+    if (!rub) continue;
+    const nx = dx / d, ny = dy / d, nz = dz / d;
+    const rx = p[b] - q[b] - p[a] + q[a], ry = p[b + 1] - q[b + 1] - p[a + 1] + q[a + 1], rz = p[b + 2] - q[b + 2] - p[a + 2] + q[a + 2];
+    const rn = rx * nx + ry * ny + rz * nz, tx = rx - rn * nx, ty = ry - rn * ny, tz = rz - rn * nz;
+    const g = Math.min(1, K.sfric * push / (Math.hypot(tx, ty, tz) + 1e-9)) * .5;
+    p[a] += tx * g; p[a + 1] += ty * g; p[a + 2] += tz * g;
+    p[b] -= tx * g; p[b + 1] -= ty * g; p[b + 2] -= tz * g;
+  }
 }
 // cloth over a bottom bridges every hollow (between the legs, the small of the back): each height's outline becomes
 // its convex hull, so the hem hangs across the gap instead of being drawn into it
