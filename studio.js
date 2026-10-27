@@ -330,7 +330,33 @@ const world = mesh => {   // rest pose = bind pose = world here (the asset's roo
 const worker = new Worker('cloth.js?v=39', { type: 'module' });
 worker.onerror = e => console.error('[cloth]', e.message);
 const fabricU = { uC1: { value: new THREE.Color() }, uC2: { value: new THREE.Color() }, uPat: { value: 0 }, uScale: { value: 1 } };
-const fabric = new THREE.MeshPhysicalMaterial({ roughness: .86, sheen: .6, sheenRoughness: .8, side: THREE.DoubleSide });
+// the knit's grain as a normal map over the flat pattern (m): a jersey's columns of V-shaped loops, or for the fitted
+// knit a 1×1 rib (every other wale raised). One tile = 8 wales × 8 courses, a little larger than real yarn so it reads
+const knitMap = rib => {
+  const S = 256, h = new Float32Array(S * S), d = new Uint8Array(S * S * 4);
+  for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
+    const fx = x / 32 % 1, fy = y / 32 % 1;
+    let v = 0;
+    for (const c of [.25, .75]) {   // the loop's two legs lean in toward the bottom: a V
+      const t = Math.abs(fx - c - (c < .5 ? 1 : -1) * (fy - .5) * .3) / .24;
+      v = Math.max(v, Math.max(0, 1 - t * t) * (.55 + .45 * Math.sin(PI * fy)));
+    }
+    if (rib) v = v * .35 + .65 * Math.max(0, Math.cos(2 * PI * (x / 64 + .25))) ** .6;
+    h[y * S + x] = v;
+  }
+  const H = (x, y) => h[((y + S) % S) * S + (x + S) % S];
+  for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
+    const nx = (H(x - 1, y) - H(x + 1, y)) * 1.5, ny = (H(x, y - 1) - H(x, y + 1)) * 1.5, l = Math.hypot(nx, ny, 1), i = (y * S + x) * 4;
+    d[i] = (nx / l * .5 + .5) * 255; d[i + 1] = (ny / l * .5 + .5) * 255; d[i + 2] = (1 / l * .5 + .5) * 255; d[i + 3] = 255;
+  }
+  const t = new THREE.DataTexture(d, S, S);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(1 / .032, 1 / .024);   // wale 4 mm, course 3 mm
+  t.magFilter = THREE.LinearFilter; t.minFilter = THREE.LinearMipmapLinearFilter; t.generateMipmaps = true;
+  t.anisotropy = renderer.capabilities.getMaxAnisotropy(); t.needsUpdate = true;
+  return t;
+};
+const jersey = knitMap(false), rib2 = knitMap(true);
+const fabric = new THREE.MeshPhysicalMaterial({ roughness: .86, sheen: .6, sheenRoughness: .8, side: THREE.DoubleSide, normalMap: jersey, normalScale: new THREE.Vector2(.45, .45) });
 fabric.onBeforeCompile = sh => {
   Object.assign(sh.uniforms, fabricU);
   sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nattribute vec2 pat; varying vec2 vPat;')
@@ -366,6 +392,7 @@ worker.onmessage = e => {
     g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(n * 3), 3));
     g.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(n * 3), 3));
     g.setAttribute('pat', new THREE.BufferAttribute(t.uv, 2));
+    g.setAttribute('uv', g.attributes.pat);   // the knit's normal map follows the pattern too
     g.setIndex(new THREE.BufferAttribute(t.index, 1));
     if (!cloth) { cloth = new THREE.Mesh(g, fabric); cloth.castShadow = cloth.receiveShadow = true; cloth.frustumCulled = false; scene.add(cloth); }
     else { cloth.geometry.dispose(); cloth.geometry = g; }
@@ -523,14 +550,16 @@ document.querySelectorAll('.views [data-a]').forEach(b => b.addEventListener('cl
   camera.position.set(t.x + hr * Math.sin(a), y, t.z + hr * Math.cos(a)); controls.update(); needs = true;
 }));
 
-// state → cloth, colours, panel. light = only what a drag / bar changes every move (no card redraw)
+// state → cloth, colours, panel. light = mid-drag (a bar, a colour): the colour labels only, not the whole colour panel
 function apply(light) {
   sendParams();
   const T = state.top;
   fabricU.uC1.value.set(T.c1); fabricU.uC2.value.set(T.c2); fabricU.uPat.value = T.pat; fabricU.uScale.value = T.scale;
   fabric.sheenColor.set(T.c1).lerp(new THREE.Color('#ffffff'), .15);
-  if (light) { renderBars(); renderCards(); $('c1t').textContent = T.c1; $('c2t').textContent = T.c2; $('lbl-scale').textContent = `×${T.scale.toFixed(2)}`; }
-  else { renderBars(); renderCards(); renderColor(); }
+  fabric.normalMap = fitOf(T.ease) > .5 ? rib2 : jersey;
+  renderBars(); renderCards();
+  if (light) { $('c1t').textContent = T.c1; $('c2t').textContent = T.c2; $('lbl-scale').textContent = `×${T.scale.toFixed(2)}`; }
+  else renderColor();
   needs = true;
 }
 
