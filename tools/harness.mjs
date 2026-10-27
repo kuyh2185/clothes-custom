@@ -6,6 +6,8 @@
 //   { t: 'set', o: {…top} }
 //   { t: 'drag', dot: 0…11 (DOTS order), dx, dy (px) }   { t: 'body', v: 'f'|'m' }   { t: 'bottom', v: 'jeans'|'none' }
 //   { t: 'undo' }   { t: 'redo' }   { t: 'view', a: 0|1|2|3 }   { t: 'wait', ms }   { t: 'settle' }
+//   { t: 'edge', f: 0…1 (of the edge points in view), dx, dy } or { t: 'edge', pc, curve, at (0…1 along it), half?, dx, dy }:
+//   the outline pulled by hand there   { t: 'toggle', id: 'sym'|'fb' }
 import { createRequire } from 'node:module';
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
@@ -23,14 +25,19 @@ export const LIMITS = { s: 15, pen: 0, ear: .8, side: 3.5, sleeve: 4, selfx: 200
 export function judge(r, lim) {
   const m = r.m, bad = [], L = { ...LIMITS, ...lim };
   if (!m) return [r.err || '측정 못 함'];
-  if (r.s > L.s) bad.push(`멈춤 ${r.s === Infinity ? '30초 넘게' : r.s.toFixed(1) + 's'}`);
+  // (per amount of cloth, as selfx below: each step of a top twice the size takes twice as long)
+  const big = Math.max(1, (m.nP || 0) / 6000), s = lim && lim.s != null ? lim.s : L.s * big;
+  if (r.s > s) bad.push(`멈춤 ${r.s === Infinity ? '30초 넘게' : r.s.toFixed(1) + 's'}`);
   if (m.pen > L.pen) bad.push(`뚫림 ${m.pen}점 (최대 ${m.deep}cm)`);
   if (m.ear > L.ear) bad.push(`귀 ${m.earAt} +${m.ear}cm`);
   for (const [k, v] of Object.entries(m.roll)) {
     if (k.startsWith('side') && v > L.side) bad.push(`말림 ${k === 'side0' ? '앞' : '뒤'} 밑단 옆 ${v}cm`);
     if ((k === 'l' || k === 'r') && v > L.sleeve) bad.push(`말림 ${k === 'l' ? '왼소매' : '오른소매'} ${v}cm`);
   }
-  if (m.selfx > L.selfx) bad.push(`겹침 ${m.selfx}`);
+  // (per amount of cloth: a top twice the size, a long balloon-sleeved one, settles with twice the small folds touching
+  // through each other, unseen; a case's own limit is for that one top)
+  const sx = lim && lim.selfx != null ? lim.selfx : L.selfx * big;
+  if (m.selfx > sx) bad.push(`겹침 ${m.selfx} (한도 ${Math.round(sx)})`);
   if (m.dots) bad.push(`화면 밖 점 ${m.dots}`);
   if (m.lim.length) bad.push(`한계 밖 ${m.lim.join(', ')}`);
   if (m.body) bad.push(`몸 어긋남 ${m.body}`);
@@ -90,13 +97,16 @@ async function step(page, st) {
     case 'view': return click(page, `.views [data-a]:nth-child(${st.a + 1})`);
     case 'wait': return page.waitForTimeout(st.ms);
     case 'settle': return settle(page);
-    case 'drag': {
-      const b = await page.evaluate(i => {
-        const d = document.querySelectorAll('#layer .dot')[i];
-        if (!d || d.hidden) return null;
-        const r = d.getBoundingClientRect(); return [(r.left + r.right) / 2, (r.top + r.bottom) / 2];
-      }, st.dot);
+    case 'toggle': return click(page, '#' + st.id);
+    case 'drag': case 'edge': {
+      const b = st.t === 'edge' ? await page.evaluate(s => s.curve ? window.__studio.edgePoint(s.pc, s.curve, s.at, s.half) : window.__studio.edgeAt(s.f), st)
+        : await page.evaluate(i => {
+          const d = document.querySelectorAll('#layer .dot:not(.edge)')[i];
+          if (!d || d.hidden) return null;
+          const r = d.getBoundingClientRect(); return [(r.left + r.right) / 2, (r.top + r.bottom) / 2];
+        }, st.dot);
       if (!b) return;
+      if (st.t === 'edge') { await page.mouse.move(b[0] + 3, b[1] + 3); await page.mouse.move(b[0], b[1]); await page.waitForTimeout(60); }
       await page.mouse.move(b[0], b[1]); await page.mouse.down();
       for (let k = 1; k <= 8; k++) { await page.mouse.move(b[0] + st.dx * k / 8, b[1] + st.dy * k / 8); await page.waitForTimeout(30); }
       return page.mouse.up();
@@ -141,6 +151,7 @@ export function gen(seed) {
     const r = rnd();
     if (r < .3) { const g = pick(Object.keys(CARDS)); steps.push({ t: 'card', g, i: Math.floor(rnd() * CARDS[g]) }); }
     else if (r < .5) steps.push({ t: 'bar', id: pick(BARS), f: Math.round(rnd() * 100) / 100 });
+    // shortcut: no 'edge' steps until studio.js has the outline drawn by hand (window.__studio.edgeAt); add them then
     else if (r < .75) steps.push({ t: 'drag', dot: Math.floor(rnd() * 12), dx: Math.round(U(-90, 90)), dy: Math.round(U(-90, 90)) });
     else if (r < .83) steps.push({ t: 'undo' });
     else if (r < .86) steps.push({ t: 'redo' });

@@ -4,7 +4,7 @@
 //   in : {t:'init', body:{pos,nrm}, bottom:{pos,nrm}|null, bones:{l:[J,E], r:[J,E]}, hps, z0}
 //        {t:'params', p}      {t:'tick'}   (one frame per tick; answered with {t:'frame'})
 //   out: {t:'topo', ...} when the mesh changes, {t:'frame', pos, nrm, awake, ms}
-import { build, fitSide, BASE, BASE_M } from './pattern.js?v=22';
+import { build, fitSide, BASE, BASE_M } from './pattern.js?v=23';
 
 const G = -9.8, SUB = 12, DT = 1 / 60, TH = 0.004;
 // cloth against itself: two particles not near each other along the cloth stay SC apart (a little over the widest gap
@@ -495,11 +495,18 @@ function place(pc, p, gi) {
   const [aO, aU] = capAlong(pc.pc === 2 ? 1 : -1, gi, axis), ch = gi.sleeve ? gi.sleeve.ch : 10, yw = kn[kn.length - 2][0];
   const along = y <= ch ? aO + (aU - aO) * y / ch
     : y < yw ? aU + (y - ch) / 100 - (aU - 0.015 - ch / 100) * (y - ch) / Math.max(1, yw - ch) : 0.015 + y / 100;
-  let k = 1;
-  while (k < axis.length - 1 && axis[k].s < along) k++;
-  const A0 = axis[k - 1], A1 = axis[k], tt = (along - A0.s) / Math.max(1e-6, A1.s - A0.s);
-  const c = [A0.c[0] + (A1.c[0] - A0.c[0]) * tt, A0.c[1] + (A1.c[1] - A0.c[1]) * tt, A0.c[2] + (A1.c[2] - A0.c[2]) * tt];
-  let ax = A1.c[0] - A0.c[0], ay = A1.c[1] - A0.c[1], az = A1.c[2] - A0.c[2];
+  const cAt = s => {
+    let k = 1;
+    while (k < axis.length - 1 && axis[k].s < s) k++;
+    const A0 = axis[k - 1], A1 = axis[k], t = Math.max(0, Math.min(1, (s - A0.s) / Math.max(1e-6, A1.s - A0.s)));
+    return [A0.c[0] + (A1.c[0] - A0.c[0]) * t, A0.c[1] + (A1.c[1] - A0.c[1]) * t, A0.c[2] + (A1.c[2] - A0.c[2]) * t, A0.r + (A1.r - A0.r) * t];
+  };
+  const c = cAt(along), ar = c[3], phi = p[0] / hw * Math.PI, r = Math.max(ar + 0.02, 2 * hw / 100 / (2 * Math.PI));
+  // each row square to the centre line taken over about the row's own radius: the slices' centres wander a little from
+  // one 3 cm step to the next, and a wide sleeve's rows turned with every step crossed each other on the inside of the
+  // turn (a wide sleeve then hung through itself for good)
+  const wd = Math.max(0.03, 1.5 * r), c0 = cAt(along - wd), c1 = cAt(along + wd);
+  let ax = c1[0] - c0[0], ay = c1[1] - c0[1], az = c1[2] - c0[2];
   const al = Math.hypot(ax, ay, az); ax /= al; ay /= al; az /= al;
   // up = world up off the arm's axis, fwd = world front off both
   let ux = -ay * ax, uy = 1 - ay * ay, uz = -ay * az;
@@ -508,7 +515,6 @@ function place(pc, p, gi) {
   const fu = fx * ux + fy * uy + fz * uz; fx -= fu * ux; fy -= fu * uy; fz -= fu * uz;
   const fl = Math.hypot(fx, fy, fz); fx /= fl; fy /= fl; fz /= fl;
   // the row wrapped once round, loose: well clear of the arm, the cloth pulls itself in
-  const ar = A0.r + (A1.r - A0.r) * tt, phi = p[0] / hw * Math.PI, r = Math.max(ar + 0.02, 2 * hw / 100 / (2 * Math.PI) * 1.2);
   const ox = ux * Math.cos(phi) - fx * Math.sin(phi), oy = uy * Math.cos(phi) - fy * Math.sin(phi), oz = uz * Math.cos(phi) - fz * Math.sin(phi);
   // over the hand: round the hand's outline there, a little clear of it, spaced evenly along the outline (a circle clear
   // of the thumb is so much wider than the sleeve that the cloth snaps in and cuts through the thumb; spaced by angle,

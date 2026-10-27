@@ -164,8 +164,15 @@
       // drape). Where the edge already hangs loose (an oversized hem's side corners swing out), only what is well past
       // that looseness counts
       if (kind !== 'hem') continue;
-      const val = d => { const w = at(piece[v], x + nx * d, y + ny * d); return w < 0 ? null : off(X[w * 3], X[w * 3 + 1], X[w * 3 + 2]); };
-      const nearV = [0, 1, 2, 3, 4].map(val).filter(s => s != null), refV = [6, 7, 8, 9].map(val).filter(s => s != null);
+      if (st.editNear && st.editNear(piece[v], x, y)) continue;   // (an outline drawn by hand stands where it was drawn)
+      // (the cloth further in also as if it hung straight down to the edge's height: below a seat or a chest the body
+      // draws in under it, and cloth hanging plumb from there stands off without any ear)
+      const val = (d, plumb) => {
+        const w = at(piece[v], x + nx * d, y + ny * d); if (w < 0) return null;
+        const o = off(X[w * 3], X[w * 3 + 1], X[w * 3 + 2]);
+        return plumb && o != null ? Math.max(o, off(X[w * 3], X[v * 3 + 1], X[w * 3 + 2]) ?? o) : o;
+      };
+      const nearV = [0, 1, 2, 3, 4].map(d => val(d)).filter(s => s != null), refV = [6, 7, 8, 9].map(d => val(d, true)).filter(s => s != null);
       if (refV.length < 2 || !nearV.length) continue;
       const k = comp.get(map[v]), ref = refV.reduce((s, q) => s + q, 0) / refV.length;
       (loops[k] ||= { kind, pts: [] }).pts.push({ v, near: Math.max(...nearV), ref, jump: Math.max(...nearV) - ref });
@@ -199,7 +206,8 @@
       }
     }
     for (const [s, pc] of [['l', 2], ['r', 3]]) {
-      const cuff = free.filter(v => piece[v] === pc && kindOf.get(comp.get(map[v])) === 'cuff' && pt(v)[1] < -info.sleeve['u' + s.toUpperCase()] + 1.5);
+      // (each point against its own sleeve cm: an end drawn by hand isn't straight across)
+      const cuff = free.filter(v => piece[v] === pc && kindOf.get(comp.get(map[v])) === 'cuff' && pt(v)[1] < -info.sleeve['u' + s.toUpperCase()] + 1.5 + Math.max(0, ...(st.state.top.edit?.['S' + s] || []).map(e => e[3])));
       if (!cuff.length) continue;
       const [J, E, W] = A.bones[s], seg = [[J, E], [E, W]];
       const along = v => {   // cm down the arm's bones to the closest point
@@ -213,7 +221,7 @@
         }
         return out * 100;
       };
-      roll[s] = info.sleeve['u' + s.toUpperCase()] - median(cuff.map(along));
+      roll[s] = -median(cuff.map(v => along(v) + pt(v)[1]));
     }
 
     // drag points: shown ones inside the stage
@@ -236,7 +244,7 @@
     const ep = ear.v >= 0 ? [X[ear.v * 3], X[ear.v * 3 + 1], X[ear.v * 3 + 2]] : null;
     return {
       pen, deep: r1(deep), ear: Math.round(ear.spike * 100) / 100, earAt: ear.kind, earBy, earP: ep, roll: Object.fromEntries(Object.entries(roll).map(([k, v]) => [k, r1(v)])),
-      selfx: selfx(), dots, lim, body: A.kind === st.state.body ? '' : `패널 ${st.state.body} · 마네킹 ${A.kind}`,
+      selfx: selfx(), nP, dots, lim, body: A.kind === st.state.body ? '' : `패널 ${st.state.body} · 마네킹 ${A.kind}`,
     };
   }
 
@@ -285,4 +293,5 @@
   }
 
   window.__metrics = measure;
+  window.__selfx = selfx;   // (alone: cheap enough to watch the cloth while it falls)
 })();

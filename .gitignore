@@ -3,3 +3,4 @@ blender/previews/
 *.blend1
 __pycache__/
 tools/cases/fuzz/
+.scratch/

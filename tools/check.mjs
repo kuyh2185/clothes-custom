@@ -5,7 +5,7 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { start, runAll, gen, line } from './harness.mjs';
 
-const FUZZ = 30, FUZZ_FAILS = 2;   // fuzz seeds 1…30: failures allowed (2026-10-27: seeds 12 and 25; lower it as they're fixed)
+const FUZZ = 30, FUZZ_FAILS = 1;   // fuzz seeds 1…30: failures allowed (2026-10-28: seed 25; lower it as it is fixed)
 const DIR = new URL('cases/', import.meta.url);
 const cases = readdirSync(DIR).filter(f => f.endsWith('.json')).sort().map(f => JSON.parse(readFileSync(new URL(f, DIR), 'utf8')));
 const fuzz = Array.from({ length: FUZZ }, (_, i) => gen(i + 1));

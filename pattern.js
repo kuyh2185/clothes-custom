@@ -83,11 +83,13 @@ const nseg = pts => Math.max(1, Math.round(plen(pts) / S));
 // the body's outline from the underarm, w of the way from the tee's straight side x0. Slim (ws, before w): ws of the
 // way in to the waist with that outline, but below the waist it keeps the waist's width until the hips come within
 // 2 cm of it: kept the underarm's ease down the hip slope, a crop's hem stood off the body in a flare. Never out past
-// x0, and soft min / max (none at the underarm, where they start together) so the side doesn't turn corners
+// x0, and soft min / max (none at the underarm, where they start together) so the side doesn't turn corners.
+// The flare is all let out by 7 cm above the hem, the hem's last few cm then keep to the body as the cloth above them
+// does: let out toward the hem itself (on a fitted knit that clings above), the side seam kicked out into an ear
 export function fitSide(P, y, x0) {
-  const { w, ws = 0, y0, q } = P.fit, L = Math.max(P.L, P.ad + 6), s = clamp((y - P.ad) / Math.max(1, L - P.ad), 0, 1);
+  const { w, ws = 0, y0, q } = P.fit, L = Math.max(P.L, P.ad + 6);
   const qa = y => { const i = clamp(y - y0, 0, q.length - 1.001), j = Math.floor(i); return lerp(q[j], q[j + 1], i - j); };
-  const fl = (P.flare || 0) * s * s, t = P.cw + qa(y) - qa(P.ad) + fl;
+  const fl = (P.flare || 0) * sstep((y - P.ad) / Math.max(1, L - 7 - P.ad)), t = P.cw + qa(y) - qa(P.ad) + fl;
   if (!ws) return lerp(x0, t, w);
   const k = 4 * clamp((y - P.ad) / 6, 0, 1), sm = (a, b, d, j = k) => (a + b + d * Math.sqrt((a - b) * (a - b) + j * j)) / 2;
   let lo = qa(P.ad);
@@ -212,6 +214,43 @@ function sleeveOutline(P, frontLen, backLen, chMax) {
   return { capf: cap(ch, -1), capb: cap(ch, 1), ch, bw, halfW, knotsOf, ribAt };
 }
 
+/* ---------- the outline drawn by hand ---------- */
+// P.edit: bumps pulled on the outline by hand, per half: Fp / Fm / Bp / Bm (front / back; the +x half, the −x half in
+// its own mirrored frame), Sl / Sr (a sleeve, its front and back halves alike). A bump [curve, t, dx, dy, r] moves the
+// point t of the way along that curve dx out from the centre line and dy up (cm), the outline r cm along either side
+// of it following smoothly. A body half's chain runs neck → shoulder → armhole → side → hem, a sleeve's underarm → hem
+// (its +x half); where a chain meets the centre line it stays on it, and a sleeve's underarm stays put (the cap is
+// cut to its armhole). Seams keep matching: side, shoulder and armhole are moved front and back together (studio.js)
+const fall = d => d < 1 ? (1 - d * d) ** 2 : 0;
+const dense = pts => {   // at most 0.5 cm apart, the curve's own points kept
+  const out = [pts[0]];
+  for (let i = 1; i < pts.length; i++) {
+    const n = Math.ceil(dist(pts[i - 1], pts[i]) / .5);
+    for (let k = 1; k <= n; k++) out.push([lerp(pts[i - 1][0], pts[i][0], k / n), lerp(pts[i - 1][1], pts[i][1], k / n)]);
+  }
+  return out;
+};
+const hasEdit = b => b && b.some(e => e[2] || e[3]);
+// chain: { name: points } in order, each starting where the last ended → the same, bent; sleeve: its underarm end held
+function bend(chain, bumps, sleeve) {
+  const names = Object.keys(chain), len = names.map(k => plen(chain[k])), tot = len.reduce((a, b) => a + b, 0), s0 = {};
+  names.reduce((a, k, i) => { s0[k] = a; return a + len[i]; }, 0);
+  const B = bumps.filter(e => e[0] in s0).map(([k, t, dx, dy, r]) => [s0[k] + clamp(t, 0, 1) * len[names.indexOf(k)], dx, dy, r]);
+  const out = {};
+  for (const k of names) {
+    let s = s0[k];
+    out[k] = dense(chain[k]).map((p, j, a) => {
+      if (j) s += dist(a[j - 1], p);
+      let dx = 0, dy = 0;
+      for (const [sb, bx, by, r] of B) { const w = fall(Math.abs(s - sb) / r); dx += bx * w; dy += by * w; }
+      const hold = sstep(s / 3), end = sstep((tot - s) / 3);
+      return sleeve ? [p[0] + dx * hold * end, p[1] + dy * hold] : [p[0] + dx * hold * end, p[1] + dy];
+    });
+  }
+  return out;
+}
+const edited = (H, bumps) => hasEdit(bumps) ? { ...H, ...bend({ neck: H.neck, shoulder: H.shoulder, arm: H.arm, side: H.side, hem: H.hem }, bumps) } : H;
+
 /* ---------- flat mesh of a piece ---------- */
 // segs: [name, points, n, reversed] in CCW order, each starting where the last ended. Interior points sit on a lattice
 // fixed to the pattern's origin, so a changed outline leaves the inside of the piece where it was.
@@ -248,6 +287,29 @@ function pieceMesh(segs) {
     const a = T[t], b = T[t + 1], c = T[t + 2];
     const m = [(pts[a][0] + pts[b][0] + pts[c][0]) / 3, (pts[a][1] + pts[b][1] + pts[c][1]) / 3];
     if (inside(m, poly)) tris.push(a, b, c);
+  }
+  // a straight run of the outline (a sleeve's hem) leaves triangles of no area along it, three points in a line: their
+  // long side is a stiff strut along the run, and rolled round the arm the hem's corner was thrown across it. Each is
+  // flipped away into the triangle across its long side, which the middle point then splits in two
+  for (let it = 0, again = true; again && it < tris.length; it++) {
+    again = false;
+    for (let t = 0; t < tris.length; t += 3) {
+      const v = [tris[t], tris[t + 1], tris[t + 2]], P3 = v.map(i => pts[i]);
+      const ar = Math.abs((P3[1][0] - P3[0][0]) * (P3[2][1] - P3[0][1]) - (P3[2][0] - P3[0][0]) * (P3[1][1] - P3[0][1]));
+      const len = [0, 1, 2].map(k => dist(P3[(k + 1) % 3], P3[(k + 2) % 3])), k = len.indexOf(Math.max(...len));
+      if (ar > 1e-4 * len[k] * len[k]) continue;
+      const r = v[k], p = v[(k + 1) % 3], q = v[(k + 2) % 3];
+      tris.splice(t, 3);
+      for (let u = 0; u < tris.length; u += 3) {
+        const w = [tris[u], tris[u + 1], tris[u + 2]], j = w.findIndex((x, i) => x === q && w[(i + 1) % 3] === p);
+        if (j < 0) continue;
+        const x = w[(j + 2) % 3];
+        tris.splice(u, 3, q, r, x, r, p, x);
+        break;
+      }
+      again = true;
+      break;
+    }
   }
   return { pts, tris, bound, nb };
 }

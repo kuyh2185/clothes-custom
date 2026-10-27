@@ -12,7 +12,7 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { smoothChest, tuckUnder } from './mannequin.js?v=1';
-import { BASE, BASE_M, fitSide } from './pattern.js?v=22';
+import { BASE, BASE_M, fitSide } from './pattern.js?v=23';
 
 const $ = id => document.getElementById(id);
 const PI = Math.PI;
@@ -50,10 +50,11 @@ const fitOf = e => sstep(tightOf(e) / 3.5);
 const shapeOf = e => sstep((-e - .5) / 1.5);
 // a wider body puts the underarm further out along the sloping arm: the armhole drops with it, or the underarm would
 // sit inside the arm and the cloth twist over or under it. A fitted one rises to just under the real armpit: the
-// tee's deep armhole would leave a web of cloth between the arm and the side, standing off the body under the arm
+// tee's deep armhole would leave a web of cloth between the arm and the side, standing off the body under the arm.
+// So does a fitted sleeve on a looser body: in the deep armhole its narrow cap stood tall and dragged the sleeve up the arm
 const adOf = T => {
   const ad = base().ad + Math.max(0, T.sEase - 2) * .85, m = A && measure();
-  return m ? lerp(ad, Math.min(ad, m.armpit + 2.5), fitOf(T.ease)) : ad;
+  return m ? lerp(ad, Math.min(ad, m.armpit + 2.5), fitOf(Math.min(T.ease, T.sEase))) : ad;
 };
 // cm down the arm's bones from the shoulder joint to the elbow, and to the wrist (a sleeve's cm sit about as far down)
 const elbowOf = () => { const [J, E] = A.bones.l; return Math.hypot(E[0] - J[0], E[1] - J[1], E[2] - J[2]) * 100; };
@@ -63,22 +64,22 @@ function params(T = state.top) {
   const ad = adOf(T), w = fitOf(e), ws = shapeOf(e), wa = fitOf(es), m = (ws > 0 || wa > 0) && A ? measure() : null;
   // fitted: the quarter round of the body at each depth (cm below the high shoulder point) from the armhole down
   // past the hem, less a little round the chest (a stretch knit sits a few cm smaller than the body), back to the
-  // body's own round by the waist and at the hem: cloth pulled tight where the body widens downward (a crop's hem
-  // between waist and hips) slides up the slope to the waist and rolls over. Let out only below the waist, a short
-  // crop on the men's long flat waist was cut wider at the hem than the body there and stood out at the side seams.
-  // A hem on the widening slope (a crop between waist and hips) is cut a little under the body, as a fitted tee's hem
-  // hugs: cut to the body, the cloth at the squared side corner stood out from the slope like a small ear.
-  // A crop ending above the waist (g < 1) keeps the knit's stretch to the hem: let out there, on the body narrowing
-  // down to the waist, the cloth stood off the sides a few cm above the hem like ears
+  // body's own round by the waist, as far as the top reaches down onto the widening below the waist (W): cloth pulled
+  // tight where the body widens downward (a crop's hem between waist and hips) slides up the slope to the waist and
+  // rolls over, and it is let out from 8 cm above the waist so it is loose before the slope starts. A top ending
+  // before the body widens keeps the knit's stretch to the hem: let out there, on the body narrowing down to the
+  // waist, the cloth stood off the sides a few cm above the hem like ears (and so on the men's long flat waist).
+  // A hem on the widening slope is cut a little under the body, as a fitted tee's hem hugs: cut to the body, the
+  // cloth at the squared side corner stood out from the slope like a small ear
   let fit = null, cw = b.cw + es;
   if (m) {
     const off = (e + 2.5) * .4, q = [], y0 = Math.floor(ad), L = Math.max(T.L, ad + 6), n = Math.ceil(L) + 3 - y0;
     const qm = y => m.q[clamp(Math.round(y), 0, m.q.length - 1)];
-    const band = -.8 * clamp((qm(L) - qm(L - 4)) / 4 / .3, 0, 1), g = clamp((L - m.waist) / 3 + 1, 0, 1);
+    const band = -.8 * clamp((qm(L) - qm(L - 4)) / 4 / .3, 0, 1), W = sstep((qm(L) - qm(m.waist)) / 1.2);
     for (let i = 0; i <= n; i++) {
-      const y = y0 + i, low = g * sstep((y - m.waist + 8) / 8), hem = g * sstep((y - L + 7) / 5);
+      const y = y0 + i, low = W * sstep((y - m.waist + 8) / 8), hem = sstep((y - L + 7) / 5);
       const v = qm(y) + off * (1 - low);
-      q.push(r1(lerp(v, Math.max(v, qm(y)) + band, hem)));
+      q.push(r1(lerp(v, Math.min(v, qm(y) + band), hem)));
     }
     // the sleeve: half the arm's round (a sleeve's cm sit about as far down the bones), a little under it on the upper
     // arm like the body, a little over it past the elbow (pulled tight round the bony wrist, the skin came through)
@@ -338,7 +339,7 @@ const world = mesh => {   // rest pose = bind pose = world here (the asset's roo
 };
 
 /* ---------- the cloth ---------- */
-const worker = new Worker('cloth.js?v=40', { type: 'module' });
+const worker = new Worker('cloth.js?v=41', { type: 'module' });
 worker.onerror = e => console.error('[cloth]', e.message);
 const fabricU = { uC1: { value: new THREE.Color() }, uC2: { value: new THREE.Color() }, uPat: { value: 0 }, uScale: { value: 1 } };
 // the knit's grain as a normal map over the flat pattern (m): a jersey's columns of V-shaped loops, or for the fitted
@@ -592,6 +593,7 @@ async function go(i) {
   renderSeg();
   if (prev.body !== state.body) await showBody(state.body);
   else if (prev.bottom !== state.bottom) initCloth();
+  else fix(state.top);   // (the first entry is the saved value as it was, before the mannequin measured its limits)
   apply(); save(); undoState();
 }
 $('undo').addEventListener('click', () => { if (hi > 0) go(hi - 1); });
