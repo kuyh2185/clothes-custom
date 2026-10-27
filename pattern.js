@@ -120,7 +120,8 @@ function bodyHalf(P, front) {
     [lerp(P.cw - (P.cw - P.sw + 2.2) * (1 - k) - 3.5, O[0] + (P.cw - O[0]) * .35, r), -ad], [P.cw, -ad]);
   const L = Math.max(P.L, ad + 6);
   const sideTo = Ls => {
-    const dl = Ls - ad, s = bez([P.cw, -ad], [P.cw, -ad - dl * .29], [P.hw - .3, -Ls + dl * .33], [P.hw, -Ls]);
+    // (P.bx: the body's own width under the arm, when it is cut wider or narrower than the sleeves' underarm P.cw)
+    const dl = Ls - ad, s = bez([P.cw, -ad], [P.bx ?? P.cw, -ad - dl * .29], [P.hw - .3, -Ls + dl * .33], [P.hw, -Ls]);
     if (P.fit) for (const p of s) p[0] = fitSide(P, -p[1], p[0]);
     return s;
   };
@@ -137,9 +138,9 @@ function bodyHalf(P, front) {
 }
 
 // set-in sleeve, x < 0 the front half. Cap height solved so the cap's two halves match their armholes.
-// fitted (P.fit.arm[y] = the arm's half round y cm down the sleeve): the sleeve is cut to the arm, P.fit.w of the way
+// fitted (P.fit.arm[y] = the arm's half round y cm down the sleeve): the sleeve is cut to the arm, P.fit.wa of the way
 function sleeveOutline(P, frontLen, backLen, chMax) {
-  const fa = P.fit && P.fit.arm, fw = fa ? P.fit.w : 0;
+  const fa = P.fit && P.fit.arm, fw = fa ? P.fit.wa ?? P.fit.w : 0;
   const armAt = y => { const i = clamp(y, 0, fa.length - 1.001), j = Math.floor(i); return lerp(fa[j], fa[j + 1], i - j); };
   let bw = P.bw;
   const cap = (ch, s) => {

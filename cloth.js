@@ -4,7 +4,7 @@
 //   in : {t:'init', body:{pos,nrm}, bottom:{pos,nrm}|null, bones:{l:[J,E], r:[J,E]}, hps, z0}
 //        {t:'params', p}      {t:'tick'}   (one frame per tick; answered with {t:'frame'})
 //   out: {t:'topo', ...} when the mesh changes, {t:'frame', pos, nrm, awake, ms}
-import { build, fitSide, BASE, BASE_M } from './pattern.js?v=21';
+import { build, fitSide, BASE, BASE_M } from './pattern.js?v=22';
 
 const G = -9.8, SUB = 12, DT = 1 / 60, TH = 0.004;
 // cloth against itself: two particles not near each other along the cloth stay SC apart (a little over the widest gap
@@ -448,7 +448,15 @@ function locator(o, old) {
 // a body panel's half width (cm) at depth yd below the high shoulder point (the side seam's x)
 function halfOf(P, yd) {
   if (yd <= P.ad) return P.cw;
-  const x = P.cw + (P.hw - P.cw) * Math.min(1, (yd - P.ad) / Math.max(1, P.L - P.ad));
+  let x = P.cw + (P.hw - P.cw) * Math.min(1, (yd - P.ad) / Math.max(1, P.L - P.ad));
+  // a body cut wider (or narrower) than the sleeves' underarm bows out (in) below it, as pattern.js's side seam does
+  if (P.bx != null && P.bx !== P.cw && yd < P.L) {
+    const f = (yd - P.ad) / Math.max(1, P.L - P.ad);
+    let a = 0, b = 1;
+    for (let i = 0; i < 20; i++) { const t = (a + b) / 2, u = 1 - t; if (3 * u * u * t * .29 + 3 * u * t * t * .67 + t * t * t < f) a = t; else b = t; }
+    const t = (a + b) / 2;
+    x += 3 * (1 - t) * (1 - t) * t * (P.bx - P.cw);
+  }
   return P.fit ? fitSide(P, yd, x) : x;
 }
 function place(pc, p, gi) {
@@ -461,7 +469,7 @@ function place(pc, p, gi) {
     const P = gi.P, yd = -p[1];
     // a fitted knit smaller than the body starts round the regular tee's ellipse, stretched, and draws itself in
     // (started round its own smaller ellipse it would begin inside the body)
-    const B0 = P.base === 'm' ? BASE_M : BASE, own = halfOf(P, yd) / 100, half = Math.max(own, halfOf({ ...P, cw: B0.cw, hw: B0.hw, fit: null }, yd) / 100), spread = half / own;
+    const B0 = P.base === 'm' ? BASE_M : BASE, own = halfOf(P, yd) / 100, half = Math.max(own, halfOf({ ...P, cw: B0.cw, bx: null, hw: B0.hw, fit: null }, yd) / 100), spread = half / own;
     const ratio = (0.11 + 0.065 * Math.min(1, hz / 0.18)) / (0.205 + 0.045 * Math.min(1, hz / 0.25));
     const Q = Math.PI / 4 * (3 * (1 + ratio) - Math.sqrt((3 + ratio) * (1 + 3 * ratio)));   // Ramanujan, for a = 1
     const a = half / Q, b = a * ratio;

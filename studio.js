@@ -12,7 +12,7 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { smoothChest, tuckUnder } from './mannequin.js?v=1';
-import { BASE, BASE_M, fitSide } from './pattern.js?v=21';
+import { BASE, BASE_M, fitSide } from './pattern.js?v=22';
 
 const $ = id => document.getElementById(id);
 const PI = Math.PI;
@@ -24,20 +24,21 @@ const ASSET_VER = 2, KEY = 'clothes-custom:studio:v1';
 
 /* ---------- the garment's numbers ---------- */
 // sl: each sleeve as one number (cm of sleeve; below 0, cm the shoulder has narrowed toward a strap), L: length from
-// the high shoulder point, ease: added to each quarter's width, flare: more at the hem, dNw: wider neck at the shoulder,
+// the high shoulder point, ease: added to each quarter's width below the underarm, sEase: the same round the sleeves
+// (the underarm, armhole, shoulder and sleeve width), flare: more at the hem, dNw: wider neck at the shoulder,
 // ndF / ndB: neckline depth front / back, neckV: round 0 … V 1
-const DEF_TOP = { sl: [20, 20], L: 62, ease: 0, flare: 0, dNw: 0, ndF: 10, ndB: 2.6, neckV: 0, c1: '#f3f1ec', c2: '#24324a', pat: 0, scale: 1 };
+const DEF_TOP = { sl: [20, 20], L: 62, ease: 0, sEase: 0, flare: 0, dNw: 0, ndF: 10, ndB: 2.6, neckV: 0, c1: '#f3f1ec', c2: '#24324a', pat: 0, scale: 1 };
 const DEF = { body: 'f', bottom: 'jeans', top: DEF_TOP };
 let state = load() || structuredClone(DEF);
 function load() {
   try {
     const s = JSON.parse(localStorage.getItem(KEY));
-    if (s && s.top) return { ...structuredClone(DEF), ...s, top: { ...DEF_TOP, ...s.top } };
+    if (s && s.top) return { ...structuredClone(DEF), ...s, top: { ...DEF_TOP, sEase: s.top.ease ?? 0, ...s.top } };   // saved before sEase: the sleeves had the body's
   } catch (e) { /* none saved, or storage blocked */ }
   return null;
 }
 const base = () => state.body === 'm' ? BASE_M : BASE;
-const shoulderOf = T => base().sw + Math.max(0, T.ease - 3) * .5;   // an oversized top's shoulder drops off the shoulder
+const shoulderOf = T => base().sw + Math.max(0, T.sEase - 3) * .5;   // an oversized top's shoulder drops off the shoulder
 const fullOf = T => shoulderOf(T) - (base().nw + T.dNw);   // the shoulder seam's length: how far a strap can narrow
 // below the slim fit the top is cut to the body from a knit that stretches round it (rib tank, fitted tee): fitOf
 // 0 … 1 is how far the side seams follow the mannequin's own outline (measure()) instead of the tee's straight side
@@ -51,15 +52,15 @@ const shapeOf = e => sstep((-e - .5) / 1.5);
 // sit inside the arm and the cloth twist over or under it. A fitted one rises to just under the real armpit: the
 // tee's deep armhole would leave a web of cloth between the arm and the side, standing off the body under the arm
 const adOf = T => {
-  const ad = base().ad + Math.max(0, T.ease - 2) * .85, m = A && measure();
+  const ad = base().ad + Math.max(0, T.sEase - 2) * .85, m = A && measure();
   return m ? lerp(ad, Math.min(ad, m.armpit + 2.5), fitOf(T.ease)) : ad;
 };
 // cm down the arm's bones from the shoulder joint to the elbow, and to the wrist (a sleeve's cm sit about as far down)
 const elbowOf = () => { const [J, E] = A.bones.l; return Math.hypot(E[0] - J[0], E[1] - J[1], E[2] - J[2]) * 100; };
 const wristOf = () => { const [, E, W] = A.bones.l; return elbowOf() + Math.hypot(W[0] - E[0], W[1] - E[1], W[2] - E[2]) * 100; };
 function params(T = state.top) {
-  const b = base(), full = fullOf(T), [l, r] = T.sl, t = tightOf(T.ease), e = T.ease;
-  const ad = adOf(T), w = fitOf(e), ws = shapeOf(e), m = ws > 0 && A ? measure() : null;
+  const b = base(), full = fullOf(T), [l, r] = T.sl, e = T.ease, es = T.sEase, t = tightOf(Math.min(e, es));
+  const ad = adOf(T), w = fitOf(e), ws = shapeOf(e), wa = fitOf(es), m = (ws > 0 || wa > 0) && A ? measure() : null;
   // fitted: the quarter round of the body at each depth (cm below the high shoulder point) from the armhole down
   // past the hem, less a little round the chest (a stretch knit sits a few cm smaller than the body), back to the
   // body's own round by the waist and at the hem: cloth pulled tight where the body widens downward (a crop's hem
@@ -67,7 +68,7 @@ function params(T = state.top) {
   // crop on the men's long flat waist was cut wider at the hem than the body there and stood out at the side seams.
   // A hem on the widening slope (a crop between waist and hips) is cut a little under the body, as a fitted tee's hem
   // hugs: cut to the body, the cloth at the squared side corner stood out from the slope like a small ear
-  let fit = null, cw = b.cw + e;
+  let fit = null, cw = b.cw + es;
   if (m) {
     const off = (e + 2.5) * .4, q = [], y0 = Math.floor(ad), L = Math.max(T.L, ad + 6), n = Math.ceil(L) + 3 - y0;
     const qm = y => m.q[clamp(Math.round(y), 0, m.q.length - 1)];
@@ -80,24 +81,25 @@ function params(T = state.top) {
     // the sleeve: half the arm's round (a sleeve's cm sit about as far down the bones), a little under it on the upper
     // arm like the body, a little over it past the elbow (pulled tight round the bony wrist, the skin came through)
     const ar = m.arm, last = ar.findLastIndex(v => v > 0), arm = [], elbow = elbowOf();
-    for (let y = 0; y <= b.arm + 1; y++) arm.push(r1(ar[Math.min(last, y)] / 2 + lerp(off * .25, .5, sstep((y - elbow + 3) / 6))));
-    fit = { w: Math.round(w * 100) / 100, ws: Math.round(ws * 100) / 100, y0, q, arm };
+    const offS = (es + 2.5) * .4;
+    for (let y = 0; y <= b.arm + 1; y++) arm.push(r1(ar[Math.min(last, y)] / 2 + lerp(offS * .25, .5, sstep((y - elbow + 3) / 6))));
+    fit = { w: Math.round(w * 100) / 100, ws: Math.round(ws * 100) / 100, wa: Math.round(wa * 100) / 100, y0, q, arm };
     cw = lerp(cw, q[0] + (q[1] - q[0]) * (ad - y0), w);
   }
   // a long sleeve's rib cuff: the arm's round where the sleeve ends and a little ease, starting past the elbow
   let rib = null;
   if (A) {
     const ar = measure().arm, last = ar.findLastIndex(v => v > 0), r = [];
-    for (let y = 0; y <= last; y++) r.push(r1(ar[y] / 2 + 1 + Math.max(0, e) * .1));
+    for (let y = 0; y <= last; y++) r.push(r1(ar[y] / 2 + 1 + Math.max(0, es) * .1));
     rib = { r, e: r1(elbowOf() + 14) };
   }
   return {
     base: state.body, L: r1(T.L), sleeveL: r1(Math.max(0, l)), sleeveR: r1(Math.max(0, r)),
     strap: l < 1.2 && r < 1.2 && Math.min(l, r) < 0 ? r1(clamp(full + Math.min(l, r), .6, full)) : null,
-    cw: r1(cw), hw: r1(b.hw + (e > 0 ? e : e * .5) + T.flare), sw: r1(shoulderOf(T)), nw: r1(b.nw + T.dNw),
+    cw: r1(cw), bx: r1(cw + e - es), hw: r1(b.hw + (e > 0 ? e : e * .5) + T.flare), sw: r1(shoulderOf(T)), nw: r1(b.nw + T.dNw),
     ad: r1(ad), flare: r1(T.flare), fit, rib,
     ndF: r1(T.ndF), ndB: r1(T.ndB), neckV: r1(T.neckV),
-    bw: r1(b.bw + (e > 0 ? e * .4 : e * .3)), cuff: r1(b.cuff + (e > 0 ? e * .3 : e * .2)),
+    bw: r1(b.bw + (es > 0 ? es * .4 : es * .3)), cuff: r1(b.cuff + (es > 0 ? es * .3 : es * .2)),
     stretch: Math.round(clamp(t / 2, 0, 1) * 100) / 100,
   };
 }
@@ -111,12 +113,12 @@ const hemFloor = T => {
 };
 const LIM = () => {
   const b = base(), full = fullOf(state.top);
-  return { sl: [-(full - .6), b.arm + b.over], L: [adOf(state.top) + 6, 118], ease: [-8, 20], flare: [hemFloor(state.top), 22], dNw: [-2, 8], ndF: [3, 30], ndB: [1.5, 26], neckV: [0, 1] };
+  return { sl: [-(full - .6), b.arm + b.over], L: [adOf(state.top) + 6, 118], ease: [-8, 20], sEase: [-8, 20], flare: [hemFloor(state.top), 22], dNw: [-2, 8], ndF: [3, 30], ndB: [1.5, 26], neckV: [0, 1] };
 };
 function fix(T) {
   const L = LIM();
   T.sl = T.sl.map(v => clamp(v, ...L.sl));
-  for (const k of ['L', 'ease', 'flare', 'dNw', 'ndF', 'ndB', 'neckV']) T[k] = clamp(T[k], ...L[k]);
+  for (const k of ['L', 'ease', 'sEase', 'flare', 'dNw', 'ndF', 'ndB', 'neckV']) T[k] = clamp(T[k], ...L[k]);
 }
 
 /* ---------- names (panel labels, drag tip) ---------- */
@@ -327,7 +329,7 @@ const world = mesh => {   // rest pose = bind pose = world here (the asset's roo
 };
 
 /* ---------- the cloth ---------- */
-const worker = new Worker('cloth.js?v=39', { type: 'module' });
+const worker = new Worker('cloth.js?v=40', { type: 'module' });
 worker.onerror = e => console.error('[cloth]', e.message);
 const fabricU = { uC1: { value: new THREE.Color() }, uC2: { value: new THREE.Color() }, uPat: { value: 0 }, uScale: { value: 1 } };
 // the knit's grain as a normal map over the flat pattern (m): a jersey's columns of V-shaped loops, or for the fitted
@@ -436,8 +438,8 @@ async function showBody(kind) {
 /* ---------- panel ---------- */
 // little drawings for the cards: a flat top with these sleeves / length / ease / neckline
 function topIcon(o) {
-  const T = { ...state.top, ...o }, sl = T.sl[0], e = clamp(T.ease, -4, 9), L = clamp(T.L, 38, 100), fl = Math.max(0, T.flare) * .12;
-  const cx = 20, nwid = 3.2 + T.dNw * .35, nd = 1.5 + T.ndF * .2, top = 5, shY = 7.5, sh = 8.5 + e * .25, w = 7 + e * .35, armY = 15, hem = 7 + L * .3;
+  const T = { ...state.top, ...o }, sl = T.sl[0], e = clamp(T.ease, -4, 9), es = clamp(T.sEase, -4, 9), L = clamp(T.L, 38, 100), fl = Math.max(0, T.flare) * .12;
+  const cx = 20, nwid = 3.2 + T.dNw * .35, nd = 1.5 + T.ndF * .2, top = 5, shY = 7.5, sh = 8.5 + es * .25, w = 7 + e * .35, armY = 15, hem = 7 + L * .3;
   const half = sgn => {   // one side, neck → hem
     const pts = [[nwid, top]];
     if (sl < 0) { const st = clamp(4 + sl * .45, .7, 4); pts.push([nwid + st, top], [nwid + st, armY - 3]); }
@@ -452,7 +454,7 @@ function topIcon(o) {
   return `<svg viewBox="0 2 40 36" aria-hidden="true"><path d="${d}" fill="${state.top.c1}" stroke="#8d8a83" stroke-width=".8" stroke-linejoin="round"/></svg>`;
 }
 // a rib tank in one go: a 4 cm strap, a scooped neck, cut smaller than the body (each still its own card / bar after)
-const TANK = () => { const s = 4 - (base().sw - base().nw - 1.5); return { sl: [s, s], ease: -5, flare: 0, dNw: 1.5, ndF: 13, ndB: 4, neckV: 0 }; };
+const TANK = () => { const s = 4 - (base().sw - base().nw - 1.5); return { sl: [s, s], ease: -5, sEase: -5, flare: 0, dNw: 1.5, ndF: 13, ndB: 4, neckV: 0 }; };
 const CARDS = {
   sleeve: () => {
     const a = base().arm / 58, full = fullOf(state.top);
@@ -461,7 +463,7 @@ const CARDS = {
       ['캡', { sl: [7, 7] }], ['민소매', { sl: [0, 0] }], ['넓은 끈', { sl: [3 - full, 3 - full] }], ['얇은 끈', { sl: [.8 - full, .8 - full] }], ['탱크톱', TANK()]];
   },
   len: () => { const k = state.body === 'm' ? 1.1 : 1; return [['크롭', { L: 42 * k }], ['기본', { L: 62 * k }], ['롱', { L: 76 * k }], ['원피스', { L: 96 * k }]]; },
-  fit: () => [['밀착', { ease: -5, flare: 0 }], ['슬림', { ease: -1.2, flare: 0 }], ['기본', { ease: 0, flare: 0 }], ['여유', { ease: 4, flare: 1 }], ['오버', { ease: 9, flare: 2 }]],
+  fit: () => [['밀착', { ease: -5, sEase: -5, flare: 0 }], ['슬림', { ease: -1.2, sEase: -1.2, flare: 0 }], ['기본', { ease: 0, sEase: 0, flare: 0 }], ['여유', { ease: 4, sEase: 4, flare: 1 }], ['오버', { ease: 9, sEase: 9, flare: 2 }]],
   neck: () => [['라운드', { dNw: 0, ndF: 10, ndB: 2.6, neckV: 0 }], ['U넥', { dNw: 1.5, ndF: 17, ndB: 3, neckV: 0 }], ['V넥', { dNw: .5, ndF: 15, ndB: 2.6, neckV: 1 }],
     ['깊은 V', { dNw: 1, ndF: 23, ndB: 3, neckV: 1 }], ['보트넥', { dNw: 5, ndF: 4, ndB: 4, neckV: 0 }]],
 };
@@ -474,7 +476,7 @@ function renderCards() {
   const T = state.top;
   $('lbl-sleeve').textContent = T.sl[0] === T.sl[1] ? sleeveName(T.sl[0]) : `${sleeveName(T.sl[0])} / ${sleeveName(T.sl[1])}`;
   $('lbl-len').textContent = lenName(T.L);
-  $('lbl-fit').textContent = fitName(T.ease);
+  $('lbl-fit').textContent = Math.abs(T.ease - T.sEase) < .05 ? fitName(T.ease) : `${fitName(T.ease)} · 소매 ${fitName(T.sEase)}`;
   $('lbl-neck').textContent = `앞 ${T.ndF.toFixed(1)} · 뒤 ${T.ndB.toFixed(1)}cm`;
 }
 for (const k of Object.keys(CARDS)) $('c-' + k).addEventListener('click', e => {
@@ -490,6 +492,7 @@ const BARS = [
   ['sl1', '오른쪽 소매', () => LIM().sl, .5, T => T.sl[1], (T, v) => { T.sl[1] = v; if ($('sym').checked) T.sl[0] = v; }, sleeveName],
   ['L', '기장', () => LIM().L, .5, T => T.L, (T, v) => { T.L = v; }, lenName],
   ['ease', '품', () => LIM().ease, .1, T => T.ease, (T, v) => { T.ease = v; }, fitName],
+  ['sEase', '소매 품', () => LIM().sEase, .1, T => T.sEase, (T, v) => { T.sEase = v; }, fitName],
   ['flare', '밑단 폭', () => LIM().flare, .1, T => T.flare, (T, v) => { T.flare = v; }, v => `${v >= 0 ? '+' : ''}${v.toFixed(1)}cm`],
   ['ndF', '앞 목 깊이', () => LIM().ndF, .1, T => T.ndF, (T, v) => { T.ndF = v; }, v => `${v.toFixed(1)}cm`],
   ['ndB', '뒤 목 깊이', () => LIM().ndB, .1, T => T.ndB, (T, v) => { T.ndB = v; }, v => `${v.toFixed(1)}cm`],
