@@ -1,0 +1,3 @@
+{ "name": "여 오버 반팔→긴팔 53 (10/27 check 겹침 125)", "lim": { "selfx": 135 },
+  "state": { "body": "f", "bottom": "jeans", "top": { "ease": 9, "sEase": 9, "flare": 2 } },
+  "steps": [{ "t": "settle" }, { "t": "set", "o": { "sl": [53, 53] } }] }

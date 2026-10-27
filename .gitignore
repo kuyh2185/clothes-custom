@@ -2,3 +2,4 @@ blender/previews/
 *.blend
 *.blend1
 __pycache__/
+tools/cases/fuzz/

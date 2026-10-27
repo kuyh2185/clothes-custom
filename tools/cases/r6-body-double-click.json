@@ -1,0 +1,3 @@
+{ "name": "10/27 남 누르자마자 여 (늦게 받은 마네킹이 덮어씀)", "fixed": "992b6ec",
+  "state": { "body": "f", "bottom": "jeans", "top": { "sl": [20, 20], "L": 62, "ease": 0, "sEase": 0, "flare": 0 } },
+  "steps": [{ "t": "body", "v": "m" }, { "t": "body", "v": "f" }] }
