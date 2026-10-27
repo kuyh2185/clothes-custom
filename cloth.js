@@ -12,22 +12,19 @@ const G = -9.8, SUB = 12, DT = 1 / 60, TH = 0.004;
 // keeps a frame's travel short enough for the pairs found before it to cover it
 const SC = 0.009, VMAX = 1;
 let sdf = null, ctx = null, cloth = null, pending = null, awake = 0, calm = 0, snap = null, frames = 0, still = 0;
-// the bottom worn under the top: its outer radius round a vertical axis by height and angle (the site's botTable)
-let bot = null;
 
 onmessage = e => {
   try { handle(e.data); } catch (err) { postMessage({ t: 'log', s: 'ERROR ' + err.stack }); if (e.data.t === 'tick') postMessage({ t: 'frame', pos: null }); }
 };
 function handle(m) {
   if (m.t === 'init') {   // (again for another body: the cloth starts over round it)
-    ctx = m; cloth = null; bot = null;
+    ctx = m; cloth = null;
     const t0 = performance.now();
     useSDF(buildSDF(m.body, m.bottom, m.bones));
     ctx.axis = { l: armAxis(m.body.pos, m.bones.l), r: armAxis(m.body.pos, m.bones.r) };
     postMessage({ t: 'log', s: `sdf ${(performance.now() - t0).toFixed(0)} ms, ${sdf.nx}×${sdf.ny}×${sdf.nz}` });
   } else if (m.t === 'params') pending = m.p;
-  else if (m.t === 'bottom') { bot = m.tab && hull(m.tab); awake = 1; calm = 0; snap = null; }
-  else if (m.t === 'tick') tick(m.hold);
+  else if (m.t === 'tick') tick();
   else if (m.t === 'probe') {   // test: field values across the arm at a few points down its centre line
     const out = [];
     for (const a of ctx.axis.l.filter((_, i) => i % 3 === 0)) {
@@ -39,7 +36,7 @@ function handle(m) {
   }
 }
 
-function tick(m0) {
+function tick() {
   const t0 = performance.now();
   if (pending && sdf) {
     const p = pending; pending = null;
@@ -49,7 +46,7 @@ function tick(m0) {
     awake = 1; calm = 0; snap = null;
   }
   if (!cloth) { postMessage({ t: 'frame', pos: null }); return; }
-  if (awake && !m0) {
+  if (awake) {
     // still = all but a few particles (one caught where the body and the bottom meet can tremble for ever, unseen)
     const moving = step(cloth), few = Math.max(4, cloth.nP * .002);
     calm = moving <= few ? calm + 1 : 0;
@@ -64,8 +61,8 @@ function tick(m0) {
     }
     if (calm > 20 || still >= 3) { awake = 0; snap = null; }
   }
-  const pos = cloth.p.slice(), nrm = normals(cloth), { cl, cn } = toBody(cloth);
-  postMessage({ t: 'frame', pos, nrm, cl, cn, awake, ms: performance.now() - t0 }, [pos.buffer, nrm.buffer, cl.buffer, cn.buffer]);
+  const pos = cloth.p.slice(), nrm = normals(cloth);
+  postMessage({ t: 'frame', pos, nrm, awake, ms: performance.now() - t0 }, [pos.buffer, nrm.buffer]);
 }
 
 /* ---------- collision field: signed distance to the body (and the bottom worn under the top) ---------- */
@@ -246,13 +243,11 @@ function assemble(g, old) {
   // weld every sewn pair into one particle
   const par = new Int32Array(nV).map((_, i) => i);
   const find = i => { while (par[i] !== i) { par[i] = par[par[i]]; i = par[i]; } return i; };
-  const seamOf = new Uint8Array(nV);
-  for (const [kind, [pa, sa], [pb, sb]] of g.seams) {
+  for (const [, [pa, sa], [pb, sb]] of g.seams) {
     const A = byName[pa].bound[sa], Bb = byName[pb].bound[sb];
     if (!A || !Bb || A.length !== Bb.length) { postMessage({ t: 'log', s: `seam ${pa}.${sa}/${pb}.${sb} ${A && A.length} ≠ ${Bb && Bb.length}` }); continue; }
     for (let i = 0; i < A.length; i++) {
       const a = A[i] + off[pa], b = Bb[i] + off[pb];
-      seamOf[a] = seamOf[b] = kind;
       const ra = find(a), rb = find(b);
       if (ra !== rb) par[rb] = ra;
     }
@@ -260,13 +255,13 @@ function assemble(g, old) {
   const map = new Int32Array(nV), ids = new Map();
   for (let i = 0; i < nV; i++) { const r = find(i); if (!ids.has(r)) ids.set(r, ids.size); map[i] = ids.get(r); }
   const nP = ids.size;
-  // display data: the flat pattern is the UV (m, pieces side by side), piece id per vertex
-  const uv = new Float32Array(nV * 2), pcA = new Float32Array(nV), flat = new Float32Array(nV * 2);
+  // display data: the flat pattern is the UV (m, pieces side by side)
+  const uv = new Float32Array(nV * 2), flat = new Float32Array(nV * 2);
   const shift = [0, 0.7, 1.4, 1.9];
   for (const pc of pieces) pc.pts.forEach((p, i) => {
     const v = pc.off + i;
     flat[v * 2] = p[0] / 100; flat[v * 2 + 1] = p[1] / 100;
-    uv[v * 2] = p[0] / 100 + shift[pc.pc]; uv[v * 2 + 1] = p[1] / 100; pcA[v] = pc.pc;
+    uv[v * 2] = p[0] / 100 + shift[pc.pc]; uv[v * 2 + 1] = p[1] / 100;
   });
 
   // start positions: where that spot of fabric was (old cloth), else the first placement round the body
@@ -371,7 +366,7 @@ function assemble(g, old) {
     marks: marks(pieces),
     pieces: pieces.map(pc => ({ name: pc.name, pc: pc.pc, pts: pc.pts, tris: pc.tris, off: pc.off })),
     flip: Object.fromEntries(pieces.map(pc => [pc.name, pc.flip])),
-    nV, nP, map, uv, pcA, seamOf, index: new Uint32Array(index), ptri,
+    nV, nP, map, uv, index: new Uint32Array(index), ptri,
     p: pos, v: new Float32Array(nP * 3), q: new Float32Array(nP * 3),
     ec, er, ew, bc, br, info: g.info,
   };
@@ -657,7 +652,6 @@ function step(c) {
         p[k] -= tx * f; p[k + 1] -= ty * f; p[k + 2] -= tz * f;
       }
     }
-    if (bot) collideBottom(p, q, nP);
     for (let i = 0; i < nP; i++) {
       const k = i * 3;
       v[k] = (p[k] - q[k]) / h; v[k + 1] = (p[k + 1] - q[k + 1]) / h; v[k + 2] = (p[k + 2] - q[k + 2]) / h;
@@ -723,67 +717,6 @@ function apart(p, q, sp, n, rub) {
     p[b] -= tx * g; p[b + 1] -= ty * g; p[b + 2] -= tz * g;
   }
 }
-// cloth over a bottom bridges every hollow (between the legs, the small of the back): each height's outline becomes
-// its convex hull, so the hem hangs across the gap instead of being drawn into it
-function hull(tab) {
-  const { D, W, N } = tab, out = new Float32Array(D.length);
-  const cross = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
-  for (let r = 0; r < N; r++) {
-    const pts = [];
-    for (let c = 0; c < W; c++) { const R = D[r * W + c], a = (c + .5) / W * Math.PI * 2; if (R > 0) pts.push([Math.sin(a) * R, Math.cos(a) * R]); }
-    if (pts.length < 3) { for (let c = 0; c < W; c++) out[r * W + c] = D[r * W + c]; continue; }
-    pts.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
-    const lo = [], up = [];
-    for (const p of pts) { while (lo.length > 1 && cross(lo[lo.length - 2], lo[lo.length - 1], p) <= 0) lo.pop(); lo.push(p); }
-    for (let i = pts.length - 1; i >= 0; i--) { const p = pts[i]; while (up.length > 1 && cross(up[up.length - 2], up[up.length - 1], p) <= 0) up.pop(); up.push(p); }
-    const H = lo.slice(0, -1).concat(up.slice(0, -1));
-    // the hull's radius along each column's direction (the ray from the centre meets one of its edges)
-    for (let c = 0; c < W; c++) {
-      const a = (c + .5) / W * Math.PI * 2, dx = Math.sin(a), dz = Math.cos(a);
-      let best = D[r * W + c];
-      for (let i = 0; i < H.length; i++) {
-        const A = H[i], B = H[(i + 1) % H.length], ex = B[0] - A[0], ez = B[1] - A[1];
-        const den = dx * ez - dz * ex;
-        if (Math.abs(den) < 1e-9) continue;
-        const t = (A[0] * ez - A[1] * ex) / den, u = (A[0] * dz - A[1] * dx) / den;
-        if (t > 0 && u >= -1e-6 && u <= 1 + 1e-6) best = Math.max(best, t);
-      }
-      out[r * W + c] = best;
-    }
-  }
-  return { ...tab, D: out };
-}
-function collideBottom(p, q, nP) {
-  const { D, W, N, zc, top } = bot, th = TH + 0.002;
-  for (let i = 0; i < nP; i++) {
-    const k = i * 3, y = p[k + 1];
-    if (y >= top || y <= 0) continue;
-    const x = p[k], z = p[k + 2] - zc, r = Math.hypot(x, z);
-    if (r < 1e-6) continue;
-    // bilinear in the table (rows up the height, columns round the angle, wrapping)
-    const fy = Math.min(N - 1.001, Math.max(0, y / top * N - .5)), fa = ((Math.atan2(x, z) / (Math.PI * 2) + 1) * W - .5 + W) % W;
-    const r0 = fy | 0, c0 = fa | 0, ty = fy - r0, ta = fa - c0, c1 = (c0 + 1) % W, r1 = Math.min(N - 1, r0 + 1);
-    const R = (D[r0 * W + c0] * (1 - ta) + D[r0 * W + c1] * ta) * (1 - ty) + (D[r1 * W + c0] * (1 - ta) + D[r1 * W + c1] * ta) * ty;
-    if (!R || r >= R + th) continue;
-    const f = (R + th) / r;
-    p[k] = x * f; p[k + 2] = z * f + zc;
-    // friction against the bottom: hold back the sliding part of this step's motion
-    const nx = x / r, nz = z / r, dx = p[k] - q[k], dy = p[k + 1] - q[k + 1], dz = p[k + 2] - q[k + 2], dn = dx * nx + dz * nz;
-    const tx = dx - dn * nx, tz = dz - dn * nz, push = R + th - r, g = Math.min(1, K.fric * push / (Math.hypot(tx, dy, tz) + 1e-9));
-    p[k] -= tx * g; p[k + 1] -= dy * g; p[k + 2] -= tz * g;
-  }
-}
-// distance to the body and the way to it, per particle (the site's shaders use them: pulled-in shapes, folds)
-function toBody(c) {
-  const cl = new Float32Array(c.nP), cn = new Float32Array(c.nP * 3), p = c.p;
-  for (let i = 0; i < c.nP; i++) {
-    const x = p[i * 3], y = p[i * 3 + 1], z = p[i * 3 + 2], d = sample(x, y, z);
-    cl[i] = Math.max(0, Math.min(.06, d));
-    const g = grad(x, y, z);
-    cn[i * 3] = -g[0] * cl[i]; cn[i * 3 + 1] = -g[1] * cl[i]; cn[i * 3 + 2] = -g[2] * cl[i];
-  }
-  return { cl, cn };
-}
 function dist(p, C, R, aS, aC, W, aK) {
   for (let e = 0, n = R.length; e < n; e++) {
     const a = C[e * 2] * 3, b = C[e * 2 + 1] * 3;
@@ -824,5 +757,5 @@ function marks(pieces) {
 }
 function postTopo() {
   const c = cloth;
-  postMessage({ t: 'topo', nV: c.nV, nP: c.nP, map: c.map, uv: c.uv, pc: c.pcA, seam: c.seamOf, index: c.index, info: c.info, marks: c.marks });
+  postMessage({ t: 'topo', nV: c.nV, nP: c.nP, map: c.map, uv: c.uv, index: c.index, info: c.info, marks: c.marks });
 }
