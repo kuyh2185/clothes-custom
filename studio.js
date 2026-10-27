@@ -67,14 +67,16 @@ function params(T = state.top) {
   // between waist and hips) slides up the slope to the waist and rolls over. Let out only below the waist, a short
   // crop on the men's long flat waist was cut wider at the hem than the body there and stood out at the side seams.
   // A hem on the widening slope (a crop between waist and hips) is cut a little under the body, as a fitted tee's hem
-  // hugs: cut to the body, the cloth at the squared side corner stood out from the slope like a small ear
+  // hugs: cut to the body, the cloth at the squared side corner stood out from the slope like a small ear.
+  // A crop ending above the waist (g < 1) keeps the knit's stretch to the hem: let out there, on the body narrowing
+  // down to the waist, the cloth stood off the sides a few cm above the hem like ears
   let fit = null, cw = b.cw + es;
   if (m) {
     const off = (e + 2.5) * .4, q = [], y0 = Math.floor(ad), L = Math.max(T.L, ad + 6), n = Math.ceil(L) + 3 - y0;
     const qm = y => m.q[clamp(Math.round(y), 0, m.q.length - 1)];
-    const band = -.8 * clamp((qm(L) - qm(L - 4)) / 4 / .3, 0, 1);
+    const band = -.8 * clamp((qm(L) - qm(L - 4)) / 4 / .3, 0, 1), g = clamp((L - m.waist) / 3 + 1, 0, 1);
     for (let i = 0; i <= n; i++) {
-      const y = y0 + i, low = sstep((y - m.waist + 8) / 8), hem = sstep((y - L + 7) / 5);
+      const y = y0 + i, low = g * sstep((y - m.waist + 8) / 8), hem = g * sstep((y - L + 7) / 5);
       const v = qm(y) + off * (1 - low);
       q.push(r1(lerp(v, Math.max(v, qm(y)) + band, hem)));
     }
