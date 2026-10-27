@@ -386,6 +386,7 @@ worker.onmessage = e => {
 };
 // the body (and the trousers, when worn) the cloth hangs on: a new collision field, and the cloth hangs again
 function initCloth() {
+  fix(state.top);   // the limits (hem floor, shortest length, sleeves) are measured on this mannequin and bottom
   const B = A.meshes.body, jeans = state.bottom === 'jeans' && A.meshes.jeans;
   B.geometry.attributes.position.array.set(jeans ? A.tucked : A.bare);
   B.geometry.attributes.position.needsUpdate = true;
@@ -397,6 +398,7 @@ function initCloth() {
 async function showBody(kind) {
   $('loading').hidden = false;
   const a = await loadBody(kind);
+  if (kind !== state.body) return;   // switched again while this one loaded: the later call shows its own
   if (A) scene.remove(A.root);
   A = a; H = a.H;
   scene.add(A.root);
@@ -508,9 +510,9 @@ for (const [id, k] of [['body', 'body'], ['bottom', 'bottom']]) $(id).addEventLi
   const b = e.target.closest('[data-v]');
   if (!b || state[k] === b.dataset.v) return;
   state[k] = b.dataset.v;
-  renderSeg(); commit();
-  if (k === 'body') { fix(state.top); await showBody(state.body); } else initCloth();
-  apply();
+  renderSeg();
+  if (k === 'body') await showBody(state.body); else initCloth();
+  apply(); commit();
 });
 function renderSeg() {
   for (const [id, k] of [['body', 'body'], ['bottom', 'bottom']]) $(id).querySelectorAll('[data-v]').forEach(b => b.setAttribute('aria-pressed', state[k] === b.dataset.v));
