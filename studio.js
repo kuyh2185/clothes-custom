@@ -113,14 +113,21 @@ const hemFloor = T => {
   const hem = P.fit ? fitSide(P, L, P.hw) : P.hw;
   return clamp(r1(q[clamp(Math.round(L), 0, q.length - 1)] - hem), -12, 0);
 };
+// the body's and the sleeves' ease at most 20 apart: further, the body flared straight out under the arm into wings, or
+// the underarm sat inside the arm
+const GAP = 20;
 const LIM = () => {
-  const b = base(), full = fullOf(state.top);
-  return { sl: [-(full - .6), b.arm + b.over], L: [adOf(state.top) + 6, 118], ease: [-8, 20], sEase: [-8, 20], flare: [hemFloor(state.top), 22], dNw: [-2, 8], ndF: [3, 30], ndB: [1.5, 26], neckV: [0, 1] };
+  const b = base(), T = state.top, full = fullOf(T);
+  return { sl: [-(full - .6), b.arm + b.over], L: [adOf(T) + 6, 118], ease: [Math.max(-8, T.sEase - GAP), Math.min(20, T.sEase + GAP)], sEase: [Math.max(-8, T.ease - GAP), Math.min(20, T.ease + GAP)], flare: [hemFloor(state.top), 22], dNw: [-2, 8], ndF: [3, 30], ndB: [1.5, 26], neckV: [0, 1] };
 };
 function fix(T) {
   const L = LIM();
   T.sl = T.sl.map(v => clamp(v, ...L.sl));
-  for (const k of ['L', 'ease', 'sEase', 'flare', 'dNw', 'ndF', 'ndB', 'neckV']) T[k] = clamp(T[k], ...L[k]);
+  for (const k of ['L', 'flare', 'dNw', 'ndF', 'ndB', 'neckV']) T[k] = clamp(T[k], ...L[k]);
+  // the sleeves on their own range, the body then within the gap of them: a dragged side stops there (the bars' own
+  // ranges already keep each to the other)
+  T.sEase = clamp(T.sEase, -8, 20);
+  T.ease = clamp(T.ease, Math.max(-8, T.sEase - GAP), Math.min(20, T.sEase + GAP));
 }
 
 /* ---------- names (panel labels, drag tip) ---------- */
