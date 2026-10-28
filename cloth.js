@@ -2,9 +2,10 @@
 // small steps). A changed pattern is re-meshed and every new point starts where the same spot of fabric was, so the
 // garment moves from its old shape to the new one instead of jumping.
 //   in : {t:'init', body:{pos,nrm}, bottom:{pos,nrm}|null, bones:{l:[J,E], r:[J,E]}, hps, z0}
-//        {t:'params', p}      {t:'tick'}   (one frame per tick; answered with {t:'frame'})
+//        {t:'params', p, fresh}      {t:'tick'}   (one frame per tick; answered with {t:'frame'})
+//        (fresh: laid out anew round the body, not carried on from the old cloth)
 //   out: {t:'topo', ...} when the mesh changes, {t:'frame', pos, nrm, awake, ms}
-import { build, fitSide, BASE, BASE_M } from './pattern.js?v=23';
+import { build, fitSide, BASE, BASE_M } from './pattern.js?v=24';
 
 const G = -9.8, SUB = 12, DT = 1 / 60, TH = 0.004;
 // cloth against itself: two particles not near each other along the cloth stay SC apart (a little over the widest gap
@@ -23,7 +24,7 @@ function handle(m) {
     useSDF(buildSDF(m.body, m.bottom, m.bones));
     ctx.axis = { l: armAxis(m.body.pos, m.bones.l), r: armAxis(m.body.pos, m.bones.r) };
     postMessage({ t: 'log', s: `sdf ${(performance.now() - t0).toFixed(0)} ms, ${sdf.nx}×${sdf.ny}×${sdf.nz}` });
-  } else if (m.t === 'params') pending = m.p;
+  } else if (m.t === 'params') pending = m;
   else if (m.t === 'tick') tick();
   else if (m.t === 'probe') {   // test: field values across the arm at a few points down its centre line
     const out = [];
@@ -39,8 +40,8 @@ function handle(m) {
 function tick() {
   const t0 = performance.now();
   if (pending && sdf) {
-    const p = pending; pending = null;
-    cloth = assemble(build(p), cloth);
+    const { p, fresh } = pending; pending = null;
+    cloth = assemble(build(p), fresh ? null : cloth);
     cloth.stretch = p.stretch || 0;
     postTopo();
     awake = 1; calm = 0; snap = null;
@@ -266,16 +267,12 @@ function assemble(g, old) {
 
   // start positions: where that spot of fabric was (old cloth), else the first placement round the body
   const pos = new Float32Array(nP * 3), cnt = new Float32Array(nP), fresh = new Float32Array(nP * 3), fcnt = new Float32Array(nP);
-  // a big jump in width (a card, not a drag) lays the cloth out afresh: squeezed into the old places the extra cloth
-  // buckles into a fold at the side seam that friction then holds. The sleeves too, as their armholes go with the body
-  // (a narrow sleeve carried on into a wide one tore open at the elbow)
-  let jump = 0;
-  if (old) for (let yd = 0; yd <= g.info.P.L; yd += 4) jump = Math.max(jump, Math.abs(halfOf(g.info.P, yd) - halfOf(old.info.P, yd)));
-  // so does a sleeve made much longer: carried on past the old hem (a wide short sleeve hangs open, off the arm) the
-  // new length starts beside the arm instead of round it, and the arm comes out through the sleeve
+  // (a card, an undo, the end of a drag: the cloth is laid afresh, studio.js) A sleeve made much longer mid-drag is
+  // laid afresh too: carried on past the old hem (a wide short sleeve hangs open, off the arm) the new length starts
+  // beside the arm instead of round it, and the arm comes out through the sleeve
   const grown = s => old && g.info.sleeve[s] - old.info.sleeve[s] > 6;
   for (const pc of pieces) {
-    const o = old && !(jump > 2.5) && !(pc.pc >= 2 && grown(pc.pc === 2 ? 'uL' : 'uR')) && old.pieces.find(q => q.name === pc.name);
+    const o = old && !(pc.pc >= 2 && grown(pc.pc === 2 ? 'uL' : 'uR')) && old.pieces.find(q => q.name === pc.name);
     const loc = o ? locator(o, old) : null;
     pc.pts.forEach((p0, i) => {
       const v = pc.off + i, q = map[v];

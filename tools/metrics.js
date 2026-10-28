@@ -179,13 +179,17 @@
     }
     const median = a => { const s = a.slice().sort((p, q) => p - q); return s.length ? s[s.length >> 1] : 0; };
     const ears = [], wd = (a, b) => Math.hypot(X[a * 3] - X[b * 3], X[a * 3 + 1] - X[b * 3 + 1], X[a * 3 + 2] - X[b * 3 + 2]) * 100;
+    // (and less how much the whole edge waves anyway, past a smooth hem's few mm: a loose hem draped in folds all round
+    // has a crest every few cm, each standing off its troughs as far as a single ear on a smooth hem. 2026-10-28: a
+    // smooth fitted crop's 10/25 corner ear 0.82 on a hem waving 0.12, an oversized back hem's fold crest 0.82 on 1.39)
     for (const L of Object.values(loops)) {
       const m = median(L.pts.map(p => p.jump));
       for (const p of L.pts) {
         const side = L.pts.filter(q => { const d = wd(p.v, q.v); return d >= 3 && d <= 6; });
-        const lat = side.length ? side.reduce((s, q) => s + q.near, 0) / side.length : p.near;
-        ears.push({ kind: L.kind, spike: Math.min(p.jump - m, p.near - lat) - 2 * Math.max(0, lat - 1, p.ref - 1), v: p.v });
+        p.lat = side.length ? side.reduce((s, q) => s + q.near, 0) / side.length : p.near;
       }
+      const wave = Math.max(0, median(L.pts.map(p => Math.abs(p.near - p.lat))) - .25);
+      for (const p of L.pts) ears.push({ kind: L.kind, spike: Math.min(p.jump - m, p.near - p.lat) - 2 * Math.max(0, p.lat - 1, p.ref - 1) - wave, v: p.v });
     }
     ears.sort((a, b) => b.spike - a.spike);
     const earBy = {};

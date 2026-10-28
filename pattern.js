@@ -132,7 +132,15 @@ function bodyHalf(P, front) {
   // The corner rises by what squaring takes (m: cm out per cm down at the hem), the centre stays at the length
   const end = s => { const a = s[s.length - 2], b = s[s.length - 1]; return Math.max(0, (b[0] - a[0]) / Math.max(.01, a[1] - b[1])); };
   const s0 = sideTo(L), hx0 = s0[s0.length - 1][0], d = clamp(end(s0) * hx0 * .45, .5, 3);
-  const side = d > .5 ? sideTo(L + .5 - d) : s0;
+  let side = d > .5 ? sideTo(L + .5 - d) : s0;
+  // a side seam running far out (a flared hem) is longer than the drop it hangs from: hung, it fell straight down and
+  // its corner hung below the hem in a point. The corner rises until the seam, measured straight underarm → corner, is
+  // as long as that drop, the hem curving up to it as a flared skirt's does. Only outward: a side taken in is held by the
+  // body, and a fitted side's curve in to the waist and out again lies on it. (The run is the corner's before rising, a
+  // little more than after: a flare rises a little more than it must, and the corner at most to 1.5 cm under the arm)
+  const cr = side[side.length - 1], dl = L + .5 - d - ad, run = Math.max(0, cr[0] - Math.max(P.cw, P.bx ?? P.cw));
+  const rise = dl - Math.sqrt(Math.max(2.25, dl * dl - run * run));
+  if (rise >= .3) side = sideTo(L + .5 - d - rise);
   // the hem starts where the side seam ends (a fitted crop's hem sits in the waist: from P.hw it left a flap)
   const cn = side[side.length - 1], hx = cn[0], m = end(side), h = Math.min(hx * .45, d / Math.max(m, 1e-3));
   const hem = bez(cn, [hx - h, cn[1] - h * m], [hx * .2, -L - .5], [0, -L - .5]);

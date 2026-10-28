@@ -27,6 +27,7 @@ export function judge(r, lim) {
   if (!m) return [r.err || '측정 못 함'];
   // (per amount of cloth, as selfx below: each step of a top twice the size takes twice as long)
   const big = Math.max(1, (m.nP || 0) / 6000), s = lim && lim.s != null ? lim.s : L.s * big;
+  if (r.n0 && r.s0 > (lim && lim.s != null ? lim.s : L.s * Math.max(1, r.n0 / 6000))) bad.push(`처음 멈춤 ${r.s0 === Infinity ? '30초 넘게' : r.s0.toFixed(1) + 's'}`);
   if (r.s > s) bad.push(`멈춤 ${r.s === Infinity ? '30초 넘게' : r.s.toFixed(1) + 's'}`);
   if (m.pen > L.pen) bad.push(`뚫림 ${m.pen}점 (최대 ${m.deep}cm)`);
   if (m.ear > L.ear) bad.push(`귀 ${m.earAt} +${m.ear}cm`);
@@ -124,11 +125,13 @@ export async function run(h, page, cas) {
     await page.waitForFunction(() => window.__studio && window.__studio.cloth && window.__studio.A, null, { timeout: 60000 });
     await page.addScriptTag({ content: h.metrics });
     const s0 = await settle(page);
+    // (the top as loaded judged by its own amount of cloth: a big one may take longer than the one the edits leave)
+    const n0 = s0 > LIMITS.s && cas.steps && cas.steps.length ? await page.evaluate(() => window.__metrics().nP) : 0;
     for (const st of cas.steps || []) await step(page, st);
-    const s = Math.max(s0, await settle(page));
+    const s1 = await settle(page), s = n0 ? s1 : Math.max(s0, s1);
     await page.waitForFunction(() => window.__studio.A && window.__studio.cloth, null, { timeout: 30000 });
     const m = await page.evaluate(() => window.__metrics());
-    return { s, m, errors: page.errors.slice() };
+    return { s, s0, n0, m, errors: page.errors.slice() };
   } catch (e) {
     return { s: Infinity, m: null, err: e.message.split('\n')[0], errors: page.errors.slice() };
   }

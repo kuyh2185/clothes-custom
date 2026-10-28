@@ -12,7 +12,7 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { smoothChest, tuckUnder } from './mannequin.js?v=1';
-import { BASE, BASE_M, fitSide } from './pattern.js?v=23';
+import { BASE, BASE_M, fitSide } from './pattern.js?v=24';
 
 const $ = id => document.getElementById(id);
 const PI = Math.PI;
@@ -38,7 +38,9 @@ function load() {
   return null;
 }
 const base = () => state.body === 'm' ? BASE_M : BASE;
-const shoulderOf = T => base().sw + Math.max(0, T.sEase - 3) * .5;   // an oversized top's shoulder drops off the shoulder
+const shoulderOf = T => base().sw + Math.max(0, T.sEase - 3) * .5 * sstep(Math.max(...T.sl) / 8);   // an oversized top's shoulder drops off the shoulder
+// (with its sleeve: under 8 cm of sleeve it comes back, and a sleeveless or strap top has the body's shoulder. Dropped,
+// the armhole lay over the arm and the arm came through it)
 const fullOf = T => shoulderOf(T) - (base().nw + T.dNw);   // the shoulder seam's length: how far a strap can narrow
 // below the slim fit the top is cut to the body from a knit that stretches round it (rib tank, fitted tee): fitOf
 // 0 … 1 is how far the side seams follow the mannequin's own outline (measure()) instead of the tee's straight side
@@ -70,14 +72,15 @@ function params(T = state.top) {
   // before the body widens keeps the knit's stretch to the hem: let out there, on the body narrowing down to the
   // waist, the cloth stood off the sides a few cm above the hem like ears (and so on the men's long flat waist).
   // A hem on the widening slope is cut a little under the body, as a fitted tee's hem hugs: cut to the body, the
-  // cloth at the squared side corner stood out from the slope like a small ear
+  // cloth at the squared side corner stood out from the slope like a small ear. It comes in over the last 10 cm (taken
+  // in over 7, a hem just where the hips start to widen still stood out at its corners; cut deeper, others did)
   let fit = null, cw = b.cw + es;
   if (m) {
     const off = (e + 2.5) * .4, q = [], y0 = Math.floor(ad), L = Math.max(T.L, ad + 6), n = Math.ceil(L) + 3 - y0;
     const qm = y => m.q[clamp(Math.round(y), 0, m.q.length - 1)];
-    const band = -.8 * clamp((qm(L) - qm(L - 4)) / 4 / .3, 0, 1), W = sstep((qm(L) - qm(m.waist)) / 1.2);
+    const band = -1.6 * clamp((qm(L) - qm(L - 4)) / 4 / .3, 0, 1), W = sstep((qm(L) - qm(m.waist)) / 1.2);
     for (let i = 0; i <= n; i++) {
-      const y = y0 + i, low = W * sstep((y - m.waist + 8) / 8), hem = sstep((y - L + 7) / 5);
+      const y = y0 + i, low = W * sstep((y - m.waist + 8) / 8), hem = sstep((y - L + 10) / 7);
       const v = qm(y) + off * (1 - low);
       q.push(r1(lerp(v, Math.min(v, qm(y) + band), hem)));
     }
@@ -106,29 +109,41 @@ function params(T = state.top) {
     stretch: Math.round(clamp(t / 2, 0, 1) * 100) / 100,
   };
 }
-// the hem taken in (the hem's corners dragged in, or the bar): down to the body's round at the hem, no further. A hem
-// cut under the hips slid up the slope and rolled at the waist; a crop's hem sits in the waist and comes in a long way
+// the hem taken in (the hem's corners dragged in, or the bar): down to 1 cm over the body's round at the hem, no further.
+// A hem cut under the hips slid up the slope and rolled at the waist; a crop's hem sits in the waist and comes in a long
+// way (cut right to the body there, its side corners still rolled up)
 const hemFloor = T => {
   if (!A) return -12;   // not measured yet: a saved hem is not cut back before the mannequin is in
   const P = params({ ...T, flare: 0 }), q = measure().q, L = Math.max(P.L, P.ad + 6);
   const hem = P.fit ? fitSide(P, L, P.hw) : P.hw;
-  return clamp(r1(q[clamp(Math.round(L), 0, q.length - 1)] - hem), -12, 0);
+  return clamp(r1(q[clamp(Math.round(L), 0, q.length - 1)] - hem + 1), -12, 0);
+};
+// the hem's range: its side seam runs no flatter than 45° from the underarm, out or in. Further out, a short top's side
+// lay nearly flat, and hung it fell into a tongue below the hem or folded through itself (a crop flared like a cape);
+// further in, the crop's hem pulled its side corners up
+const flareLim = T => {
+  if (!A) return [-12, 22];   // not measured yet (as hemFloor): the tee's deep armhole guessed for a fitted one cut a saved hem
+  const P = params({ ...T, flare: 0 }), drop = Math.max(P.L, P.ad + 6) - P.ad, run = P.hw - P.cw;
+  const lo = Math.max(hemFloor(T), r1(-drop - run));
+  return [lo, Math.max(lo, Math.min(22, r1(drop - run)))];
 };
 // the body's and the sleeves' ease at most 20 apart: further, the body flared straight out under the arm into wings, or
 // the underarm sat inside the arm
 const GAP = 20;
 const LIM = () => {
   const b = base(), T = state.top, full = fullOf(T);
-  return { sl: [-(full - .6), b.arm + b.over], L: [adOf(T) + 6, 118], ease: [Math.max(-8, T.sEase - GAP), Math.min(20, T.sEase + GAP)], sEase: [Math.max(-8, T.ease - GAP), Math.min(20, T.ease + GAP)], flare: [hemFloor(state.top), 22], dNw: [-2, 8], ndF: [3, 30], ndB: [1.5, 26], neckV: [0, 1] };
+  return { sl: [-(full - .6), b.arm + b.over], L: [A ? adOf(T) + 6 : 0, 118], ease: [Math.max(-8, T.sEase - GAP), Math.min(20, T.sEase + GAP)], sEase: [Math.max(-8, T.ease - GAP), Math.min(20, T.ease + GAP)], flare: flareLim(state.top), dNw: [-2, 8], ndF: [3, 30], ndB: [1.5, 26], neckV: [0, 1] };
 };
 function fix(T) {
-  const L = LIM();
-  T.sl = T.sl.map(v => clamp(v, ...L.sl));
-  for (const k of ['L', 'flare', 'dNw', 'ndF', 'ndB', 'neckV']) T[k] = clamp(T[k], ...L[k]);
   // the sleeves on their own range, the body then within the gap of them: a dragged side stops there (the bars' own
-  // ranges already keep each to the other)
+  // ranges already keep each to the other). First: the shortest length and the hem's range are measured on them (taken
+  // before, a side dragged past -8 had its hem's range measured on a body that then stopped at -8)
   T.sEase = clamp(T.sEase, -8, 20);
   T.ease = clamp(T.ease, Math.max(-8, T.sEase - GAP), Math.min(20, T.sEase + GAP));
+  const L = LIM();
+  T.sl = T.sl.map(v => clamp(v, ...L.sl));
+  for (const k of ['L', 'dNw', 'ndF', 'ndB', 'neckV']) T[k] = clamp(T[k], ...L[k]);
+  T.flare = clamp(T.flare, ...flareLim(T));   // (on the length just set)
 }
 
 /* ---------- names (panel labels, drag tip) ---------- */
@@ -263,8 +278,10 @@ async function loadBody(kind) {
 }
 // the shown body's torso, measured for a fitted top (with the trousers when worn, they are what the hem sits on):
 // q[y] = a quarter of the round a cloth wrapped tight would take (convex outline of the slice, the arms left out by
-// their skin weights) y cm below the high shoulder point, held at the hips' round below the hips (a tight top hangs
-// straight from them); armpit and waist = cm below that point
+// their skin weights) y cm below the high shoulder point, below the hips never past the hips' round (a tight top hangs
+// straight from them, and over 15 cm in to the thighs' outline under them: held at the hips' round, a fitted dress
+// ending on the thighs stood off them at its side corners; in at once, a hem just under the hips did); armpit and
+// waist = cm below that point
 function measure() {
   const jeans = state.bottom === 'jeans' && !!A.meshes.jeans, k = jeans ? 'mj' : 'm';
   if (A[k]) return A[k];
@@ -290,7 +307,7 @@ function measure() {
   let waist = armpit + 10, hip = waist;
   for (let y = armpit + 8; y < armpit + 34; y++) if (q[y] < q[waist]) waist = y;
   for (let y = waist; y < waist + 34; y++) if (q[y] > q[hip]) hip = y;
-  for (let y = hip; y < N; y++) q[y] = q[hip];
+  for (let y = hip; y < N; y++) q[y] = lerp(q[hip], Math.min(q[y] || q[hip], q[hip]), sstep((y - hip) / 15));
   return (A[k] = { q, armpit, waist, hip, arm: A.arm || (A.arm = armRound(A.bare, isArm, SI, SW)) });
 }
 // the arm's round (cm) by cm down its bones from the shoulder joint: convex outline of the slice square to the bone
@@ -339,7 +356,7 @@ const world = mesh => {   // rest pose = bind pose = world here (the asset's roo
 };
 
 /* ---------- the cloth ---------- */
-const worker = new Worker('cloth.js?v=41', { type: 'module' });
+const worker = new Worker('cloth.js?v=42', { type: 'module' });
 worker.onerror = e => console.error('[cloth]', e.message);
 const fabricU = { uC1: { value: new THREE.Color() }, uC2: { value: new THREE.Color() }, uPat: { value: 0 }, uScale: { value: 1 } };
 // the knit's grain as a normal map over the flat pattern (m): a jersey's columns of V-shaped loops, or for the fitted
@@ -383,12 +400,16 @@ else if (uPat > 1.5 && uPat < 2.5) { float b = step(fract(q.y / .06), .42) + ste
 else if (uPat > 2.5) { vec2 g = q / .028; vec2 c = fract(g + vec2(.5 * mod(floor(g.y), 2.0), 0.0)) - .5; if (length(c) < .27) base = uC2; }
 diffuseColor.rgb = gl_FrontFacing ? base : base * .72;   // the inside of the garment a shade darker`);
 };
-let cloth = null, next = null, busy = false, awake = 0, sent = '', simMs = 0;
-function sendParams(force) {
+let cloth = null, next = null, busy = false, awake = 0, sent = '', laid = '', simMs = 0;
+// fresh: the cloth laid out anew for these values (once per shape: laid). While a point or a bar is dragged it is carried
+// on from where it hung, so it follows the hand; once an edit ends it is laid afresh, and the top comes out the same
+// whatever was done before: carried on through a few edits it kept what they left, a fold, a rolled sleeve, an ear
+function sendParams(force, fresh) {
   const p = JSON.stringify(params());
-  if (!force && p === sent) return;
-  sent = p;
-  worker.postMessage({ t: 'params', p: JSON.parse(p) });
+  if (p === laid) fresh = false;
+  if (!force && !fresh && p === sent) return;
+  sent = p; laid = fresh ? p : '';   // (carried through other values and back, the cloth is no longer as laid)
+  worker.postMessage({ t: 'params', p: JSON.parse(p), fresh });
   awake = 1;
 }
 worker.onmessage = e => {
@@ -425,14 +446,14 @@ worker.onmessage = e => {
 };
 // the body (and the trousers, when worn) the cloth hangs on: a new collision field, and the cloth hangs again
 function initCloth() {
-  fix(state.top);   // the limits (hem floor, shortest length, sleeves) are measured on this mannequin and bottom
+  fix(state.top); renderBars();   // the limits (hem floor, shortest length, sleeves) are measured on this mannequin and bottom
   const B = A.meshes.body, jeans = state.bottom === 'jeans' && A.meshes.jeans;
   B.geometry.attributes.position.array.set(jeans ? A.tucked : A.bare);
   B.geometry.attributes.position.needsUpdate = true;
   if (A.meshes.jeans) A.meshes.jeans.visible = !!jeans;
   if (A.meshes.shoes) A.meshes.shoes.visible = true;
   worker.postMessage({ t: 'init', body: world(B), bottom: jeans ? world(A.meshes.jeans) : null, bones: A.bones, hps: A.hps, z0: A.z0 });
-  sendParams(true);
+  sendParams(true, true);
 }
 async function showBody(kind) {
   $('loading').hidden = false;
@@ -582,6 +603,7 @@ function commit() {
   const s = JSON.stringify(state);
   if (s === hist[hi]) return;
   hist = hist.slice(0, hi + 1); hist.push(s); hi = hist.length - 1;
+  sendParams(false, true);
   if (hist.length > 80) { hist.shift(); hi--; }
   save(); undoState();
 }
@@ -594,7 +616,7 @@ async function go(i) {
   if (prev.body !== state.body) await showBody(state.body);
   else if (prev.bottom !== state.bottom) initCloth();
   else fix(state.top);   // (the first entry is the saved value as it was, before the mannequin measured its limits)
-  apply(); save(); undoState();
+  sendParams(false, true); apply(); save(); undoState();
 }
 $('undo').addEventListener('click', () => { if (hi > 0) go(hi - 1); });
 $('redo').addEventListener('click', () => { if (hi < hist.length - 1) go(hi + 1); });

@@ -1,0 +1,30 @@
+{
+ "name": "10/28 fuzz 31 여 오버핏 뒤 밑단 주름 마루를 귀로 잘못 잼 (측정)",
+ "fixed": "stage1",
+ "state": {
+  "body": "f",
+  "bottom": "jeans",
+  "top": {
+   "sl": [
+    50.2,
+    50.2
+   ],
+   "L": 57.5,
+   "ease": 8.1,
+   "sEase": 8.1,
+   "flare": 0,
+   "dNw": 4.5,
+   "ndF": 18.6,
+   "ndB": 4.9,
+   "neckV": 1
+  }
+ },
+ "steps": [
+  {
+   "t": "drag",
+   "dot": 9,
+   "dx": 62,
+   "dy": -39
+  }
+ ]
+}
