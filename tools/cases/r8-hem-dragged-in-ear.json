@@ -1,6 +1,6 @@
 {
  "name": "10/28 fuzz 49 밑단 폭 점을 끌어 줄이면 옆 귀 (끄는 동안 이어 간 천이 남김)",
- "fixed": "stage1",
+ "fixed": "64599e5",
  "state": {
   "body": "f",
   "bottom": "jeans",

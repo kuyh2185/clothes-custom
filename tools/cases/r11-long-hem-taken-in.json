@@ -1,6 +1,6 @@
 {
  "name": "10/28 fuzz 461 남 긴 상의 밑단을 몸 둘레까지 줄임 + 한쪽 짧은 소매: 앞판이 흔들려 안 멈춤",
- "fixed": "stage1",
+ "fixed": "64599e5",
  "state": {
   "body": "m",
   "bottom": "jeans",

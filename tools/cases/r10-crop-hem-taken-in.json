@@ -1,6 +1,6 @@
 {
  "name": "10/28 fuzz 451 여 밑단을 크게 줄인 짧은 크롭: 옆 모서리 말려 올라감",
- "fixed": "stage1",
+ "fixed": "64599e5",
  "state": {
   "body": "f",
   "bottom": "jeans",

@@ -1,6 +1,6 @@
 {
  "name": "10/28 fuzz 465 여 밀착에 밑단 폭 크게: 옆 모서리가 밑단 아래로 뾰족하게 처짐",
- "fixed": "stage1",
+ "fixed": "64599e5",
  "state": {
   "body": "f",
   "bottom": "jeans",
