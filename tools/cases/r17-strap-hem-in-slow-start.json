@@ -1,0 +1,65 @@
+{
+ "name": "10/29 fuzz 75 남 끈 + 소매 품 16 + 밑단 폭 -10: 시작 상태가 20초 넘게 안 멈춤 → 밑단 띠를 8cm 위부터",
+ "seed": 75,
+ "state": {
+  "body": "m",
+  "bottom": "jeans",
+  "top": {
+   "sl": [
+    -8,
+    -8
+   ],
+   "L": 55.4,
+   "ease": -2.2,
+   "sEase": 15.9,
+   "flare": -10.5,
+   "dNw": 0,
+   "ndF": 12.7,
+   "ndB": 6.7,
+   "neckV": 1
+  }
+ },
+ "steps": [
+  {
+   "t": "drag",
+   "dot": 2,
+   "dx": 39,
+   "dy": 18
+  },
+  {
+   "t": "wait",
+   "ms": 1037
+  },
+  {
+   "t": "card",
+   "g": "sleeve",
+   "i": 1
+  },
+  {
+   "t": "settle"
+  },
+  {
+   "t": "card",
+   "g": "neck",
+   "i": 4
+  },
+  {
+   "t": "settle"
+  },
+  {
+   "t": "card",
+   "g": "len",
+   "i": 0
+  },
+  {
+   "t": "settle"
+  },
+  {
+   "t": "drag",
+   "dot": 2,
+   "dx": -23,
+   "dy": -3
+  }
+ ],
+ "fixed": "stage1"
+}

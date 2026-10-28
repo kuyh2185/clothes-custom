@@ -72,15 +72,16 @@ function params(T = state.top) {
   // before the body widens keeps the knit's stretch to the hem: let out there, on the body narrowing down to the
   // waist, the cloth stood off the sides a few cm above the hem like ears (and so on the men's long flat waist).
   // A hem on the widening slope is cut a little under the body, as a fitted tee's hem hugs: cut to the body, the
-  // cloth at the squared side corner stood out from the slope like a small ear. It comes in over the last 10 cm (taken
-  // in over 7, a hem just where the hips start to widen still stood out at its corners; cut deeper, others did)
+  // cloth at the squared side corner stood out from the slope like a small ear. It comes in from 8 cm above the hem, fully
+  // by 2 (from 7, a hem just where the hips start to widen still stood out at its corners; cut deeper, others did;
+  // from 10, a strap top taken in at the hem took 20 s to settle)
   let fit = null, cw = b.cw + es;
   if (m) {
     const off = (e + 2.5) * .4, q = [], y0 = Math.floor(ad), L = Math.max(T.L, ad + 6), n = Math.ceil(L) + 3 - y0;
     const qm = y => m.q[clamp(Math.round(y), 0, m.q.length - 1)];
     const band = -1.6 * clamp((qm(L) - qm(L - 4)) / 4 / .3, 0, 1), W = sstep((qm(L) - qm(m.waist)) / 1.2);
     for (let i = 0; i <= n; i++) {
-      const y = y0 + i, low = W * sstep((y - m.waist + 8) / 8), hem = sstep((y - L + 10) / 7);
+      const y = y0 + i, low = W * sstep((y - m.waist + 8) / 8), hem = sstep((y - L + 8) / 6);
       const v = qm(y) + off * (1 - low);
       q.push(r1(lerp(v, Math.min(v, qm(y) + band), hem)));
     }
