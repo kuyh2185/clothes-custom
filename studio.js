@@ -12,7 +12,7 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { smoothChest, tuckUnder } from './mannequin.js?v=1';
-import { BASE, BASE_M, fitSide, halfOk, resample, sleeves, sleeveOk } from './pattern.js?v=31';
+import { BASE, BASE_M, fitSide, halfOk, resample, sleeves, sleeveOk } from './pattern.js?v=32';
 
 const $ = id => document.getElementById(id);
 const PI = Math.PI;
@@ -168,7 +168,7 @@ function fitEdit(T) {
 function piecesOk(T, from) {
   const m = measure(), s = sleeves(params(T)), h = s.h, h0 = from.h;
   return ['Fp', 'Fm', 'Bp', 'Bm'].every(k => halfOk(h[k], h0[k], m.q, h[k[0]]))
-    && ['l', 'r'].every(k => !s[k] || sleeveOk(s[k].H, (from[k] || s[k]).H, s.sl[k].capb, m.arm, h.P.arm + h.P.over));
+    && ['l', 'r'].every(k => !s[k] || sleeveOk(s[k].H, (from[k] || s[k]).H, s.sl[k].capb, m.arm, h.P.arm + h.P.over, s[k].H0));
 }
 
 /* ---------- names (panel labels, drag tip) ---------- */
@@ -381,7 +381,7 @@ const world = mesh => {   // rest pose = bind pose = world here (the asset's roo
 };
 
 /* ---------- the cloth ---------- */
-const worker = new Worker('cloth.js?v=49', { type: 'module' });
+const worker = new Worker('cloth.js?v=50', { type: 'module' });
 worker.onerror = e => console.error('[cloth]', e.message);
 const fabricU = { uC1: { value: new THREE.Color() }, uC2: { value: new THREE.Color() }, uPat: { value: 0 }, uScale: { value: 1 } };
 // the knit's grain as a normal map over the flat pattern (m): a jersey's columns of V-shaped loops, or for the fitted

@@ -357,7 +357,7 @@ export function halfOk(H, H0, q, base) {
 // a sleeve's half the same way (cap: its cap's half above it, the underarm's start): it doesn't cross itself or the
 // middle line, an underarm taken in stops 1 cm over the arm's half round (ar: the arm's full round by sleeve cm) or
 // where it was, and nothing hangs past the longest sleeve (lo cm down)
-export function sleeveOk(H, H0, cap, ar, lo) {
+export function sleeveOk(H, H0, cap, ar, lo, base) {
   const pts = [];
   for (const c of [cap, H.und, H.hem]) {
     const r = resample(c, Math.max(1, Math.round(plen(c))));
@@ -365,6 +365,13 @@ export function sleeveOk(H, H0, cap, ar, lo) {
   }
   if (pts.some(p => p[0] < -.01 || p[1] < -lo) || [H.und, H.hem].some(c => c.some(p => p[0] < -.01) || folds(c))) return false;
   for (let i = 1; i < pts.length; i++) for (let j = i + 2; j < pts.length; j++) if (cross(pts[i - 1], pts[i], pts[j - 1], pts[j])) return false;
+  // the underarm pulled out no flatter than 45° or than it was cut (base: the sleeve uncut), as a body's side (halfOk):
+  // a 5부 sleeve's underarm pulled 9 cm out folded its spare cloth through itself under the arm (fuzz 179)
+  if (base && H.und !== base.und) {
+    const n = Math.max(2, Math.round(plen(base.und))), e = resample(H.und, n), o = resample(base.und, n);
+    for (let i = 1; i < n; i++) if ((e[i][0] > o[i][0] + .1 || e[i - 1][0] > o[i - 1][0] + .1)
+      && Math.abs(e[i][0] - e[i - 1][0]) > Math.max(e[i - 1][1] - e[i][1], Math.abs(o[i][0] - o[i - 1][0])) + .05) return false;
+  }
   if (ar && H.und !== H0.und) {
     const u = H0.und, x0 = y => { for (let i = 1; i < u.length; i++) if (u[i][1] <= y) return lerp(u[i - 1][0], u[i][0], (u[i - 1][1] - y) / Math.max(1e-9, u[i - 1][1] - u[i][1])); return u[u.length - 1][0]; };
     for (const [x, y] of H.und) {

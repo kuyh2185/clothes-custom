@@ -5,7 +5,7 @@
 //        {t:'params', p, fresh}      {t:'tick'}   (one frame per tick; answered with {t:'frame'})
 //        (fresh: laid out anew round the body, not carried on from the old cloth)
 //   out: {t:'topo', ...} when the mesh changes, {t:'frame', pos, nrm, awake, ms}
-import { build, fitSide, BASE, BASE_M } from './pattern.js?v=31';
+import { build, fitSide, BASE, BASE_M } from './pattern.js?v=32';
 
 const G = -9.8, SUB = 12, DT = 1 / 60, TH = 0.004;
 // cloth against itself: two particles not near each other along the cloth stay SC apart (a little over the widest gap
@@ -225,12 +225,14 @@ function sample(x, y, z) {
   return c0 + (c1 - c0) * fz;
 }
 const GR = [0, 0, 0];
+let GL = 1;   // the last gradient's length (1 on a face, less in a crease where two faces pull apart)
 function grad(x, y, z) {
   const e = SH * .5;
   GR[0] = sample(x + e, y, z) - sample(x - e, y, z);
   GR[1] = sample(x, y + e, z) - sample(x, y - e, z);
   GR[2] = sample(x, y, z + e) - sample(x, y, z - e);
   const l = Math.hypot(GR[0], GR[1], GR[2]) || 1;
+  GL = l / (2 * e);
   GR[0] /= l; GR[1] /= l; GR[2] /= l;
   return GR;
 }
@@ -671,6 +673,8 @@ function step(c) {
         const tx = dx - dn * n[0], ty = dy - dn * n[1], tz = dz - dn * n[2];
         const f = Math.min(1, K.fric * push / (Math.hypot(tx, ty, tz) + 1e-9));
         p[k] -= tx * f; p[k + 1] -= ty * f; p[k + 2] -= tz * f;
+        if (GL < .6) { const dn2 = (p[k] - q[k]) * n[0] + (p[k + 1] - q[k + 1]) * n[1] + (p[k + 2] - q[k + 2]) * n[2];
+        q[k] += n[0] * dn2; q[k + 1] += n[1] * dn2; q[k + 2] += n[2] * dn2; }
       }
     }
     for (let i = 0; i < nP; i++) {
