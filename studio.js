@@ -12,7 +12,7 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { smoothChest, tuckUnder } from './mannequin.js?v=1';
-import { BASE, BASE_M, fitSide, halves, halfOk } from './pattern.js?v=25';
+import { BASE, BASE_M, fitSide, halfOk, sleeves, sleeveOk } from './pattern.js?v=26';
 
 const $ = id => document.getElementById(id);
 const PI = Math.PI;
@@ -146,6 +146,25 @@ function fix(T) {
   T.sl = T.sl.map(v => clamp(v, ...L.sl));
   for (const k of ['L', 'dNw', 'ndF', 'ndB', 'neckV']) T[k] = clamp(T[k], ...L[k]);
   T.flare = clamp(T.flare, ...flareLim(T));   // (on the length just set)
+  fitEdit(T);
+}
+// the outline pulled by hand on a shape a card or bar has since changed: the bumps shrunk till the pieces are whole
+// again (else they rode on the new shape unchecked: a narrower body under an old side bump crossed itself)
+function fitEdit(T) {
+  if (!A || !T.edit) return;
+  const from = sleeves(params({ ...T, edit: undefined }));
+  if (piecesOk(T, from)) return;
+  const E0 = structuredClone(T.edit), scale = k => { for (const key in E0) T.edit[key] = E0[key].map(b => [b[0], b[1], r1(b[2] * k), r1(b[3] * k), ...b.slice(4)]); };
+  let lo = 0, hi = 1;
+  for (let it = 0; it < 7; it++) { const m = (lo + hi) / 2; scale(m); if (piecesOk(T, from)) lo = m; else hi = m; }
+  scale(lo);
+}
+// the pieces still whole (pattern.js halfOk, sleeveOk), each against `from`'s (a side or an underarm comes in no further
+// than the body or arm allows, or than it already was)
+function piecesOk(T, from) {
+  const m = measure(), s = sleeves(params(T)), h = s.h, h0 = from.h;
+  return halfOk(h.Fp, h0.Fp, m.q, h.F) && halfOk(h.Bp, h0.Bp, m.q, h.B)
+    && ['l', 'r'].every(k => !s[k] || sleeveOk(s[k].H, (from[k] || s[k]).H, s.sl.capb, m.arm, h.P.arm + h.P.over));
 }
 
 /* ---------- names (panel labels, drag tip) ---------- */
@@ -358,7 +377,7 @@ const world = mesh => {   // rest pose = bind pose = world here (the asset's roo
 };
 
 /* ---------- the cloth ---------- */
-const worker = new Worker('cloth.js?v=43', { type: 'module' });
+const worker = new Worker('cloth.js?v=44', { type: 'module' });
 worker.onerror = e => console.error('[cloth]', e.message);
 const fabricU = { uC1: { value: new THREE.Color() }, uC2: { value: new THREE.Color() }, uPat: { value: 0 }, uScale: { value: 1 } };
 // the knit's grain as a normal map over the flat pattern (m): a jersey's columns of V-shaped loops, or for the fitted
@@ -676,9 +695,16 @@ function placeDots() {
     const [x, y] = project(v3);
     d.sx = x; d.sy = y; d.p = v3.clone();
     d.el.style.transform = `translate(${x}px, ${y}px)`;
-    d.el.hidden = drag ? drag !== d : facing < lim;   // while dragging only the point in hand
+    d.el.hidden = drag ? drag !== d : facing < lim || nearBump(d, vi);   // while dragging only the point in hand
     d.el.classList.toggle('on', drag === d);
   }
+}
+// a fixed point where the outline was pulled by hand: hidden (it sat on the drawn outline but moved a number, which
+// carried the drawn bump along off where it was drawn); the edge's own point pulls it there
+function nearBump(d, vi) {
+  const pc = d.k === 'sleeve' && cloth.userData.info.has[d.i ? 'r' : 'l'] ? 2 + d.i : (d.k === 'hem' || d.k === 'neck') ? d.i : 0;
+  const U = cloth.geometry.attributes.pat.array;
+  return editNear(pc, U[vi * 2] * 100 - [0, 70, 140, 190][pc], U[vi * 2 + 1] * 100);
 }
 function showTip(text, x, y) {
   tip.textContent = text;
@@ -727,7 +753,8 @@ function dragMove(e, d) {
 // over a body panel's edge (hem, side, neckline, shoulder, armhole) a point shows where the pointer is nearest, and
 // dragged it bumps the pattern's outline there (state.top.edit, pattern.js bend): left and right alike; side, shoulder
 // and armhole front and back together (their seams must match), the hem and neckline too unless 앞뒤 같이 is off
-const EDGE = { neck: '목선', shoulder: '어깨선', arm: '진동둘레', side: '옆선', hem: '밑단' };
+const EDGE = { neck: '목선', shoulder: '어깨선', arm: '진동둘레', side: '옆선', hem: '밑단' }, EDGE_S = { und: '소매 옆선', hem: '소매 끝' };
+const edgeName = (R, i) => (R.pc[i] >= 2 ? EDGE_S : EDGE)[R.names[R.curve[i]]];
 const edgeDot = document.createElement('button');
 edgeDot.type = 'button'; edgeDot.className = 'dot edge'; edgeDot.hidden = true;
 edgeDot.setAttribute('aria-label', '옷 가장자리 점 — 끌어서 모양 바꾸기');
@@ -769,7 +796,7 @@ addEventListener('pointermove', e => {
   let best = -1, bd = 14 * 14;
   if (!nearDot) for (const [i, px, py, f] of rimInView()) { const d = (px - x) ** 2 + (py - y) ** 2 - f * 4; if (d < bd) { bd = d; best = i; } }
   edgeI = best; edgeDot.hidden = best < 0;
-  if (best >= 0) { placeEdge(); const R = cloth.userData.rim; showTip(EDGE[R.names[R.curve[best]]], x, y); }
+  if (best >= 0) { placeEdge(); const R = cloth.userData.rim; showTip(edgeName(R, best), x, y); }
   else if (e.target === canvas || e.target === edgeDot) tip.classList.remove('show');   // (a fixed point shows its own)
 });
 edgeDot.addEventListener('pointerdown', e => {
@@ -778,13 +805,26 @@ edgeDot.addEventListener('pointerdown', e => {
   e.preventDefault(); e.stopPropagation();
   const i = edgeI, curve = R.names[R.curve[i]], pc = R.pc[i], half = R.half[i];
   const p = v3.fromBufferAttribute(cloth.geometry.attributes.position, R.v[i]).clone(), [sx, sy] = project(p);
-  const d = { k: 'edge', curve, t: Math.round(R.t[i] * 1000) / 1000, x0: e.clientX, y0: e.clientY, start: structuredClone(state.top) };
-  // which panels, and whether it keeps to its own curve (a free edge pulled on one panel: its corner is sewn to the other)
-  const both = !(curve === 'neck' || curve === 'hem') || $('fb').checked;
-  d.keys = (both ? ['F', 'B'] : [pc ? 'B' : 'F']).flatMap(k => [k + 'p', k + 'm']);
-  d.local = both ? 0 : 1;
-  const [ax, ay] = project(new THREE.Vector3(0, p.y, A.z0)), ox = sx - ax, oy = sy - ay, ol = Math.hypot(ox, oy);
-  d.out = ol > 6 ? [ox / ol, oy / ol] : [half ? -1 : 1, 0];
+  const d = { k: 'edge', curve, name: edgeName(R, i), t: Math.round(R.t[i] * 1000) / 1000, x0: e.clientX, y0: e.clientY, start: structuredClone(state.top), along: [0, 1] };
+  if (pc >= 2) {
+    // a sleeve: both alike while 좌우 같이 is on; "down" is along the arm (shoulder → cuff on screen), "out" across it
+    // away from the arm's middle line, the line from the shoulder's end to the middle of the cuff
+    d.keys = $('sym').checked ? ['Sl', 'Sr'] : [pc === 2 ? 'Sl' : 'Sr'];
+    d.local = 0;
+    const P = cloth.geometry.attributes.position, c = new THREE.Vector3();
+    let n = 0;
+    for (let j = 0; j < R.v.length; j++) if (R.pc[j] === pc && R.names[R.curve[j]] === 'hem') { c.add(v3.fromBufferAttribute(P, R.v[j])); n++; }
+    const [hx, hy] = project(c.divideScalar(n)), [ux, uy] = project(v3.fromBufferAttribute(P, cloth.userData.marks.shoulder[pc - 2]));
+    const al = Math.hypot(hx - ux, hy - uy) || 1, ax = (hx - ux) / al, ay = (hy - uy) / al, sg = (sx - hx) * -ay + (sy - hy) * ax < 0 ? -1 : 1;
+    d.along = [ax, ay]; d.out = [-ay * sg, ax * sg];
+  } else {
+    // which panels, and whether it keeps to its own curve (a free edge pulled on one panel: its corner is sewn to the other)
+    const both = !(curve === 'neck' || curve === 'hem') || $('fb').checked;
+    d.keys = (both ? ['F', 'B'] : [pc ? 'B' : 'F']).flatMap(k => [k + 'p', k + 'm']);
+    d.local = both ? 0 : 1;
+    const [ax, ay] = project(new THREE.Vector3(0, p.y, A.z0)), ox = sx - ax, oy = sy - ay, ol = Math.hypot(ox, oy);
+    d.out = ol > 6 ? [ox / ol, oy / ol] : [half ? -1 : 1, 0];
+  }
   d.mpp = 2 * camera.position.distanceTo(p) * Math.tan(camera.fov * PI / 360) / canvas.getBoundingClientRect().height;
   drag = d; controls.enabled = false; edgeDot.classList.add('on');
   const id = e.pointerId, move = ev => { if (ev.pointerId === id) edgeMove(ev, d); }, up = ev => {
@@ -806,14 +846,14 @@ const withBump = (d, dx, dy, k) => {
   }
   return T;
 };
-// still a piece (pattern.js halfOk) on both panels; a start that already fails (a card changed under old bumps) isn't held
+// still whole pieces (piecesOk) against the start; a start that already fails isn't held
 function edgeOk(T, d) {
-  const q = measure().q, h = halves(params(T)), h0 = d.h0 || (d.h0 = halves(params(d.start)));
-  if (d.ok0 == null) d.ok0 = halfOk(h0.Fp, h0.F, q) && halfOk(h0.Bp, h0.B, q);
-  return !d.ok0 || halfOk(h.Fp, h0.Fp, q, h.F) && halfOk(h.Bp, h0.Bp, q, h.B);
+  const s0 = d.s0 || (d.s0 = sleeves(params(d.start)));
+  if (d.ok0 == null) d.ok0 = piecesOk(d.start, sleeves(params({ ...d.start, edit: undefined })));
+  return !d.ok0 || piecesOk(T, s0);
 }
 function edgeMove(e, d) {
-  const px = e.clientX - d.x0, py = e.clientY - d.y0, down = py * d.mpp * 100, out = (px * d.out[0] + py * d.out[1]) * d.mpp * 100;
+  const px = e.clientX - d.x0, py = e.clientY - d.y0, down = (px * d.along[0] + py * d.along[1]) * d.mpp * 100, out = (px * d.out[0] + py * d.out[1]) * d.mpp * 100;
   // at most 15 cm at once; dragged further than the outline can take, it stops where it still can
   const l = Math.hypot(out, down), s = l > 15 ? 15 / l : 1, dx = out * s, dy = -down * s;
   let k = 1;
@@ -826,7 +866,7 @@ function edgeMove(e, d) {
   apply(true);
   const r = layer.getBoundingClientRect();
   edgeDot.style.transform = `translate(${e.clientX - r.left}px, ${e.clientY - r.top}px)`;
-  showTip(`${EDGE[d.curve]} ${(Math.hypot(dx, dy) * k).toFixed(1)}cm${k < .999 ? ' · 더는 안 돼요' : ''}`, e.clientX - r.left, e.clientY - r.top);
+  showTip(`${d.name} ${(Math.hypot(dx, dy) * k).toFixed(1)}cm${k < .999 ? ' · 더는 안 돼요' : ''}`, e.clientX - r.left, e.clientY - r.top);
 }
 // for the checks (tools/harness.mjs): a rim point on the page — by curve and fraction, or the f-th of those in view
 function edgePoint(pc, curve, at, half = 'p') {
@@ -873,4 +913,5 @@ let lastStat = 0;
 fix(state.top);
 renderSeg(); apply(); undoState();
 showBody(state.body);
-window.__studio = { get state() { return state; }, apply, showBody, camera, controls, get cloth() { return cloth; }, get awake() { return awake; }, get A() { return A; }, composer, renderer, params, edgePoint, edgeAt, editNear };
+window.__studio = { get state() { return state; }, apply, showBody, camera, controls, get cloth() { return cloth; }, get awake() { return awake; }, get A() { return A; }, composer, renderer, params, edgePoint, edgeAt, editNear,
+  editOk: () => piecesOk(state.top, sleeves(params({ ...state.top, edit: undefined }))) };

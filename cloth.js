@@ -5,7 +5,7 @@
 //        {t:'params', p, fresh}      {t:'tick'}   (one frame per tick; answered with {t:'frame'})
 //        (fresh: laid out anew round the body, not carried on from the old cloth)
 //   out: {t:'topo', ...} when the mesh changes, {t:'frame', pos, nrm, awake, ms}
-import { build, fitSide, BASE, BASE_M } from './pattern.js?v=25';
+import { build, fitSide, BASE, BASE_M } from './pattern.js?v=26';
 
 const G = -9.8, SUB = 12, DT = 1 / 60, TH = 0.004;
 // cloth against itself: two particles not near each other along the cloth stay SC apart (a little over the widest gap
@@ -486,6 +486,11 @@ function place(pc, p, gi) {
   let hw = kn[kn.length - 1][1];
   if (y <= kn[0][0]) hw = kn[0][1];
   else for (let i = 1; i < kn.length; i++) if (y <= kn[i][0]) { hw = kn[i - 1][1] + (kn[i][1] - kn[i - 1][1]) * (y - kn[i - 1][0]) / (kn[i][0] - kn[i - 1][0]); break; }
+  // a sleeve pulled by hand: each row as wide as it is cut (below the underarm's end, a hem pulled down, as at the hem)
+  if (pc.und && y > kn[0][0]) {
+    const u = pc.und, k = u.findIndex((q, i) => i && -q[1] >= y);
+    hw = k < 0 ? u[u.length - 1][0] : u[k - 1][0] + (u[k][0] - u[k - 1][0]) * (y + u[k - 1][1]) / Math.max(1e-9, u[k - 1][1] - u[k][1]);
+  }
   // the arm's own centre line, from the shoulder joint on down: the cap runs from where the shoulder seam ends to where
   // the body's underarm sits (far down the arm for a wide, dropped armhole), then the sleeve on at its own length, back
   // onto its usual place by the wrist (past it the sleeve is laid round the hand)
@@ -766,14 +771,16 @@ function marks(pieces) {
     neckSide: [at('front', 'neck_p', 1), at('front', 'neck_m', 1)],
   };
 }
-// the body panels' edges, for pulling the outline anywhere (studio.js): every display vertex on them, with where it is
-// on the pattern's curves (pattern.js bend) — v vertex, pc 0 front / 1 back, half 0 +x / 1 −x, curve (RIM order), t 0…1
-const RIM = ['neck', 'shoulder', 'arm', 'side', 'hem'];
+// the garment's edges, for pulling the outline anywhere (studio.js): every display vertex on them, with where it is
+// on the pattern's curves (pattern.js bend) — v vertex, pc 0 front / 1 back / 2, 3 sleeves, half 0 +x / 1 −x, curve
+// (RIM order), t 0…1. A sleeve's (one with an underarm): its underarm, then its hem from the corner to the middle
+const RIM = ['neck', 'shoulder', 'arm', 'side', 'hem', 'und'];
 function rim(pieces) {
   const v = [], pc = [], half = [], curve = [], t = [];
-  for (const P of pieces.filter(q => q.pc < 2)) for (const [h, sf] of [[0, '_p'], [1, '_m']]) {
+  for (const P of pieces) for (const [h, sf] of [[0, '_p'], [1, '_m']]) {
     RIM.forEach((k, ci) => {
-      const ids = (k === 'arm' ? ['armS', 'armF'] : [{ neck: 'neck', shoulder: 'sh', side: 'side', hem: 'hem' }[k]]).flatMap(n => P.bound[n + sf] || []);
+      const B = P.bound, ids = P.pc < 2 ? (k === 'arm' ? ['armS', 'armF'] : [{ neck: 'neck', shoulder: 'sh', side: 'side', hem: 'hem' }[k]]).flatMap(n => B[n + sf] || [])
+        : !B.und_b ? [] : k === 'und' ? B[h ? 'und_f' : 'und_b'] : k !== 'hem' ? [] : h ? B.hem.filter(i => P.pts[i][0] <= 1e-6) : B.hem.filter(i => P.pts[i][0] >= -1e-6).reverse();
       if (!ids.length) return;
       const s = [0];
       for (let i = 1; i < ids.length; i++) { const a = P.pts[ids[i - 1]], b = P.pts[ids[i]]; s.push(s[i - 1] + Math.hypot(b[0] - a[0], b[1] - a[1])); }

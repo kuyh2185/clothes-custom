@@ -276,6 +276,22 @@ export function halves(params) {
   const F = bodyHalf(P, true), B = bodyHalf(P, false), E = P.edit || {};
   return { P, uS, F, B, Fp: edited(F, E.Fp), Fm: edited(F, E.Fm), Bp: edited(B, E.Bp), Bm: edited(B, E.Bm) };
 }
+// a sleeve's +x half as cut (underarm → hem → the middle line), its bumps on; null: a cap cut short, no underarm
+function sleeveHalf(sl, u, bumps) {
+  if (u < sl.ch) return null;
+  const und = [];
+  for (let i = 0; i <= 24; i++) { const y = lerp(sl.ch, u, i / 24); und.push([sl.halfW(y, u), -y]); }
+  const H = { und, hem: line([sl.halfW(u, u), -u], [0, -u]) };
+  return hasEdit(bumps) ? { ...bend(H, bumps, true), edited: true } : H;
+}
+// the body halves and the sleeves as cut: l / r { H with its bumps, H0 without } or null
+export function sleeves(params) {
+  const h = halves(params), { P, uS } = h, E = P.edit || {};
+  // the cap no taller than about half the regular armhole's depth
+  const sl = sleeveOutline(P, plen(h.Fp.arm), plen(h.Bp.arm), (params.base === 'm' ? BASE_M : BASE).ad * .5 + 1);
+  const side = (u, b) => { const H0 = sleeveHalf(sl, u); return H0 && { H0, H: hasEdit(b) ? sleeveHalf(sl, u, b) : H0 }; };
+  return { h, sl, l: side(uS.l, E.Sl), r: side(uS.r, E.Sr) };
+}
 // a half's outline still a piece: it doesn't cross itself or the centre line, and (q: the body's quarter round by depth)
 // a side taken in stops 1 cm over the body, or where it was if it was already in further; and the armhole stays within
 // 25% of the uncut one's length (base): the sleeve's cap is cut to it, and a zigzag along it made the sleeve half as wide
@@ -289,11 +305,35 @@ export function halfOk(H, H0, q, base) {
   }
   if (pts.some(p => p[0] < -.01)) return false;
   for (let i = 1; i < pts.length; i++) for (let j = i + 2; j < pts.length; j++) if (cross(pts[i - 1], pts[i], pts[j - 1], pts[j])) return false;
+  // the neckline no higher than the high shoulder point, or the shoulder line beside it pulled up (over it, it stood up
+  // off the neck in a flap; a back neck pulled near flat, its corner lowered a little, may stay a little over the corner)
+  const sh = H.shoulder, shY = x => { if (x <= sh[0][0]) return sh[0][1]; for (let i = 1; i < sh.length; i++) if (sh[i][0] >= x) return lerp(sh[i - 1][1], sh[i][1], (x - sh[i - 1][0]) / Math.max(1e-9, sh[i][0] - sh[i - 1][0])); return sh[sh.length - 1][1]; };
+  if (H.neck.some(([x, y]) => y > Math.max(0, shY(x)) + .05)) return false;
   if (q && H.side !== H0.side) {
     const x0 = y => { const s = H0.side; for (let i = 1; i < s.length; i++) if (s[i][1] <= y) return lerp(s[i - 1][0], s[i][0], (s[i - 1][1] - y) / Math.max(1e-9, s[i - 1][1] - s[i][1])); return s[s.length - 1][0]; };
     for (const [x, y] of H.side) {
       const d = Math.round(-y);
       if (d >= 0 && d < q.length && x < Math.min(x0(y), q[d] + 1) - .05) return false;
+    }
+  }
+  return true;
+}
+// a sleeve's half the same way (cap: its cap's half above it, the underarm's start): it doesn't cross itself or the
+// middle line, an underarm taken in stops 1 cm over the arm's half round (ar: the arm's full round by sleeve cm) or
+// where it was, and nothing hangs past the longest sleeve (lo cm down)
+export function sleeveOk(H, H0, cap, ar, lo) {
+  const pts = [];
+  for (const c of [cap, H.und, H.hem]) {
+    const r = resample(c, Math.max(1, Math.round(plen(c))));
+    for (const p of pts.length ? r.slice(1) : r) pts.push(p);
+  }
+  if (pts.some(p => p[0] < -.01 || p[1] < -lo)) return false;
+  for (let i = 1; i < pts.length; i++) for (let j = i + 2; j < pts.length; j++) if (cross(pts[i - 1], pts[i], pts[j - 1], pts[j])) return false;
+  if (ar && H.und !== H0.und) {
+    const u = H0.und, x0 = y => { for (let i = 1; i < u.length; i++) if (u[i][1] <= y) return lerp(u[i - 1][0], u[i][0], (u[i - 1][1] - y) / Math.max(1e-9, u[i - 1][1] - u[i][1])); return u[u.length - 1][0]; };
+    for (const [x, y] of H.und) {
+      const d = Math.round(-y);
+      if (d < ar.length && ar[d] > 0 && x < Math.min(x0(y), ar[d] / 2 + 1) - .05) return false;
     }
   }
   return true;
@@ -389,12 +429,10 @@ function minDist(p, poly) {
 export function build(params) {
   // each sleeve its own length; a sleeve shorter than this is none at all (a strap only once both are gone: halves)
   // shortcut: the −x halves take the +x halves' seam lengths and sleeve (left and right are pulled alike); per side in 2-3
-  const { P, uS, Fp: F, Fm, Bp: B, Bm } = halves(params), full = P.sw - P.nw;
+  const { h: { P, uS, Fp: F, Fm, Bp: B, Bm }, sl, ...SH } = sleeves(params), full = P.sw - P.nw;
   const has = { l: uS.l >= 1.2, r: uS.r >= 1.2 };
   const E = P.edit || {}, bumps = [...bumpsAt(F, E.Fp, 0, 1), ...bumpsAt(Fm, E.Fm, 0, -1), ...bumpsAt(B, E.Bp, 1, 1), ...bumpsAt(Bm, E.Bm, 1, -1)];
-  const fl = plen(F.arm), bl = plen(B.arm);
-  // the cap no taller than about half the regular armhole's depth
-  const sl = sleeveOutline(P, fl, bl, (params.base === 'm' ? BASE_M : BASE).ad * .5 + 1);
+  for (const [k, pc] of [['l', 2], ['r', 3]]) if (has[k] && SH[k] && SH[k].H.edited) for (const sg of [1, -1]) bumps.push(...bumpsAt(SH[k].H, E['S' + k], pc, sg));
   // per side: how much of each armhole is sewn to the sleeve (arc fraction from the shoulder), cap cut or not
   const n = { neckF: nseg(F.neck), neckB: nseg(B.neck), sh: Math.max(1, Math.round(plen(F.shoulder) / S)), side: nseg(F.side),
     hem: nseg(F.hem), armF: nseg(F.arm), armB: nseg(B.arm) };
@@ -444,12 +482,13 @@ export function build(params) {
       const hemN = Math.max(1, Math.round(dist(cf[cf.length - 1], cb[cb.length - 1]) / S));
       segs = [['hem', [cf[cf.length - 1], cb[cb.length - 1]], hemN, false], ['capb', rev(cb), d.nbS, true], ['capf', cf, d.nfS, false]];
     } else {
-      const und = sg => { const out = []; for (let i = 0; i <= 24; i++) { const y = lerp(sl.ch, u, i / 24); out.push([sg * sl.halfW(y, u), -y]); } return out; };
-      const uf = und(-1), ub = und(1), nu = nseg(uf), hw = sl.halfW(u, u);
-      segs = [['hem', line([-hw, -u], [hw, -u]), Math.max(1, Math.round(2 * hw / S)), false], ['und_b', rev(ub), nu, true],
+      // (the +x half pulled by hand: the −x half alike, its hem both halves of the one edge)
+      const H = SH[k].H, ub = H.und, uf = mirror(ub), nu = nseg(uf), hem = H.edited ? [...mirror(H.hem), ...rev(H.hem).slice(1)] : line([-ub.at(-1)[0], -u], [ub.at(-1)[0], -u]);
+      segs = [['hem', hem, Math.max(1, Math.round(plen(hem) / S)), false], ['und_b', rev(ub), nu, true],
         ['capb', rev(sl.capb), d.nbS, true], ['capf', sl.capf, d.nfS, false], ['und_f', uf, nu, false]];
     }
-    pieces.push({ name, pc, ...pieceMesh(segs) });
+    // (an outline pulled by hand: the cloth lays each row of the sleeve round the arm as wide as the row is cut)
+    pieces.push({ name, pc, ...pieceMesh(segs), ...(!d.capCut && SH[k].H.edited && { und: SH[k].H.und }) });
     seams.push([2, ['front', 'armS_' + half], [name, 'capf']], [2, ['back', 'armS_' + half], [name, 'capb']]);
     if (!d.capCut) seams.push([4, [name, 'und_b'], [name, 'und_f']]);
   }
