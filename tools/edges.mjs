@@ -30,6 +30,24 @@ cases.push(
   { name: 'f 밑단 가운데 혹', state: { v: 2, body: 'f', bottom: 'jeans', top: TOP }, steps: [{ t: 'view', a: 0 }, { t: 'wait', ms: 400 }, { t: 'edge', pc: 0, curve: 'hem', at: .8, half: 'p', dx: 0, dy: 40 }, { t: 'settle' }],
     check: () => { const D = document.querySelectorAll('#layer .dot:not(.edge)'); return [...(D[2].hidden ? [] : ['밑단 고정 점이 혹 위에 보임']), ...(D[8].hidden ? ['목선 고정 점까지 숨음'] : [])]; } },
 );
+// 왼쪽·오른쪽 같이 off: only the half pulled takes the bump (front and back of it where they are sewn), the other half
+// none, and the cloth still passes — the side, the armhole (that sleeve's cap then cut to its own armhole), the front hem
+for (const [body, curve, at, dx, dy, fb, want] of [['f', 'side', .5, 30, 0, 1, ['Fp', 'Bp']], ['m', 'side', .5, -30, 0, 1, ['Fp', 'Bp']],
+  ['f', 'arm', .5, 25, 0, 1, ['Fp', 'Bp']], ['m', 'hem', .5, 0, 40, 0, ['Fp']]])
+  cases.push({ name: `${body} 한쪽 ${curve}`, state: { v: 2, body, bottom: 'jeans', top: TOP },
+    steps: [{ t: 'view', a: 0 }, { t: 'wait', ms: 400 }, { t: 'toggle', id: 'sym' }, ...(fb ? [] : [{ t: 'toggle', id: 'fb' }]), { t: 'edge', pc: 0, curve, at, half: 'p', dx, dy }, { t: 'settle' }],
+    check: new Function(`const E = window.__studio.state.top.edit || {}, want = ${JSON.stringify(want)}, has = k => (E[k] || []).some(e => Math.hypot(e[2], e[3]) >= .5);
+      return [...want.filter(k => !has(k)).map(k => k + ' 혹이 안 생김'), ...['Fp', 'Fm', 'Bp', 'Bm'].filter(k => !want.includes(k) && has(k)).map(k => k + '에도 혹'),
+        ...(window.__studio.editOk() ? [] : ['조각이 깨짐'])];`) });
+// one half's hem pulled down by the middle: the other half follows it over the centre line, the two meeting there
+cases.push({ name: 'f 한쪽 밑단 가운데', state: { v: 2, body: 'f', bottom: 'jeans', top: TOP },
+  steps: [{ t: 'view', a: 0 }, { t: 'wait', ms: 400 }, { t: 'toggle', id: 'sym' }, { t: 'edge', pc: 0, curve: 'hem', at: .8, half: 'p', dx: 0, dy: 40 }, { t: 'settle' }],
+  check: async () => {
+    const S = window.__studio, E = S.state.top.edit || {}, { halves } = await import('./pattern.js?v=27'), h = halves(S.params());
+    const gap = Math.abs(h.Fp.hem.at(-1)[1] - h.Fm.hem.at(-1)[1]), drop = h.F.hem.at(-1)[1] - h.Fp.hem.at(-1)[1];
+    return [...((E.Fp || []).length && !(E.Fm || []).length ? [] : [`혹 Fp ${JSON.stringify(E.Fp)} Fm ${JSON.stringify(E.Fm)}`]),
+      ...(gap < .05 && drop > 1 ? [] : [`가운데 어긋남 ${gap.toFixed(2)}cm, 내려감 ${drop.toFixed(2)}cm`]), ...(S.editOk() ? [] : ['조각이 깨짐'])];
+  } });
 const h = await start({ pages: +arg('pages', 4) });
 let fail = 0;
 try {

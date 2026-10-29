@@ -5,7 +5,7 @@
 //        {t:'params', p, fresh}      {t:'tick'}   (one frame per tick; answered with {t:'frame'})
 //        (fresh: laid out anew round the body, not carried on from the old cloth)
 //   out: {t:'topo', ...} when the mesh changes, {t:'frame', pos, nrm, awake, ms}
-import { build, fitSide, BASE, BASE_M } from './pattern.js?v=26';
+import { build, fitSide, BASE, BASE_M } from './pattern.js?v=27';
 
 const G = -9.8, SUB = 12, DT = 1 / 60, TH = 0.004;
 // cloth against itself: two particles not near each other along the cloth stay SC apart (a little over the widest gap
@@ -494,7 +494,7 @@ function place(pc, p, gi) {
   // the arm's own centre line, from the shoulder joint on down: the cap runs from where the shoulder seam ends to where
   // the body's underarm sits (far down the arm for a wide, dropped armhole), then the sleeve on at its own length, back
   // onto its usual place by the wrist (past it the sleeve is laid round the hand)
-  const [aO, aU] = capAlong(pc.pc === 2 ? 1 : -1, gi, axis), ch = gi.sleeve ? gi.sleeve.ch : 10, yw = kn[kn.length - 2][0];
+  const [aO, aU] = capAlong(pc.pc === 2 ? 1 : -1, gi, axis), ch = gi.sleeve ? gi.sleeve[pc.pc === 2 ? 'chL' : 'chR'] : 10, yw = kn[kn.length - 2][0];
   const along = y <= ch ? aO + (aU - aO) * y / ch
     : y < yw ? aU + (y - ch) / 100 - (aU - 0.015 - ch / 100) * (y - ch) / Math.max(1, yw - ch) : 0.015 + y / 100;
   const cAt = s => {
@@ -575,7 +575,7 @@ function capAlong(sg, gi, axis) {
     }
     return s;
   };
-  const ch = gi.sleeve ? gi.sleeve.ch : 10;
+  const ch = gi.sleeve ? gi.sleeve[sg > 0 ? 'chL' : 'chR'] : 10;
   const aO = Math.max(0.015, onAxis(place(body, [sg * P.sw, -P.ss], gi)));
   const aU = Math.max(aO + ch / 100 * .5, onAxis(place(body, [sg * P.cw, -P.ad], gi)));
   return (gi[key] = [aO, aU]);

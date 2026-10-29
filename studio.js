@@ -12,7 +12,7 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { smoothChest, tuckUnder } from './mannequin.js?v=1';
-import { BASE, BASE_M, fitSide, halfOk, sleeves, sleeveOk } from './pattern.js?v=26';
+import { BASE, BASE_M, fitSide, halfOk, sleeves, sleeveOk } from './pattern.js?v=27';
 
 const $ = id => document.getElementById(id);
 const PI = Math.PI;
@@ -163,8 +163,8 @@ function fitEdit(T) {
 // than the body or arm allows, or than it already was)
 function piecesOk(T, from) {
   const m = measure(), s = sleeves(params(T)), h = s.h, h0 = from.h;
-  return halfOk(h.Fp, h0.Fp, m.q, h.F) && halfOk(h.Bp, h0.Bp, m.q, h.B)
-    && ['l', 'r'].every(k => !s[k] || sleeveOk(s[k].H, (from[k] || s[k]).H, s.sl.capb, m.arm, h.P.arm + h.P.over));
+  return ['Fp', 'Fm', 'Bp', 'Bm'].every(k => halfOk(h[k], h0[k], m.q, h[k[0]]))
+    && ['l', 'r'].every(k => !s[k] || sleeveOk(s[k].H, (from[k] || s[k]).H, s.sl[k].capb, m.arm, h.P.arm + h.P.over));
 }
 
 /* ---------- names (panel labels, drag tip) ---------- */
@@ -377,7 +377,7 @@ const world = mesh => {   // rest pose = bind pose = world here (the asset's roo
 };
 
 /* ---------- the cloth ---------- */
-const worker = new Worker('cloth.js?v=44', { type: 'module' });
+const worker = new Worker('cloth.js?v=45', { type: 'module' });
 worker.onerror = e => console.error('[cloth]', e.message);
 const fabricU = { uC1: { value: new THREE.Color() }, uC2: { value: new THREE.Color() }, uPat: { value: 0 }, uScale: { value: 1 } };
 // the knit's grain as a normal map over the flat pattern (m): a jersey's columns of V-shaped loops, or for the fitted
@@ -751,8 +751,8 @@ function dragMove(e, d) {
 
 /* ---------- the outline pulled anywhere ---------- */
 // over a body panel's edge (hem, side, neckline, shoulder, armhole) a point shows where the pointer is nearest, and
-// dragged it bumps the pattern's outline there (state.top.edit, pattern.js bend): left and right alike; side, shoulder
-// and armhole front and back together (their seams must match), the hem and neckline too unless 앞뒤 같이 is off
+// dragged it bumps the pattern's outline there (state.top.edit, pattern.js bend): left and right alike unless 왼쪽·오른쪽
+// 같이 is off; side, shoulder and armhole front and back together (their seams must match), the hem and neckline too unless 앞뒤 같이 is off
 const EDGE = { neck: '목선', shoulder: '어깨선', arm: '진동둘레', side: '옆선', hem: '밑단' }, EDGE_S = { und: '소매 옆선', hem: '소매 끝' };
 const edgeName = (R, i) => (R.pc[i] >= 2 ? EDGE_S : EDGE)[R.names[R.curve[i]]];
 const edgeDot = document.createElement('button');
@@ -820,7 +820,7 @@ edgeDot.addEventListener('pointerdown', e => {
   } else {
     // which panels, and whether it keeps to its own curve (a free edge pulled on one panel: its corner is sewn to the other)
     const both = !(curve === 'neck' || curve === 'hem') || $('fb').checked;
-    d.keys = (both ? ['F', 'B'] : [pc ? 'B' : 'F']).flatMap(k => [k + 'p', k + 'm']);
+    d.keys = (both ? ['F', 'B'] : [pc ? 'B' : 'F']).flatMap(k => $('sym').checked ? [k + 'p', k + 'm'] : [k + (half ? 'm' : 'p')]);
     d.local = both ? 0 : 1;
     const [ax, ay] = project(new THREE.Vector3(0, p.y, A.z0)), ox = sx - ax, oy = sy - ay, ol = Math.hypot(ox, oy);
     d.out = ol > 6 ? [ox / ol, oy / ol] : [half ? -1 : 1, 0];
