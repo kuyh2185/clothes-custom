@@ -280,6 +280,13 @@ function assemble(g, old) {
   // laid afresh too: carried on past the old hem (a wide short sleeve hangs open, off the arm) the new length starts
   // beside the arm instead of round it, and the arm comes out through the sleeve
   const grown = s => old && g.info.sleeve[s] - old.info.sleeve[s] > 6;
+  // a sewn point laid by each of its pieces: where they lay it clear of the body, if any does (the sleeve's cap round the
+  // arm, a dropped shoulder's panel wrapped in under the shoulder: halfway between, it started inside the shoulder and
+  // was pushed out under it, caught there for good: fuzz 307)
+  const lay = (pc, p0, q) => {
+    const f = place(pc, p0, g.info), o = sample(f[0], f[1], f[2]) >= TH ? 1e3 : 1;
+    fresh[q * 3] += f[0] * o; fresh[q * 3 + 1] += f[1] * o; fresh[q * 3 + 2] += f[2] * o; fcnt[q] += o;
+  };
   for (const pc of pieces) {
     const o = old && !(pc.pc >= 2 && grown(pc.pc === 2 ? 'uL' : 'uR')) && old.pieces.find(q => q.name === pc.name);
     const loc = o ? locator(o, old) : null;
@@ -302,10 +309,20 @@ function assemble(g, old) {
         }
       }
       if (w) { pos[q * 3] += w[0]; pos[q * 3 + 1] += w[1]; pos[q * 3 + 2] += w[2]; cnt[q]++; }
-      else { const f = place(pc, p0, g.info); fresh[q * 3] += f[0]; fresh[q * 3 + 1] += f[1]; fresh[q * 3 + 2] += f[2]; fcnt[q]++; }
+      else lay(pc, p0, q);
     });
   }
   for (let q = 0; q < nP; q++) for (let k = 0; k < 3; k++) pos[q * 3 + k] = cnt[q] ? pos[q * 3 + k] / cnt[q] : fresh[q * 3 + k] / fcnt[q];
+  // carried on from the old cloth into the body (a fit measured after loading re-lays a dropped shoulder's armhole off
+  // where the loose one was: fuzz 60, 153): laid afresh instead, where that is clear of it
+  const inside = q => sample(pos[q * 3], pos[q * 3 + 1], pos[q * 3 + 2]) < 0;
+  if (old) {
+    for (const pc of pieces) pc.pts.forEach((p0, i) => { const q = map[pc.off + i]; if (cnt[q] && inside(q)) lay(pc, p0, q); });
+    for (let q = 0; q < nP; q++) if (cnt[q] && fcnt[q] && inside(q)) {
+      const f = [0, 1, 2].map(k => fresh[q * 3 + k] / fcnt[q]);
+      if (sample(f[0], f[1], f[2]) >= 0) pos.set(f, q * 3);
+    }
+  }
 
   // triangles (display vertices) and their particle versions; each piece wound so its normal faces away from the body
   const index = [];
@@ -484,15 +501,21 @@ function place(pc, p, gi) {
     const ratio = (0.11 + 0.065 * Math.min(1, hz / 0.18)) / (0.205 + 0.045 * Math.min(1, hz / 0.25));
     const Q = Math.PI / 4 * (3 * (1 + ratio) - Math.sqrt((3 + ratio) * (1 + 3 * ratio)));   // Ramanujan, for a = 1
     const a = half / Q, b = a * ratio;
-    const arc = Math.abs(p[0] / 100) * spread;
+    // past the panel's own half width (a dropped shoulder over a fitted body: the armhole reaches out over the arm) on
+    // straight out from the ellipse's side: wrapped on round, stretched by spread, a back's armhole came round onto the
+    // front, sewn to a sleeve laid behind, and halfway between was inside the shoulder (fuzz 153)
+    const arc = Math.min(Math.abs(p[0] / 100) * spread, half), on = Math.max(0, Math.abs(p[0] / 100) - own);
     let th = 0, acc = 0;
     const d = 0.004;
-    while (acc < arc && th < Math.PI) {
+    while (acc < arc && th < Math.PI / 2) {
       acc += Math.hypot(a * (Math.sin(th + d) - Math.sin(th)), b * (Math.cos(th + d) - Math.cos(th)));
       th += d;
     }
-    const x = Math.sign(p[0]) * a * Math.sin(th), z = b * Math.cos(th);
-    return [x, y, front ? z0 + z : z0 - z];
+    const x = Math.sign(p[0]) * (a * Math.sin(th) + on), z = front ? z0 + b * Math.cos(th) : z0 - b * Math.cos(th);
+    // (there, in the arm: raised till clear of it, over it as the cloth will hang)
+    let Y = y;
+    for (let k = 0; k < 20 && sample(x, Y, z) < TH; k++) Y += 0.005;
+    return [x, Y, z];
   }
   const axis = pc.pc === 2 ? ctx.axis.l : ctx.axis.r;
   const kn = gi.sleeve ? gi.sleeve[pc.pc === 2 ? 'knotsL' : 'knotsR'] : [[10, 18], [20, 16.8], [58, 11.5], [64, 19]];
@@ -570,7 +593,11 @@ function place(pc, p, gi) {
       return [0, 1, 2].map(k => HD.W[k] + HD.d[k] * a + HD.u[k] * pu + HD.v[k] * pv + (k === 1 ? lift : 0));
     }
   }
-  return [c[0] + ox * r, c[1] + oy * r + lift, c[2] + oz * r];
+  // (on out from the arm's line till clear of the body: by the shoulder joint the arm's round isn't measured, and a wide
+  // sleeve's cap laid there began inside the shoulder, pushed out under it and caught there for good: fuzz 60, 153)
+  let R = r, w = [c[0] + ox * R, c[1] + oy * R + lift, c[2] + oz * R];
+  for (let k = 0; k < 20 && sample(w[0], w[1], w[2]) < TH; k++) { R += 0.005; w = [c[0] + ox * R, c[1] + oy * R + lift, c[2] + oz * R]; }
+  return w;
 }
 
 // how far down the arm's centre line (m from the shoulder joint) the body's shoulder seam ends and its underarm sits, as

@@ -113,13 +113,16 @@
     const pt = v => [U[v * 2] * 100, U[v * 2 + 1] * 100];   // pattern cm (uv carries each piece's x shift: only y and deltas are used)
     const px = v => U[v * 2] * 100 - [0, 70, 140, 190][piece[v]];
     // signed cloth–surface distance per particle (cm)
-    const nP = Math.max(...map) + 1, D = new Float32Array(nP), Kd = new Int8Array(nP), seen = new Uint8Array(nP);
+    const nP = Math.max(...map) + 1, D = new Float32Array(nP), Kd = new Int8Array(nP), seen = new Uint8Array(nP), V = new Int32Array(nP);
     for (let v = 0; v < nV; v++) {
-      const p = map[v]; if (seen[p]) continue; seen[p] = 1;
+      const p = map[v]; if (seen[p]) continue; seen[p] = 1; V[p] = v;
       const [d, k] = near(X[v * 3], X[v * 3 + 1], X[v * 3 + 2]); D[p] = d * 100; Kd[p] = k;
     }
-    let pen = 0, deep = 0;
-    for (let p = 0; p < nP; p++) if (Kd[p] === 0 && D[p] < -.3) { pen++; deep = Math.max(deep, -D[p]); }
+    let pen = 0, deep = 0, penP = null;   // (penP: the deepest one, m)
+    for (let p = 0; p < nP; p++) if (Kd[p] === 0 && D[p] < -.3) {
+      pen++;
+      if (-D[p] > deep) { deep = -D[p]; penP = [X[V[p] * 3], X[V[p] * 3 + 1], X[V[p] * 3 + 2]]; }
+    }
 
     // free-edge loops (particle-connected), each named by what it is
     const free = [...adj.keys()], comp = new Map();
@@ -258,7 +261,7 @@
     const r1 = v => Math.round(v * 10) / 10;
     const ep = ear.v >= 0 ? [X[ear.v * 3], X[ear.v * 3 + 1], X[ear.v * 3 + 2]] : null;
     return {
-      pen, deep: r1(deep), ear: Math.round(ear.spike * 100) / 100, earAt: ear.kind, earBy, earP: ep, roll: Object.fromEntries(Object.entries(roll).map(([k, v]) => [k, r1(v)])),
+      pen, deep: r1(deep), penP, ear: Math.round(ear.spike * 100) / 100, earAt: ear.kind, earBy, earP: ep, roll: Object.fromEntries(Object.entries(roll).map(([k, v]) => [k, r1(v)])),
       selfx: selfx(), nP, dots, lim, body: A.kind === st.state.body ? '' : `패널 ${st.state.body} · 마네킹 ${A.kind}`,
     };
   }

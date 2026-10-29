@@ -18,9 +18,9 @@ try {
   if (r.m) {
     console.log(`몸 ${cas.state.body} · 패널 값 ${JSON.stringify(await page.evaluate(() => window.__studio.params()))}`);
     await page.screenshot({ path: join(out, 'repro.png') });
-    // close up: 45 cm off the worst ear point (else the hem's front), from in front of (or behind) it and a little to
+    // close up: 45 cm off the deepest point through the body, else the worst ear point (else the hem's front), from in front of (or behind) it and a little to
     // its side: straight out from the body's axis a side point is seen through the hanging arm
-    const P = r.m.earP || await page.evaluate(() => { const c = window.__studio.cloth.userData.marks.hem[0], p = window.__studio.cloth.geometry.attributes.position; return [p.getX(c), p.getY(c), p.getZ(c)]; });
+    const P = r.m.penP || r.m.earP || await page.evaluate(() => { const c = window.__studio.cloth.userData.marks.hem[0], p = window.__studio.cloth.geometry.attributes.position; return [p.getX(c), p.getY(c), p.getZ(c)]; });
     await page.evaluate(P => {
       const s = window.__studio, c = s.camera, t = s.controls.target, dx = P[0] * .5, dz = P[2] < s.A.z0 ? -1 : 1, l = Math.hypot(dx, dz);
       t.set(P[0], P[1], P[2]); c.position.set(P[0] + dx / l * .45, P[1] + .08, P[2] + dz / l * .45);
