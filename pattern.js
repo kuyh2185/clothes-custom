@@ -320,15 +320,26 @@ export function halfOk(H, H0, q, base) {
   const sh = H.shoulder, shY = x => { if (x <= sh[0][0]) return sh[0][1]; for (let i = 1; i < sh.length; i++) if (sh[i][0] >= x) return lerp(sh[i - 1][1], sh[i][1], (x - sh[i - 1][0]) / Math.max(1e-9, sh[i][0] - sh[i - 1][0])); return sh[sh.length - 1][1]; };
   if (H.neck.some(([x, y]) => y > Math.max(0, shY(x)) + .05)) return false;
   if (base) {
-    // the shoulder line no more than 1.5 cm under the uncut one (past its end, as far again as it reaches out: the arm
-    // falls away there). Further down the shoulder seam sat inside the body and the cloth went through it: fuzz 117
+    // the shoulder line within 1.5 cm of the uncut one (past its end, lower as far again as it reaches out: the arm
+    // falls away there). Further down the shoulder seam sat inside the body and the cloth went through it (fuzz 117);
+    // further up it stood off the shoulder, and settling down onto it hitched that side's hem up 4 cm (fuzz 186)
     const [a, b] = [base.shoulder[0], base.shoulder.at(-1)], y0 = x => a[1] + (b[1] - a[1]) * (x - a[0]) / Math.max(1e-9, b[0] - a[0]);
-    if (H.shoulder !== base.shoulder && H.shoulder.some(([x, y]) => y < y0(x) - 1.5 - Math.max(0, x - b[0]))) return false;
+    if (H.shoulder !== base.shoulder && H.shoulder.some(([x, y]) => y < y0(x) - 1.5 - Math.max(0, x - b[0]) || y > y0(x) + 1.5)) return false;
     // and the armhole turns in no steeper than 45° going down: steeper, the shoulder's end stood out over it like
     // eaves, up off the sleeve sewn under it: fuzz 57 (only where the uncut one doesn't already)
     // (its upper half: low down a side pulled in draws the armhole's end in across, which is no eaves)
     const steep = c => { const r = resample(c, Math.max(2, Math.round(plen(c)))); return r.some((p, i) => i && i <= r.length / 2 && r[i - 1][0] - p[0] > r[i - 1][1] - p[1] + .3); };
     if (H.arm !== base.arm && steep(H.arm) && !steep(base.arm)) return false;
+    // a side or armhole pulled out running across no flatter than 45°, or than it was cut: flatter, the seam stood out
+    // level and the cloth added there folded down through itself, as a hem flared past 45° did (studio.js flareLim):
+    // fuzz 237, 125, 229 (the user's choice, 2026-10-29, over raising the self-crossing limit by the bump). Only where it
+    // stands out past the cut: taken in, it lies on the body (an armhole's middle pulled in only scoops it deeper)
+    for (const k of ['side', 'arm']) {
+      if (H[k] === base[k]) continue;
+      const n = Math.max(2, Math.round(plen(base[k]))), e = resample(H[k], n), o = resample(base[k], n);
+      for (let i = 1; i < n; i++) if ((e[i][0] > o[i][0] + .1 || e[i - 1][0] > o[i - 1][0] + .1)
+        && Math.abs(e[i][0] - e[i - 1][0]) > Math.max(e[i - 1][1] - e[i][1], Math.abs(o[i][0] - o[i - 1][0])) + .05) return false;
+    }
   }
   if (q && H.side !== H0.side) {
     const x0 = y => { const s = H0.side; for (let i = 1; i < s.length; i++) if (s[i][1] <= y) return lerp(s[i - 1][0], s[i][0], (s[i - 1][1] - y) / Math.max(1e-9, s[i - 1][1] - s[i][1])); return s[s.length - 1][0]; };
