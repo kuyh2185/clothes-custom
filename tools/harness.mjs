@@ -152,12 +152,17 @@ export function gen(seed) {
   const steps = [], n = 1 + Math.floor(rnd() * 5);
   for (let i = 0; i < n; i++) {
     const r = rnd();
-    if (r < .3) { const g = pick(Object.keys(CARDS)); steps.push({ t: 'card', g, i: Math.floor(rnd() * CARDS[g]) }); }
-    else if (r < .5) steps.push({ t: 'bar', id: pick(BARS), f: Math.round(rnd() * 100) / 100 });
-    // shortcut: no 'edge' steps yet (studio.js has edgeAt since 2-1); added in 2-4 with the sleeves' edges, which changes every seed
-    else if (r < .75) steps.push({ t: 'drag', dot: Math.floor(rnd() * 12), dx: Math.round(U(-90, 90)), dy: Math.round(U(-90, 90)) });
-    else if (r < .83) steps.push({ t: 'undo' });
-    else if (r < .86) steps.push({ t: 'redo' });
+    if (r < .25) { const g = pick(Object.keys(CARDS)); steps.push({ t: 'card', g, i: Math.floor(rnd() * CARDS[g]) }); }
+    else if (r < .4) steps.push({ t: 'bar', id: pick(BARS), f: Math.round(rnd() * 100) / 100 });
+    else if (r < .55) steps.push({ t: 'drag', dot: Math.floor(rnd() * 12), dx: Math.round(U(-90, 90)), dy: Math.round(U(-90, 90)) });
+    else if (r < .77) {
+      // the outline pulled anywhere in view (2단계), now and then one side alone or one panel's hem / neckline alone
+      if (rnd() < .3) steps.push({ t: 'toggle', id: 'sym' });
+      if (rnd() < .2) steps.push({ t: 'toggle', id: 'fb' });
+      steps.push({ t: 'edge', f: Math.round(rnd() * 1000) / 1000, dx: Math.round(U(-90, 90)), dy: Math.round(U(-90, 90)) });
+    }
+    else if (r < .84) steps.push({ t: 'undo' });
+    else if (r < .87) steps.push({ t: 'redo' });
     else if (r < .93) steps.push({ t: 'body', v: pick(['f', 'm']) });
     else if (r < .96) steps.push({ t: 'bottom', v: pick(['jeans', 'none']) });
     else steps.push({ t: 'view', a: Math.floor(rnd() * 4) });

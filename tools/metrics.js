@@ -244,6 +244,8 @@
       const el = document.getElementById('b-' + id);
       if (el && v != null && (v < +el.min - .05 || v > +el.max + .05)) lim.push(`${id} ${v.toFixed(1)} ∉ [${(+el.min).toFixed(1)}, ${(+el.max).toFixed(1)}]`);
     }
+    // (an outline drawn by hand still whole pieces after whatever came after it: cards, bars, the other body)
+    if (T.edit && st.editOk && !st.editOk()) lim.push('그린 윤곽 조각 깨짐');
     const r1 = v => Math.round(v * 10) / 10;
     const ep = ear.v >= 0 ? [X[ear.v * 3], X[ear.v * 3 + 1], X[ear.v * 3 + 2]] : null;
     return {

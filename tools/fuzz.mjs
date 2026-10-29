@@ -1,6 +1,6 @@
 // node tools/fuzz.mjs [N=200] [--seed 1] [--pages 4] [--root <studio folder>] [--report <file.md>]
-// Women's and men's mannequin × a random top × a random few edits (cards, bars, dragged points, undo / redo, body and
-// bottom buttons, views), N runs from seed on. Each run is judged (harness.mjs LIMITS); a failing one is saved as a case
+// Women's and men's mannequin × a random top × a random few edits (cards, bars, dragged points, the outline pulled
+// anywhere — both sides or one, undo / redo, body and bottom buttons, views), N runs from seed on. Each run is judged (harness.mjs LIMITS); a failing one is saved as a case
 // in tools/cases/fuzz/<seed>.json (replay it with repro.mjs; once fixed, move it up to tools/cases/ to keep it checked).
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { start, runAll, gen, line } from './harness.mjs';
