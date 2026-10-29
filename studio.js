@@ -12,7 +12,7 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { smoothChest, tuckUnder } from './mannequin.js?v=1';
-import { BASE, BASE_M, fitSide, halfOk, sleeves, sleeveOk } from './pattern.js?v=27';
+import { BASE, BASE_M, fitSide, halfOk, resample, sleeves, sleeveOk } from './pattern.js?v=28';
 
 const $ = id => document.getElementById(id);
 const PI = Math.PI;
@@ -158,6 +158,7 @@ function fitEdit(T) {
   let lo = 0, hi = 1;
   for (let it = 0; it < 7; it++) { const m = (lo + hi) / 2; scale(m); if (piecesOk(T, from)) lo = m; else hi = m; }
   scale(lo);
+  for (const key in T.edit) T.edit[key] = T.edit[key].filter(b => b[2] || b[3]);   // (shrunk to nothing: gone)
 }
 // the pieces still whole (pattern.js halfOk, sleeveOk), each against `from`'s (a side or an underarm comes in no further
 // than the body or arm allows, or than it already was)
@@ -377,7 +378,7 @@ const world = mesh => {   // rest pose = bind pose = world here (the asset's roo
 };
 
 /* ---------- the cloth ---------- */
-const worker = new Worker('cloth.js?v=45', { type: 'module' });
+const worker = new Worker('cloth.js?v=46', { type: 'module' });
 worker.onerror = e => console.error('[cloth]', e.message);
 const fabricU = { uC1: { value: new THREE.Color() }, uC2: { value: new THREE.Color() }, uPat: { value: 0 }, uScale: { value: 1 } };
 // the knit's grain as a normal map over the flat pattern (m): a jersey's columns of V-shaped loops, or for the fitted
@@ -841,6 +842,7 @@ const withBump = (d, dx, dy, k) => {
   for (const key of d.keys) {
     // (as wide as it is far, about: a long pull 6 cm wide was a tongue, and pulls side by side 6 cm wide a sharp zigzag)
     const b = [d.curve, d.t, r1(dx * k), r1(dy * k), r1(Math.max(8, Math.hypot(dx, dy) * k * 1.2))];
+    if (!b[2] && !b[3]) continue;   // (a click, or a pull stopped at once: nothing drawn, nothing kept)
     if (d.local) b.push(1);
     E[key] = [...(E[key] || []), b];
   }
@@ -914,4 +916,9 @@ fix(state.top);
 renderSeg(); apply(); undoState();
 showBody(state.body);
 window.__studio = { get state() { return state; }, apply, showBody, camera, controls, get cloth() { return cloth; }, get awake() { return awake; }, get A() { return A; }, composer, renderer, params, edgePoint, edgeAt, editNear,
-  editOk: () => piecesOk(state.top, sleeves(params({ ...state.top, edit: undefined }))) };
+  editOk: () => piecesOk(state.top, sleeves(params({ ...state.top, edit: undefined }))),
+  // how far in (cm) a side's armhole was pulled by hand, at most: its sleeve sits that much further up the arm
+  armIn: s => {
+    const e = sleeves(params(state.top)).h, o = sleeves(params({ ...state.top, edit: undefined })).h, n = 24;
+    return Math.max(0, ...(s === 'l' ? ['Fp', 'Bp'] : ['Fm', 'Bm']).flatMap(k => { const a = resample(o[k].arm, n), b = resample(e[k].arm, n); return a.map((p, i) => p[0] - b[i][0]); }));
+  } };

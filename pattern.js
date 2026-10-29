@@ -60,7 +60,7 @@ function at(pts, t) {
   return pts[pts.length - 1].slice();
 }
 // n equal steps (n + 1 points, ends kept)
-function resample(pts, n) {
+export function resample(pts, n) {
   const out = [];
   for (let i = 0; i <= n; i++) out.push(at(pts, i / n));
   return out;
@@ -311,12 +311,25 @@ export function halfOk(H, H0, q, base) {
     const r = resample(H[k], Math.max(1, Math.round(plen(H[k]))));
     for (const p of pts.length ? r.slice(1) : r) pts.push(p);
   }
-  if (pts.some(p => p[0] < -.01)) return false;
+  // (the curves' own points too: resampled, a pull beside the middle crossing it by 3 mm went unseen, and the tiny loop
+  // left a point out of every triangle, falling on its own: fuzz 252, 283)
+  if (pts.some(p => p[0] < -.01) || ['neck', 'shoulder', 'arm', 'side', 'hem'].some(k => H[k].some(p => p[0] < -.01) || folds(H[k]))) return false;
   for (let i = 1; i < pts.length; i++) for (let j = i + 2; j < pts.length; j++) if (cross(pts[i - 1], pts[i], pts[j - 1], pts[j])) return false;
   // the neckline no higher than the high shoulder point, or the shoulder line beside it pulled up (over it, it stood up
   // off the neck in a flap; a back neck pulled near flat, its corner lowered a little, may stay a little over the corner)
   const sh = H.shoulder, shY = x => { if (x <= sh[0][0]) return sh[0][1]; for (let i = 1; i < sh.length; i++) if (sh[i][0] >= x) return lerp(sh[i - 1][1], sh[i][1], (x - sh[i - 1][0]) / Math.max(1e-9, sh[i][0] - sh[i - 1][0])); return sh[sh.length - 1][1]; };
   if (H.neck.some(([x, y]) => y > Math.max(0, shY(x)) + .05)) return false;
+  if (base) {
+    // the shoulder line no more than 1.5 cm under the uncut one (past its end, as far again as it reaches out: the arm
+    // falls away there). Further down the shoulder seam sat inside the body and the cloth went through it: fuzz 117
+    const [a, b] = [base.shoulder[0], base.shoulder.at(-1)], y0 = x => a[1] + (b[1] - a[1]) * (x - a[0]) / Math.max(1e-9, b[0] - a[0]);
+    if (H.shoulder !== base.shoulder && H.shoulder.some(([x, y]) => y < y0(x) - 1.5 - Math.max(0, x - b[0]))) return false;
+    // and the armhole turns in no steeper than 45° going down: steeper, the shoulder's end stood out over it like
+    // eaves, up off the sleeve sewn under it: fuzz 57 (only where the uncut one doesn't already)
+    // (its upper half: low down a side pulled in draws the armhole's end in across, which is no eaves)
+    const steep = c => { const r = resample(c, Math.max(2, Math.round(plen(c)))); return r.some((p, i) => i && i <= r.length / 2 && r[i - 1][0] - p[0] > r[i - 1][1] - p[1] + .3); };
+    if (H.arm !== base.arm && steep(H.arm) && !steep(base.arm)) return false;
+  }
   if (q && H.side !== H0.side) {
     const x0 = y => { const s = H0.side; for (let i = 1; i < s.length; i++) if (s[i][1] <= y) return lerp(s[i - 1][0], s[i][0], (s[i - 1][1] - y) / Math.max(1e-9, s[i - 1][1] - s[i][1])); return s[s.length - 1][0]; };
     for (const [x, y] of H.side) {
@@ -335,7 +348,7 @@ export function sleeveOk(H, H0, cap, ar, lo) {
     const r = resample(c, Math.max(1, Math.round(plen(c))));
     for (const p of pts.length ? r.slice(1) : r) pts.push(p);
   }
-  if (pts.some(p => p[0] < -.01 || p[1] < -lo)) return false;
+  if (pts.some(p => p[0] < -.01 || p[1] < -lo) || [H.und, H.hem].some(c => c.some(p => p[0] < -.01) || folds(c))) return false;
   for (let i = 1; i < pts.length; i++) for (let j = i + 2; j < pts.length; j++) if (cross(pts[i - 1], pts[i], pts[j - 1], pts[j])) return false;
   if (ar && H.und !== H0.und) {
     const u = H0.und, x0 = y => { for (let i = 1; i < u.length; i++) if (u[i][1] <= y) return lerp(u[i - 1][0], u[i][0], (u[i - 1][1] - y) / Math.max(1e-9, u[i - 1][1] - u[i][1])); return u[u.length - 1][0]; };
@@ -346,6 +359,14 @@ export function sleeveOk(H, H0, cap, ar, lo) {
   }
   return true;
 }
+// a curve turning back on itself (over 120° from one point to the next): bumps side by side pulling a seam down by
+// different amounts folded it into a Z a millimetre across, lying along itself where no two segments cross, and the
+// mesh left a point out of every triangle there: fuzz 26
+const folds = c => c.some((p, i) => {
+  if (i < 2) return false;
+  const ax = c[i - 1][0] - c[i - 2][0], ay = c[i - 1][1] - c[i - 2][1], bx = p[0] - c[i - 1][0], by = p[1] - c[i - 1][1];
+  return ax * bx + ay * by < -.5 * Math.hypot(ax, ay) * Math.hypot(bx, by);
+});
 const cross = (a, b, c, d) => {
   const o = (p, q, r) => (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0]);
   return o(a, b, c) * o(a, b, d) < 0 && o(c, d, a) * o(c, d, b) < 0;

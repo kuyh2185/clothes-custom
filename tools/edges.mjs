@@ -26,7 +26,8 @@ cases.push(
   { name: 'f 목선 위로', state: { v: 2, body: 'f', bottom: 'jeans', top: TOP }, steps: [{ t: 'view', a: 0 }, { t: 'wait', ms: 400 }, { t: 'edge', pc: 0, curve: 'neck', at: .35, half: 'p', dx: 0, dy: -80 }, { t: 'settle' }],
     check: () => { const b = (window.__studio.state.top.edit || {}).Bp || []; return b.length && b[0][3] >= 1 && b[0][3] <= 2.7 ? [] : [`뒤 목 혹 ${JSON.stringify(b)} (앞 목 ${window.__studio.state.top.ndF})`]; } },
   { name: 'f 카드 뒤 옆선', state: { v: 2, body: 'f', bottom: 'jeans', top: { ...TOP, ease: 6, sEase: 6 } }, steps: [{ t: 'view', a: 0 }, { t: 'wait', ms: 400 }, { t: 'edge', pc: 0, curve: 'side', at: .5, half: 'p', dx: -40, dy: 0 }, { t: 'settle' }, { t: 'card', g: 'fit', i: 0 }, { t: 'settle' }],
-    check: () => { const S = window.__studio, b = (S.state.top.edit || {}).Fp || []; return [...(b.length ? [] : ['옆선 혹이 안 생김']), ...(S.editOk() ? [] : ['카드 뒤 조각이 깨짐'])]; } },
+    // (the bump may be shrunk to nothing by the fitted card, and a bump of nothing is dropped: only the pieces are checked)
+    check: () => window.__studio.editOk() ? [] : ['카드 뒤 조각이 깨짐'] },
   { name: 'f 밑단 가운데 혹', state: { v: 2, body: 'f', bottom: 'jeans', top: TOP }, steps: [{ t: 'view', a: 0 }, { t: 'wait', ms: 400 }, { t: 'edge', pc: 0, curve: 'hem', at: .8, half: 'p', dx: 0, dy: 40 }, { t: 'settle' }],
     check: () => { const D = document.querySelectorAll('#layer .dot:not(.edge)'); return [...(D[2].hidden ? [] : ['밑단 고정 점이 혹 위에 보임']), ...(D[8].hidden ? ['목선 고정 점까지 숨음'] : [])]; } },
 );

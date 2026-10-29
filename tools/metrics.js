@@ -9,7 +9,8 @@
 //         short of its length along the arm's bones (cm). The hem as a whole sits higher than its pattern depth over a
 //         chest (reported as roll.hem, not judged)
 //   selfx cloth edges passing through the same cloth's triangles
-//   dots  drag points shown outside the stage, lim bars whose value is outside their limits, body = panel ≠ mannequin
+//   dots  drag points shown outside the stage, lim bars whose value is outside their limits (and cloth points in no
+//         triangle: they fall alone), body = panel ≠ mannequin
 (() => {
   const S = () => window.__studio;
 
@@ -85,10 +86,16 @@
     const c = S().cloth, g = c.geometry, I = g.index.array, map = c.userData.map, nV = map.length, info = c.userData.info;
     const par = new Int32Array(nV).map((_, i) => i), find = i => { while (par[i] !== i) { par[i] = par[par[i]]; i = par[i]; } return i; };
     for (let t = 0; t < I.length; t += 3) for (let e = 0; e < 3; e++) { const a = find(I[t + e]), b = find(I[t + (e + 1) % 3]); if (a !== b) par[Math.max(a, b)] = Math.min(a, b); }
-    const roots = [...new Set(Array.from({ length: nV }, (_, i) => find(i)))].sort((a, b) => a - b);
-    const names = ['front', 'back', ...(info.has.l ? ['sleeve_l'] : []), ...(info.has.r ? ['sleeve_r'] : [])];
-    const piece = new Int8Array(nV);
-    for (let i = 0; i < nV; i++) piece[i] = ['front', 'back', 'sleeve_l', 'sleeve_r'].indexOf(names[roots.indexOf(find(i))]);
+    // (each part named by where it lies on the pattern sheet, its pat x shift: by order, a point in no triangle, a part of
+    // its own, made the left sleeve the right one: fuzz 252, 283) and the points in no triangle counted (lone, below)
+    const used = new Uint8Array(nV); for (const v of I) used[v] = 1;
+    const U = g.attributes.pat.array, sum = new Map();
+    for (let i = 0; i < nV; i++) if (used[i]) { const r = find(i), s = sum.get(r) || [0, 0]; s[0] += U[i * 2]; s[1]++; sum.set(r, s); }
+    const piece = new Int8Array(nV).fill(-1);
+    const shift = r => { const u = sum.get(r)[0] / sum.get(r)[1] * 100; return [0, 70, 140, 190].reduce((a, x, k) => (Math.abs(u - x) < Math.abs(u - [0, 70, 140, 190][a]) ? k : a), 0); };
+    const of = new Map([...sum.keys()].map(r => [r, shift(r)]));
+    for (let i = 0; i < nV; i++) if (used[i]) piece[i] = of.get(find(i));
+    let lone = 0; for (let i = 0; i < nV; i++) if (!used[i]) lone++;
     // free = a particle edge only one triangle has (seams weld two pieces' edges into one particle edge)
     const pk = (a, b) => { a = map[a]; b = map[b]; return a < b ? a * 1e6 + b : b * 1e6 + a; }, cnt = new Map();
     for (let t = 0; t < I.length; t += 3) for (let e = 0; e < 3; e++) { const k = pk(I[t + e], I[t + (e + 1) % 3]); cnt.set(k, (cnt.get(k) || 0) + 1); }
@@ -97,11 +104,11 @@
       const a = I[t + e], b = I[t + (e + 1) % 3];
       if (cnt.get(pk(a, b)) === 1) { link(a, b); link(b, a); }
     }
-    return { I, map, nV, piece, adj, info };
+    return { I, map, nV, piece, adj, info, lone };
   }
 
   function measure() {
-    const st = S(), c = st.cloth, A = st.A, near = surface(), { map, nV, piece, adj, info } = topo();
+    const st = S(), c = st.cloth, A = st.A, near = surface(), { map, nV, piece, adj, info, lone } = topo();
     const X = c.geometry.attributes.position.array, U = c.geometry.attributes.pat.array;
     const pt = v => [U[v * 2] * 100, U[v * 2 + 1] * 100];   // pattern cm (uv carries each piece's x shift: only y and deltas are used)
     const px = v => U[v * 2] * 100 - [0, 70, 140, 190][piece[v]];
@@ -225,7 +232,8 @@
         }
         return out * 100;
       };
-      roll[s] = -median(cuff.map(v => along(v) + pt(v)[1]));
+      // (less how far its armhole was pulled in by hand: the sleeve sits where that put it, not rolled)
+      roll[s] = -median(cuff.map(v => along(v) + pt(v)[1])) - (st.armIn ? st.armIn(s) : 0);
     }
 
     // drag points: shown ones inside the stage
@@ -246,6 +254,7 @@
     }
     // (an outline drawn by hand still whole pieces after whatever came after it: cards, bars, the other body)
     if (T.edit && st.editOk && !st.editOk()) lim.push('그린 윤곽 조각 깨짐');
+    if (lone) lim.push(`천에서 떨어진 점 ${lone}`);
     const r1 = v => Math.round(v * 10) / 10;
     const ep = ear.v >= 0 ? [X[ear.v * 3], X[ear.v * 3 + 1], X[ear.v * 3 + 2]] : null;
     return {

@@ -5,7 +5,7 @@
 //        {t:'params', p, fresh}      {t:'tick'}   (one frame per tick; answered with {t:'frame'})
 //        (fresh: laid out anew round the body, not carried on from the old cloth)
 //   out: {t:'topo', ...} when the mesh changes, {t:'frame', pos, nrm, awake, ms}
-import { build, fitSide, BASE, BASE_M } from './pattern.js?v=27';
+import { build, fitSide, BASE, BASE_M } from './pattern.js?v=28';
 
 const G = -9.8, SUB = 12, DT = 1 / 60, TH = 0.004;
 // cloth against itself: two particles not near each other along the cloth stay SC apart (a little over the widest gap
@@ -329,6 +329,11 @@ function assemble(g, old) {
   // have when the two triangles lie flat (bending, seams included)
   const edges = new Map(), hinge = new Map();
   const key = (a, b) => a < b ? a * nP + b : b * nP + a;
+  // (an outline pulled out by hand is cloth added there: a knit giving round it too, the stretched fit round it left the
+  // added cloth over as wings: fuzz 467. Within a bump's reach the knit doesn't give)
+  const pcOf = new Int8Array(nV), B = g.info.bumps || [];
+  for (const pc of pieces) pcOf.fill(pc.pc, pc.off, pc.off + pc.pts.length);
+  const firm = (i, j) => B.some(b => b[0] === pcOf[i] && Math.hypot((flat[i * 2] + flat[j * 2]) * 50 - b[1], (flat[i * 2 + 1] + flat[j * 2 + 1]) * 50 - b[2]) < b[3]);
   for (let t = 0; t < index.length; t += 3) {
     const v = [index[t], index[t + 1], index[t + 2]];
     for (let e = 0; e < 3; e++) {
@@ -338,7 +343,7 @@ function assemble(g, old) {
       const kk = key(pi, pj);
       const L = Math.hypot(flat[i * 2] - flat[j * 2], flat[i * 2 + 1] - flat[j * 2 + 1]);
       // how much the edge runs across the grain (round the body / arm): a knit gives that way, hardly at all lengthwise
-      const wx = ((flat[i * 2] - flat[j * 2]) / (L || 1e-9)) ** 2;
+      const wx = firm(i, j) ? 0 : ((flat[i * 2] - flat[j * 2]) / (L || 1e-9)) ** 2;
       if (!edges.has(kk)) edges.set(kk, [pi, pj, L, 1, wx]); else { const E = edges.get(kk); E[2] += L; E[3]++; E[4] += wx; }
       // far corner k relative to the edge i→j (canonical direction: lower particle id first)
       const [ia, ib] = pi < pj ? [i, j] : [j, i];
