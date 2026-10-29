@@ -129,10 +129,14 @@ function bodyHalf(P, front) {
   };
   // the hem leaves the side seam square to it: a side running out at the hem (a fitted crop over the hips) met by a
   // straight hem made a sharp corner on each panel, and the two sewn together a point that folded up at the side.
-  // The corner rises by what squaring takes (m: cm out per cm down at the hem), the centre stays at the length
-  const end = s => { const a = s[s.length - 2], b = s[s.length - 1]; return Math.max(0, (b[0] - a[0]) / Math.max(.01, a[1] - b[1])); };
-  const s0 = sideTo(L), hx0 = s0[s0.length - 1][0], d = clamp(end(s0) * hx0 * .45, .5, 3);
-  let side = d > .5 ? sideTo(L + .5 - d) : s0;
+  // The corner rises by what squaring takes (m: cm out per cm down at the hem), the centre stays at the length.
+  // A side running in (a fitted crop above the waist) the other way: its corner drops, the hem rising from it to the
+  // centre. Left straight, the two blunt corners sewn together made a notch up at the side that sometimes folded up
+  // 3 cm, by the mesh alone (fuzz 128: 34.5 cm long sat, 34.75 folded)
+  const end = s => { const a = s[s.length - 2], b = s[s.length - 1]; return (b[0] - a[0]) / Math.max(.01, a[1] - b[1]); };
+  const s0 = sideTo(L), hx0 = s0[s0.length - 1][0], m0 = end(s0);
+  const d = m0 < 0 ? .5 + Math.max(-3, m0 * hx0 * .45) : clamp(m0 * hx0 * .45, .5, 3);
+  let side = d !== .5 ? sideTo(L + .5 - d) : s0;
   // a side seam running far out (a flared hem) is longer than the drop it hangs from: hung, it fell straight down and
   // its corner hung below the hem in a point. The corner rises until the seam, measured straight underarm → corner, is
   // as long as that drop, the hem curving up to it as a flared skirt's does. Only outward: a side taken in is held by the
@@ -142,7 +146,7 @@ function bodyHalf(P, front) {
   const rise = dl - Math.sqrt(Math.max(2.25, dl * dl - run * run));
   if (rise >= .3) side = sideTo(L + .5 - d - rise);
   // the hem starts where the side seam ends (a fitted crop's hem sits in the waist: from P.hw it left a flap)
-  const cn = side[side.length - 1], hx = cn[0], m = end(side), h = Math.min(hx * .45, d / Math.max(m, 1e-3));
+  const cn = side[side.length - 1], hx = cn[0], m = end(side), h = m > 1e-3 ? Math.min(hx * .45, Math.max(d, .5) / m) : hx * .45;
   const hem = bez(cn, [hx - h, cn[1] - h * m], [hx * .2, -L - .5], [0, -L - .5]);
   return { neck, shoulder, arm, side, hem };
 }
@@ -440,6 +444,24 @@ function pieceMesh(segs) {
         break;
       }
       again = true;
+      break;
+    }
+  }
+  // a corner of the outline held by one triangle (a hem's side corner) is a hinge: it flipped over into a small flap
+  // folded up 3 cm, or not, by the mesh alone (fuzz 128, 394: a fitted crop 34.5 cm long sat, 34.6 folded). Its far
+  // side is flipped with the triangle across it, so the corner holds two
+  const cr = (a, b, c) => (pts[b][0] - pts[a][0]) * (pts[c][1] - pts[a][1]) - (pts[c][0] - pts[a][0]) * (pts[b][1] - pts[a][1]);
+  for (let v = 0; v < nb; v++) {
+    const ts = [];
+    for (let t = 0; t < tris.length; t += 3) if (tris[t] === v || tris[t + 1] === v || tris[t + 2] === v) ts.push(t);
+    if (ts.length !== 1) continue;
+    const t = ts[0], j = [0, 1, 2].find(k => tris[t + k] === v), p = tris[t + (j + 1) % 3], q = tris[t + (j + 2) % 3];
+    for (let u = 0; u < tris.length; u += 3) {
+      const w = [tris[u], tris[u + 1], tris[u + 2]], i = w.findIndex((x, k) => x === q && w[(k + 1) % 3] === p);
+      if (i < 0) continue;
+      const x = w[(i + 2) % 3];
+      const s = cr(v, p, q);
+      if (cr(v, p, x) * s > 0 && cr(v, x, q) * s > 0) tris.splice(t, 3, v, p, x), tris.splice(u, 3, v, x, q);   // only where the four make a convex quad
       break;
     }
   }
