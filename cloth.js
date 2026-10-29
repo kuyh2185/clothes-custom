@@ -5,7 +5,7 @@
 //        {t:'params', p, fresh}      {t:'tick'}   (one frame per tick; answered with {t:'frame'})
 //        (fresh: laid out anew round the body, not carried on from the old cloth)
 //   out: {t:'topo', ...} when the mesh changes, {t:'frame', pos, nrm, awake, ms}
-import { build, fitSide, BASE, BASE_M } from './pattern.js?v=24';
+import { build, fitSide, BASE, BASE_M } from './pattern.js?v=25';
 
 const G = -9.8, SUB = 12, DT = 1 / 60, TH = 0.004;
 // cloth against itself: two particles not near each other along the cloth stay SC apart (a little over the widest gap
@@ -360,7 +360,7 @@ function assemble(g, old) {
   const near = nearOnCloth(ptri, nP);
   return {
     near, sp: new Int32Array(1 << 16), nS: 0, R: 0, trav: 0, rub: false,
-    marks: marks(pieces),
+    marks: marks(pieces), rim: rim(pieces),
     pieces: pieces.map(pc => ({ name: pc.name, pc: pc.pc, pts: pc.pts, tris: pc.tris, off: pc.off })),
     flip: Object.fromEntries(pieces.map(pc => [pc.name, pc.flip])),
     nV, nP, map, uv, index: new Uint32Array(index), ptri,
@@ -766,7 +766,24 @@ function marks(pieces) {
     neckSide: [at('front', 'neck_p', 1), at('front', 'neck_m', 1)],
   };
 }
+// the body panels' edges, for pulling the outline anywhere (studio.js): every display vertex on them, with where it is
+// on the pattern's curves (pattern.js bend) — v vertex, pc 0 front / 1 back, half 0 +x / 1 −x, curve (RIM order), t 0…1
+const RIM = ['neck', 'shoulder', 'arm', 'side', 'hem'];
+function rim(pieces) {
+  const v = [], pc = [], half = [], curve = [], t = [];
+  for (const P of pieces.filter(q => q.pc < 2)) for (const [h, sf] of [[0, '_p'], [1, '_m']]) {
+    RIM.forEach((k, ci) => {
+      const ids = (k === 'arm' ? ['armS', 'armF'] : [{ neck: 'neck', shoulder: 'sh', side: 'side', hem: 'hem' }[k]]).flatMap(n => P.bound[n + sf] || []);
+      if (!ids.length) return;
+      const s = [0];
+      for (let i = 1; i < ids.length; i++) { const a = P.pts[ids[i - 1]], b = P.pts[ids[i]]; s.push(s[i - 1] + Math.hypot(b[0] - a[0], b[1] - a[1])); }
+      const L = s[s.length - 1] || 1;
+      ids.forEach((id, i) => { v.push(P.off + id); pc.push(P.pc); half.push(h); curve.push(ci); t.push(s[i] / L); });
+    });
+  }
+  return { v: Int32Array.from(v), pc: Uint8Array.from(pc), half: Uint8Array.from(half), curve: Uint8Array.from(curve), t: Float32Array.from(t), names: RIM };
+}
 function postTopo() {
   const c = cloth;
-  postMessage({ t: 'topo', nV: c.nV, nP: c.nP, map: c.map, uv: c.uv, index: c.index, info: c.info, marks: c.marks });
+  postMessage({ t: 'topo', nV: c.nV, nP: c.nP, map: c.map, uv: c.uv, index: c.index, info: c.info, marks: c.marks, rim: c.rim });
 }

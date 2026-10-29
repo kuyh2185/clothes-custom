@@ -154,7 +154,7 @@ export function gen(seed) {
     const r = rnd();
     if (r < .3) { const g = pick(Object.keys(CARDS)); steps.push({ t: 'card', g, i: Math.floor(rnd() * CARDS[g]) }); }
     else if (r < .5) steps.push({ t: 'bar', id: pick(BARS), f: Math.round(rnd() * 100) / 100 });
-    // shortcut: no 'edge' steps until studio.js has the outline drawn by hand (window.__studio.edgeAt); add them then
+    // shortcut: no 'edge' steps yet (studio.js has edgeAt since 2-1); added in 2-4 with the sleeves' edges, which changes every seed
     else if (r < .75) steps.push({ t: 'drag', dot: Math.floor(rnd() * 12), dx: Math.round(U(-90, 90)), dy: Math.round(U(-90, 90)) });
     else if (r < .83) steps.push({ t: 'undo' });
     else if (r < .86) steps.push({ t: 'redo' });

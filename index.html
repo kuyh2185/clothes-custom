@@ -109,6 +109,7 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 .dot:hover{transform:scale(1.25);opacity:1}
 .dot.on{background:var(--accent);transform:scale(1.3);opacity:1;cursor:grabbing}
 .dot.sq{border-radius:3px}
+.dot.edge{transition:none;width:12px;height:12px;margin:-6px 0 0 -6px}
 .dot[hidden]{display:none}
 .tip{position:absolute;z-index:4;padding:4px 8px;border-radius:6px;background:rgba(10,10,10,.82);color:#fff;font-size:12px;white-space:nowrap;pointer-events:none;opacity:0;transition:opacity .12s}
 .tip.show{opacity:1}
@@ -157,6 +158,7 @@ input[type=range]{width:100%;accent-color:var(--accent)}
       <div class="row"><h3>기장 <span id="lbl-len"></span></h3><div class="cards" id="c-len"></div></div>
       <div class="row"><h3>핏 <span id="lbl-fit"></span></h3><div class="cards" id="c-fit"></div></div>
       <div class="row"><h3>목선 <span id="lbl-neck"></span></h3><div class="cards" id="c-neck"></div></div>
+      <label class="check"><input type="checkbox" id="fb" checked> 밑단·목선 앞뒤 같이 끌기</label>
       <details class="fine" id="fine"><summary>세밀하게</summary><div id="bars"></div>
         <label class="check"><input type="checkbox" id="sym" checked> 왼쪽·오른쪽 소매 같이</label>
       </details>
@@ -175,6 +177,6 @@ input[type=range]{width:100%;accent-color:var(--accent)}
   <p class="hint" id="hint">옷 위의 흰 점을 끌어 보세요 — 소매 끝, 밑단, 옆구리, 목선. 빈 곳을 끌면 돌려 보기, 휠로 확대.</p>
 </main>
 <script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"}}</script>
-<script type="module" src="studio.js?v=39"></script>
+<script type="module" src="studio.js?v=40"></script>
 </body>
 </html>

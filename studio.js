@@ -12,7 +12,7 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { smoothChest, tuckUnder } from './mannequin.js?v=1';
-import { BASE, BASE_M, fitSide } from './pattern.js?v=24';
+import { BASE, BASE_M, fitSide, halves, halfOk } from './pattern.js?v=25';
 
 const $ = id => document.getElementById(id);
 const PI = Math.PI;
@@ -108,6 +108,7 @@ function params(T = state.top) {
     ndF: r1(T.ndF), ndB: r1(T.ndB), neckV: r1(T.neckV),
     bw: r1(b.bw + (es > 0 ? es * .4 : es * .3)), cuff: r1(b.cuff + (es > 0 ? es * .3 : es * .2)),
     stretch: Math.round(clamp(t / 2, 0, 1) * 100) / 100,
+    edit: T.edit && Object.values(T.edit).some(l => l.length) ? T.edit : undefined,
   };
 }
 // the hem taken in (the hem's corners dragged in, or the bar): down to 1 cm over the body's round at the hem, no further.
@@ -357,7 +358,7 @@ const world = mesh => {   // rest pose = bind pose = world here (the asset's roo
 };
 
 /* ---------- the cloth ---------- */
-const worker = new Worker('cloth.js?v=42', { type: 'module' });
+const worker = new Worker('cloth.js?v=43', { type: 'module' });
 worker.onerror = e => console.error('[cloth]', e.message);
 const fabricU = { uC1: { value: new THREE.Color() }, uC2: { value: new THREE.Color() }, uPat: { value: 0 }, uScale: { value: 1 } };
 // the knit's grain as a normal map over the flat pattern (m): a jersey's columns of V-shaped loops, or for the fitted
@@ -430,7 +431,7 @@ worker.onmessage = e => {
     g.setIndex(new THREE.BufferAttribute(t.index, 1));
     if (!cloth) { cloth = new THREE.Mesh(g, fabric); cloth.castShadow = cloth.receiveShadow = true; cloth.frustumCulled = false; scene.add(cloth); }
     else { cloth.geometry.dispose(); cloth.geometry = g; }
-    cloth.userData = { map: t.map, marks: t.marks, info: t.info };
+    cloth.userData = { map: t.map, marks: t.marks, info: t.info, rim: t.rim };
     $('loading').hidden = true;
   }
   if (!cloth) return;
@@ -722,10 +723,132 @@ function dragMove(e, d) {
   showTip(label, e.clientX - r.left, e.clientY - r.top);
 }
 
+/* ---------- the outline pulled anywhere ---------- */
+// over a body panel's edge (hem, side, neckline, shoulder, armhole) a point shows where the pointer is nearest, and
+// dragged it bumps the pattern's outline there (state.top.edit, pattern.js bend): left and right alike; side, shoulder
+// and armhole front and back together (their seams must match), the hem and neckline too unless 앞뒤 같이 is off
+const EDGE = { neck: '목선', shoulder: '어깨선', arm: '진동둘레', side: '옆선', hem: '밑단' };
+const edgeDot = document.createElement('button');
+edgeDot.type = 'button'; edgeDot.className = 'dot edge'; edgeDot.hidden = true;
+edgeDot.setAttribute('aria-label', '옷 가장자리 점 — 끌어서 모양 바꾸기');
+layer.appendChild(edgeDot);
+let edgeI = -1;   // the rim entry under the point
+// how much a rim vertex faces you, by which way it lies round the body (an edge curls: its normal says little)
+function rimFacing(p) {
+  const ox = p.x, oz = p.z - A.z0, tx = camera.position.x - p.x, tz = camera.position.z - p.z;
+  return (ox * tx + oz * tz) / ((Math.hypot(ox, oz) || 1) * (Math.hypot(tx, tz) || 1));
+}
+// rim entries in view (facing you) → [index, x, y] in canvas px
+function rimInView() {
+  const R = cloth && !next && cloth.userData.rim, out = [];
+  if (!R) return out;
+  const P = cloth.geometry.attributes.position, r = canvas.getBoundingClientRect();
+  for (let i = 0; i < R.v.length; i++) {
+    v3.fromBufferAttribute(P, R.v[i]);
+    if (rimFacing(v3) < -.35) continue;
+    const [x, y] = project(v3);
+    if (x >= 0 && y >= 0 && x <= r.width && y <= r.height) out.push([i, x, y, rimFacing(v3)]);
+  }
+  return out;
+}
+function placeEdge() {
+  if (drag || edgeI < 0) return;
+  const R = cloth && !next && cloth.userData.rim;
+  if (!R || edgeI >= R.v.length) { edgeDot.hidden = true; edgeI = -1; return; }
+  const [x, y] = project(v3.fromBufferAttribute(cloth.geometry.attributes.position, R.v[edgeI]));
+  edgeDot.style.transform = `translate(${x}px, ${y}px)`;
+}
+const hideEdge = () => { edgeDot.hidden = true; edgeI = -1; tip.classList.remove('show'); };
+// (on the window: over a fixed point's wide grip the canvas hears nothing, and the edge's point may still show there)
+addEventListener('pointermove', e => {
+  if (drag || e.buttons) return;
+  if (e.target !== canvas && !(e.target.closest && e.target.closest('#layer'))) { if (edgeI >= 0) hideEdge(); return; }
+  const r = canvas.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
+  // (a fixed point keeps the spot it is drawn on; around it, where its wider grip reaches, the edge's point is on top)
+  const nearDot = DOTS.some(d => !d.el.hidden && Math.hypot(d.sx - x, d.sy - y) < 9);
+  let best = -1, bd = 14 * 14;
+  if (!nearDot) for (const [i, px, py, f] of rimInView()) { const d = (px - x) ** 2 + (py - y) ** 2 - f * 4; if (d < bd) { bd = d; best = i; } }
+  edgeI = best; edgeDot.hidden = best < 0;
+  if (best >= 0) { placeEdge(); const R = cloth.userData.rim; showTip(EDGE[R.names[R.curve[best]]], x, y); }
+  else if (e.target === canvas || e.target === edgeDot) tip.classList.remove('show');   // (a fixed point shows its own)
+});
+edgeDot.addEventListener('pointerdown', e => {
+  const R = cloth && cloth.userData.rim;
+  if (!R || edgeI < 0) return;
+  e.preventDefault(); e.stopPropagation();
+  const i = edgeI, curve = R.names[R.curve[i]], pc = R.pc[i], half = R.half[i];
+  const p = v3.fromBufferAttribute(cloth.geometry.attributes.position, R.v[i]).clone(), [sx, sy] = project(p);
+  const d = { k: 'edge', curve, t: Math.round(R.t[i] * 1000) / 1000, x0: e.clientX, y0: e.clientY, start: structuredClone(state.top) };
+  // which panels, and whether it keeps to its own curve (a free edge pulled on one panel: its corner is sewn to the other)
+  const both = !(curve === 'neck' || curve === 'hem') || $('fb').checked;
+  d.keys = (both ? ['F', 'B'] : [pc ? 'B' : 'F']).flatMap(k => [k + 'p', k + 'm']);
+  d.local = both ? 0 : 1;
+  const [ax, ay] = project(new THREE.Vector3(0, p.y, A.z0)), ox = sx - ax, oy = sy - ay, ol = Math.hypot(ox, oy);
+  d.out = ol > 6 ? [ox / ol, oy / ol] : [half ? -1 : 1, 0];
+  d.mpp = 2 * camera.position.distanceTo(p) * Math.tan(camera.fov * PI / 360) / canvas.getBoundingClientRect().height;
+  drag = d; controls.enabled = false; edgeDot.classList.add('on');
+  const id = e.pointerId, move = ev => { if (ev.pointerId === id) edgeMove(ev, d); }, up = ev => {
+    if (ev.pointerId !== id) return;
+    removeEventListener('pointermove', move); removeEventListener('pointerup', up); removeEventListener('pointercancel', up);
+    drag = null; controls.enabled = true; edgeDot.classList.remove('on'); edgeDot.hidden = true; edgeI = -1;
+    tip.classList.remove('show'); commit(); apply();
+  };
+  addEventListener('pointermove', move); addEventListener('pointerup', up); addEventListener('pointercancel', up);
+});
+// the bump at k of (dx, dy): the start's bumps and this one
+const withBump = (d, dx, dy, k) => {
+  const T = structuredClone(d.start), E = T.edit = T.edit || {};
+  for (const key of d.keys) {
+    // (as wide as it is far, about: a long pull 6 cm wide was a tongue, and pulls side by side 6 cm wide a sharp zigzag)
+    const b = [d.curve, d.t, r1(dx * k), r1(dy * k), r1(Math.max(8, Math.hypot(dx, dy) * k * 1.2))];
+    if (d.local) b.push(1);
+    E[key] = [...(E[key] || []), b];
+  }
+  return T;
+};
+// still a piece (pattern.js halfOk) on both panels; a start that already fails (a card changed under old bumps) isn't held
+function edgeOk(T, d) {
+  const q = measure().q, h = halves(params(T)), h0 = d.h0 || (d.h0 = halves(params(d.start)));
+  if (d.ok0 == null) d.ok0 = halfOk(h0.Fp, h0.F, q) && halfOk(h0.Bp, h0.B, q);
+  return !d.ok0 || halfOk(h.Fp, h0.Fp, q, h.F) && halfOk(h.Bp, h0.Bp, q, h.B);
+}
+function edgeMove(e, d) {
+  const px = e.clientX - d.x0, py = e.clientY - d.y0, down = py * d.mpp * 100, out = (px * d.out[0] + py * d.out[1]) * d.mpp * 100;
+  // at most 15 cm at once; dragged further than the outline can take, it stops where it still can
+  const l = Math.hypot(out, down), s = l > 15 ? 15 / l : 1, dx = out * s, dy = -down * s;
+  let k = 1;
+  if (!edgeOk(withBump(d, dx, dy, 1), d)) {
+    let lo = 0, hi = 1;
+    for (let it = 0; it < 7; it++) { const m = (lo + hi) / 2; if (edgeOk(withBump(d, dx, dy, m), d)) lo = m; else hi = m; }
+    k = lo;
+  }
+  state.top = withBump(d, dx, dy, k);
+  apply(true);
+  const r = layer.getBoundingClientRect();
+  edgeDot.style.transform = `translate(${e.clientX - r.left}px, ${e.clientY - r.top}px)`;
+  showTip(`${EDGE[d.curve]} ${(Math.hypot(dx, dy) * k).toFixed(1)}cm${k < .999 ? ' · 더는 안 돼요' : ''}`, e.clientX - r.left, e.clientY - r.top);
+}
+// for the checks (tools/harness.mjs): a rim point on the page — by curve and fraction, or the f-th of those in view
+function edgePoint(pc, curve, at, half = 'p') {
+  const R = cloth && cloth.userData.rim, ci = R ? R.names.indexOf(curve) : -1, h = half === 'm' ? 1 : 0;
+  if (ci < 0) return null;
+  const view = new Map(rimInView().map(q => [q[0], q]));
+  let best = null, bd = 1e9;
+  for (let i = 0; i < R.v.length; i++) if (R.pc[i] === pc && R.half[i] === h && R.curve[i] === ci && view.has(i) && Math.abs(R.t[i] - at) < bd) { bd = Math.abs(R.t[i] - at); best = view.get(i); }
+  const r = canvas.getBoundingClientRect();
+  return best && [r.left + best[1], r.top + best[2]];
+}
+function edgeAt(f) {
+  const v = rimInView(), q = v[Math.floor(clamp(f, 0, .999) * v.length)], r = canvas.getBoundingClientRect();
+  return q ? [r.left + q[1], r.top + q[2]] : null;
+}
+// a cloth point near a bump (metrics.js: an outline drawn by hand stands where it was drawn, it is no ear)
+const editNear = (pc, x, y) => (cloth && cloth.userData.info.bumps || []).some(b => b[0] === pc && Math.hypot(x - b[1], y - b[2]) < b[3] + 2);
+
 /* ---------- PNG ---------- */
 $('png').addEventListener('click', () => {
   const w = 1000, h = 1500, keep = [camera.aspect];
-  DOTS.forEach(d => { d.el.hidden = true; });
+  DOTS.forEach(d => { d.el.hidden = true; }); edgeDot.hidden = true;
   renderer.setSize(w, h, false); composer.setPixelRatio(1); composer.setSize(w, h);
   camera.aspect = w / h; camera.clearViewOffset(); camera.updateProjectionMatrix();
   composer.render();
@@ -743,11 +866,11 @@ let lastStat = 0;
   requestAnimationFrame(frame);
   if (!busy && (awake || next || sent && !cloth)) { busy = true; worker.postMessage({ t: 'tick' }); }
   if (controls.update() || needs) { needs = false; composer.render(); }
-  placeDots();
+  placeDots(); placeEdge();
   if (t - lastStat > 400 && t - sayT > 2500) { lastStat = t; $('status').textContent = cloth ? `천 ${awake ? '움직이는 중' : '멈춤'} · 계산 ${simMs.toFixed(1)}ms` : ''; }
 })(0);
 
 fix(state.top);
 renderSeg(); apply(); undoState();
 showBody(state.body);
-window.__studio = { get state() { return state; }, apply, showBody, camera, controls, get cloth() { return cloth; }, get awake() { return awake; }, get A() { return A; }, composer, renderer, params };
+window.__studio = { get state() { return state; }, apply, showBody, camera, controls, get cloth() { return cloth; }, get awake() { return awake; }, get A() { return A; }, composer, renderer, params, edgePoint, edgeAt, editNear };

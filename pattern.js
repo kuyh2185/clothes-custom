@@ -228,7 +228,9 @@ function sleeveOutline(P, frontLen, backLen, chMax) {
 // point t of the way along that curve dx out from the centre line and dy up (cm), the outline r cm along either side
 // of it following smoothly. A body half's chain runs neck → shoulder → armhole → side → hem, a sleeve's underarm → hem
 // (its +x half); where a chain meets the centre line it stays on it, and a sleeve's underarm stays put (the cap is
-// cut to its armhole). Seams keep matching: side, shoulder and armhole are moved front and back together (studio.js)
+// cut to its armhole). Seams keep matching: side, shoulder and armhole are moved front and back together (studio.js).
+// A bump with a sixth element (local) keeps to its own curve and holds where it meets a seam: a neckline or hem pulled
+// on the front alone, its corner sewn to the back's stays put
 const fall = d => d < 1 ? (1 - d * d) ** 2 : 0;
 const dense = pts => {   // at most 0.5 cm apart, the curve's own points kept
   const out = [pts[0]];
@@ -243,14 +245,20 @@ const hasEdit = b => b && b.some(e => e[2] || e[3]);
 function bend(chain, bumps, sleeve) {
   const names = Object.keys(chain), len = names.map(k => plen(chain[k])), tot = len.reduce((a, b) => a + b, 0), s0 = {};
   names.reduce((a, k, i) => { s0[k] = a; return a + len[i]; }, 0);
-  const B = bumps.filter(e => e[0] in s0).map(([k, t, dx, dy, r]) => [s0[k] + clamp(t, 0, 1) * len[names.indexOf(k)], dx, dy, r]);
+  const B = bumps.filter(e => e[0] in s0).map(([k, t, dx, dy, r, local]) => [s0[k] + clamp(t, 0, 1) * len[names.indexOf(k)], dx, dy, r, local && k]);
   const out = {};
   for (const k of names) {
     let s = s0[k];
+    const e = s0[k] + len[names.indexOf(k)];
     out[k] = dense(chain[k]).map((p, j, a) => {
       if (j) s += dist(a[j - 1], p);
       let dx = 0, dy = 0;
-      for (const [sb, bx, by, r] of B) { const w = fall(Math.abs(s - sb) / r); dx += bx * w; dy += by * w; }
+      for (const [sb, bx, by, r, own] of B) {
+        if (own && own !== k) continue;
+        // (held at the seam end: the hem's side end, the neckline's shoulder end)
+        const w = fall(Math.abs(s - sb) / r) * (!own ? 1 : k === 'hem' ? sstep((s - s0[k]) / 3) : sstep((e - s) / 3));
+        dx += bx * w; dy += by * w;
+      }
       const hold = sstep(s / 3), end = sstep((tot - s) / 3);
       return sleeve ? [p[0] + dx * hold * end, p[1] + dy * hold] : [p[0] + dx * hold * end, p[1] + dy];
     });
@@ -258,6 +266,42 @@ function bend(chain, bumps, sleeve) {
   return out;
 }
 const edited = (H, bumps) => hasEdit(bumps) ? { ...H, ...bend({ neck: H.neck, shoulder: H.shoulder, arm: H.arm, side: H.side, hem: H.hem }, bumps) } : H;
+// where each bump sits on the pattern, for the checks (an outline drawn by hand stands where it was drawn): [pc, x, y, r]
+const bumpsAt = (H, bumps, pc, sg) => (hasEdit(bumps) ? bumps : []).filter(e => H[e[0]]).map(([k, t, , , r]) => { const p = at(H[k], t); return [pc, sg * p[0], p[1], r]; });
+// the four body halves as cut: front / back, the +x half and the −x half (each in its own +x frame), with the bumps on
+export function halves(params) {
+  const P = { ...(params.base === 'm' ? BASE_M : BASE), ...params };
+  const uS = { l: Math.min(P.sleeveL ?? P.sleeve, P.arm + P.over), r: Math.min(P.sleeveR ?? P.sleeve, P.arm + P.over) };
+  if (uS.l >= 1.2 || uS.r >= 1.2) P.strap = null;   // a strap only once both sleeves are gone
+  const F = bodyHalf(P, true), B = bodyHalf(P, false), E = P.edit || {};
+  return { P, uS, F, B, Fp: edited(F, E.Fp), Fm: edited(F, E.Fm), Bp: edited(B, E.Bp), Bm: edited(B, E.Bm) };
+}
+// a half's outline still a piece: it doesn't cross itself or the centre line, and (q: the body's quarter round by depth)
+// a side taken in stops 1 cm over the body, or where it was if it was already in further; and the armhole stays within
+// 25% of the uncut one's length (base): the sleeve's cap is cut to it, and a zigzag along it made the sleeve half as wide
+// again (now a quarter at most)
+export function halfOk(H, H0, q, base) {
+  if (base && Math.abs(plen(H.arm) / plen(base.arm) - 1) > .25) return false;
+  const pts = [];
+  for (const k of ['neck', 'shoulder', 'arm', 'side', 'hem']) {
+    const r = resample(H[k], Math.max(1, Math.round(plen(H[k]))));
+    for (const p of pts.length ? r.slice(1) : r) pts.push(p);
+  }
+  if (pts.some(p => p[0] < -.01)) return false;
+  for (let i = 1; i < pts.length; i++) for (let j = i + 2; j < pts.length; j++) if (cross(pts[i - 1], pts[i], pts[j - 1], pts[j])) return false;
+  if (q && H.side !== H0.side) {
+    const x0 = y => { const s = H0.side; for (let i = 1; i < s.length; i++) if (s[i][1] <= y) return lerp(s[i - 1][0], s[i][0], (s[i - 1][1] - y) / Math.max(1e-9, s[i - 1][1] - s[i][1])); return s[s.length - 1][0]; };
+    for (const [x, y] of H.side) {
+      const d = Math.round(-y);
+      if (d >= 0 && d < q.length && x < Math.min(x0(y), q[d] + 1) - .05) return false;
+    }
+  }
+  return true;
+}
+const cross = (a, b, c, d) => {
+  const o = (p, q, r) => (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0]);
+  return o(a, b, c) * o(a, b, d) < 0 && o(c, d, a) * o(c, d, b) < 0;
+};
 
 /* ---------- flat mesh of a piece ---------- */
 // segs: [name, points, n, reversed] in CCW order, each starting where the last ended. Interior points sit on a lattice
@@ -343,13 +387,11 @@ function minDist(p, poly) {
 // → { pieces: [{ name, pc, pts, tris, bound }], seams: [[kind, [pieceA, segA], [pieceB, segB]]], info }
 // seam kinds: 1 shoulder, 2 armhole, 3 side, 4 sleeve underarm
 export function build(params) {
-  const P = { ...(params.base === 'm' ? BASE_M : BASE), ...params };
-  const full = P.sw - P.nw;
-  // each sleeve its own length; a sleeve shorter than this is none at all
-  const uS = { l: Math.min(P.sleeveL ?? P.sleeve, P.arm + P.over), r: Math.min(P.sleeveR ?? P.sleeve, P.arm + P.over) };
+  // each sleeve its own length; a sleeve shorter than this is none at all (a strap only once both are gone: halves)
+  // shortcut: the −x halves take the +x halves' seam lengths and sleeve (left and right are pulled alike); per side in 2-3
+  const { P, uS, Fp: F, Fm, Bp: B, Bm } = halves(params), full = P.sw - P.nw;
   const has = { l: uS.l >= 1.2, r: uS.r >= 1.2 };
-  if (has.l || has.r) P.strap = null;   // a strap only once both sleeves are gone
-  const F = bodyHalf(P, true), B = bodyHalf(P, false);
+  const E = P.edit || {}, bumps = [...bumpsAt(F, E.Fp, 0, 1), ...bumpsAt(Fm, E.Fm, 0, -1), ...bumpsAt(B, E.Bp, 1, 1), ...bumpsAt(Bm, E.Bm, 1, -1)];
   const fl = plen(F.arm), bl = plen(B.arm);
   // the cap no taller than about half the regular armhole's depth
   const sl = sleeveOutline(P, fl, bl, (params.base === 'm' ? BASE_M : BASE).ad * .5 + 1);
@@ -367,27 +409,27 @@ export function build(params) {
 
   // a panel's +x half (the left sleeve's side) then the other half mirrored, CCW: hem → side → armhole (free part,
   // then sewn part) → shoulder → neck → …
-  function panel(H, front) {
-    const arms = k => {
+  function panel(H, Hm, front) {
+    const arms = (k, A) => {
       const d = SD[k], [nS, nF] = front ? [d.nfS, d.nfF] : [d.nbS, d.nbF], t = front ? d.tf : d.tb;
-      return { nS, nF, armS: nS ? sub(H.arm, 0, t) : null, armF: nF ? sub(H.arm, nS ? t : 0, 1) : null };
+      return { nS, nF, armS: nS ? sub(A, 0, t) : null, armF: nF ? sub(A, nS ? t : 0, 1) : null };
     };
-    const L = arms('l'), R = arms('r');
+    const L = arms('l', H.arm), R = arms('r', Hm.arm);
     const nk = front ? n.neckF : n.neckB, segs = [];
     // [name, points in traversal order, n, reversed?]  (bound lists come back in the curve's natural direction)
-    segs.push(['hem_p', rev(H.hem), n.hem, true], ['side_p', rev(H.side), n.side, true]);
+    segs.push(['hem_p', rev(H.hem), nseg(H.hem), true], ['side_p', rev(H.side), n.side, true]);
     if (L.armF) segs.push(['armF_p', rev(L.armF), L.nF, true]);
     if (L.armS) segs.push(['armS_p', rev(L.armS), L.nS, true]);
     segs.push(['sh_p', rev(H.shoulder), n.sh, true], ['neck_p', rev(H.neck), nk, true]);
-    segs.push(['neck_m', mirror(H.neck), nk, false], ['sh_m', mirror(H.shoulder), n.sh, false]);
+    segs.push(['neck_m', mirror(Hm.neck), nk, false], ['sh_m', mirror(Hm.shoulder), n.sh, false]);
     if (R.armS) segs.push(['armS_m', mirror(R.armS), R.nS, false]);
     if (R.armF) segs.push(['armF_m', mirror(R.armF), R.nF, false]);
-    segs.push(['side_m', mirror(H.side), n.side, false], ['hem_m', mirror(H.hem), n.hem, false]);
+    segs.push(['side_m', mirror(Hm.side), n.side, false], ['hem_m', mirror(Hm.hem), nseg(Hm.hem), false]);
     return pieceMesh(segs);
   }
   const pieces = [
-    { name: 'front', pc: 0, ...panel(F, true) },
-    { name: 'back', pc: 1, ...panel(B, false) },
+    { name: 'front', pc: 0, ...panel(F, Fm, true) },
+    { name: 'back', pc: 1, ...panel(B, Bm, false) },
   ];
   const seams = [
     [1, ['front', 'sh_p'], ['back', 'sh_p']], [1, ['front', 'sh_m'], ['back', 'sh_m']],
@@ -413,5 +455,5 @@ export function build(params) {
   }
   const sleeve = { ch: sl.ch, bw: sl.bw, u: Math.max(uS.l, uS.r), uL: uS.l, uR: uS.r, knotsL: sl.knotsOf(uS.l), knotsR: sl.knotsOf(uS.r), ribL: sl.ribAt(uS.l), ribR: sl.ribAt(uS.r) };
   // where the hem and the shoulder sit (cm below the high shoulder point), for the site's edit points
-  return { pieces, seams, info: { P, sleeve, full, has, hemL: P.L + .5 } };
+  return { pieces, seams, info: { P, sleeve, full, has, hemL: P.L + .5, bumps } };
 }

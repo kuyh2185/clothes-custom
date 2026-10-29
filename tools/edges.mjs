@@ -1,4 +1,4 @@
-// node tools/edges.mjs [--pages 4]: the outline pulled by hand (2단계) — three places on each edge of a top (hem, side,
+// node tools/edges.mjs [--pages 4] [--panels]: the outline pulled by hand (2단계) — three places on each edge of a top (hem, side,
 // neckline, shoulder, armhole, a sleeve's end and underarm), each dragged out and in, the way a person does it with the
 // point that shows on the edge. Each must take (a bump in the pattern where it was dragged) and the cloth still pass
 // every check (harness.mjs LIMITS); then once more after undo, which must take the bumps back off.
@@ -11,8 +11,9 @@ const EDGES = [
   ['밑단', 0, 'hem', 'p', 0], ['옆선', 0, 'side', 'p', 0], ['목선', 0, 'neck', 'p', 0], ['어깨선', 0, 'shoulder', 'p', 0],
   ['진동둘레', 0, 'arm', 'p', 0], ['소매 끝', 2, 'hem', 's', 0], ['소매 옆선', 2, 'und', 's', 2], ['뒤 밑단', 1, 'hem', 'm', 3],
 ];
+// --panels: the body panels' edges only (the sleeves' come with 2-2)
 const cases = [];
-for (const body of ['f', 'm']) for (const [name, pc, curve, half, view] of EDGES) {
+for (const body of ['f', 'm']) for (const [name, pc, curve, half, view] of EDGES.filter(e => !process.argv.includes('--panels') || e[1] < 2)) {
   const steps = [{ t: 'view', a: view }, { t: 'wait', ms: 400 }];
   [.25, .5, .8].forEach((at, i) => steps.push({ t: 'edge', pc, curve, at, half, dx: i === 1 ? -14 : 18, dy: i === 2 ? 16 : -10 }, { t: 'settle' }));
   cases.push({ name: `${body} ${name}`, state: { v: 2, body, bottom: 'jeans', top: { ...TOP, sl: curve === 'und' || pc === 2 ? [45, 45] : [20, 20] } }, steps, want: pc >= 2 ? 'S' : pc ? 'B' : 'F' });
