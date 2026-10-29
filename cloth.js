@@ -12,7 +12,7 @@ const G = -9.8, SUB = 12, DT = 1 / 60, TH = 0.004;
 // between a triangle's corners and its middle at the mesh spacing, so one layer can't slip through the other); VMAX
 // keeps a frame's travel short enough for the pairs found before it to cover it
 const SC = 0.009, VMAX = 1;
-let sdf = null, ctx = null, cloth = null, pending = null, awake = 0, calm = 0, snap = null, frames = 0, still = 0;
+let sdf = null, ctx = null, cloth = null, pending = null, awake = 0, calm = 0, snap = null, frames = 0, still = 0, anchor = null, held = 0;
 
 onmessage = e => {
   try { handle(e.data); } catch (err) { postMessage({ t: 'log', s: 'ERROR ' + err.stack }); if (e.data.t === 'tick') postMessage({ t: 'frame', pos: null }); }
@@ -53,14 +53,21 @@ function tick() {
     calm = moving <= few ? calm + 1 : 0;
     // or none of it getting anywhere: a tight knit over a hollow (the small of the back) can keep a dozen particles
     // trembling on the spot, fast enough to count as moving but never more than a fraction of a millimetre away
-    if (!snap || snap.length !== cloth.p.length) { snap = cloth.p.slice(); frames = 0; still = 0; }
+    // or swinging on the spot: a flap left under the arm by a crop's hem pulled up beside its side swung a millimetre or
+    // two to and fro for ever, rocked by the cloth kept apart round it (fuzz 418) — nothing over 3 mm from where it was
+    // 1.5 s ago (as slow as a creep the rule above already lets stop)
+    if (!snap || snap.length !== cloth.p.length) { snap = cloth.p.slice(); anchor = cloth.p.slice(); frames = 0; still = 0; held = 0; }
     else if (++frames >= 15) {
-      let far = 0;
-      for (let i = 0; i < snap.length; i += 3) if ((cloth.p[i] - snap[i]) ** 2 + (cloth.p[i + 1] - snap[i + 1]) ** 2 + (cloth.p[i + 2] - snap[i + 2]) ** 2 > 2.5e-7) far++;
+      let far = 0, gone = 0;
+      for (let i = 0; i < snap.length; i += 3) {
+        if ((cloth.p[i] - snap[i]) ** 2 + (cloth.p[i + 1] - snap[i + 1]) ** 2 + (cloth.p[i + 2] - snap[i + 2]) ** 2 > 2.5e-7) far++;
+        if ((cloth.p[i] - anchor[i]) ** 2 + (cloth.p[i + 1] - anchor[i + 1]) ** 2 + (cloth.p[i + 2] - anchor[i + 2]) ** 2 > 9e-6) gone++;
+      }
       still = far <= few ? still + 1 : 0;
+      if (gone <= few) held++; else { anchor.set(cloth.p); held = 0; }
       snap.set(cloth.p); frames = 0;
     }
-    if (calm > 20 || still >= 3) { awake = 0; snap = null; }
+    if (calm > 20 || still >= 3 || held >= 6) { awake = 0; snap = null; }
   }
   const pos = cloth.p.slice(), nrm = normals(cloth);
   postMessage({ t: 'frame', pos, nrm, awake, ms: performance.now() - t0 }, [pos.buffer, nrm.buffer]);
