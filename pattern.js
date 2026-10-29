@@ -391,9 +391,10 @@ const cross = (a, b, c, d) => {
 // segs: [name, points, n, reversed] in CCW order, each starting where the last ended. Interior points sit on a lattice
 // fixed to the pattern's origin, so a changed outline leaves the inside of the piece where it was.
 function pieceMesh(segs) {
-  const pts = [], bound = {};
+  const pts = [], bound = {}, hinge = [];
   for (const [name, p, n, reversed] of segs) {
     const rs = resample(p, n), start = pts.length, idx = [];
+    if (name === 'side_p' || name === 'hem_m') hinge.push(start);   // a body panel's hem side corners
     for (let i = 0; i < n; i++) { idx.push(start + i); pts.push(rs[i]); }
     idx.push(-1);   // = first point of the next segment
     bound[name] = { idx, reversed };
@@ -447,11 +448,12 @@ function pieceMesh(segs) {
       break;
     }
   }
-  // a corner of the outline held by one triangle (a hem's side corner) is a hinge: it flipped over into a small flap
-  // folded up 3 cm, or not, by the mesh alone (fuzz 128, 394: a fitted crop 34.5 cm long sat, 34.6 folded). Its far
-  // side is flipped with the triangle across it, so the corner holds two
+  // a hem's side corner held by one triangle is a hinge: it flipped over into a small flap folded up 3 cm, or not, by
+  // the mesh alone (fuzz 128, 394: a fitted crop 34.5 cm long sat, 34.6 folded). Its far side is flipped with the
+  // triangle across it, so the corner holds two. Only there: done to every such corner (the neck's, the sleeves'),
+  // some tops never settled (fuzz 64, 112, 160)
   const cr = (a, b, c) => (pts[b][0] - pts[a][0]) * (pts[c][1] - pts[a][1]) - (pts[c][0] - pts[a][0]) * (pts[b][1] - pts[a][1]);
-  for (let v = 0; v < nb; v++) {
+  for (const v of hinge) {
     const ts = [];
     for (let t = 0; t < tris.length; t += 3) if (tris[t] === v || tris[t + 1] === v || tris[t + 2] === v) ts.push(t);
     if (ts.length !== 1) continue;

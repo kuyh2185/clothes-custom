@@ -12,7 +12,7 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { smoothChest, tuckUnder } from './mannequin.js?v=1';
-import { BASE, BASE_M, fitSide, halfOk, resample, sleeves, sleeveOk } from './pattern.js?v=30';
+import { BASE, BASE_M, fitSide, halfOk, resample, sleeves, sleeveOk } from './pattern.js?v=31';
 
 const $ = id => document.getElementById(id);
 const PI = Math.PI;
@@ -53,10 +53,13 @@ const shapeOf = e => sstep((-e - .5) / 1.5);
 // a wider body puts the underarm further out along the sloping arm: the armhole drops with it, or the underarm would
 // sit inside the arm and the cloth twist over or under it. A fitted one rises to just under the real armpit: the
 // tee's deep armhole would leave a web of cloth between the arm and the side, standing off the body under the arm.
-// So does a fitted sleeve on a looser body: in the deep armhole its narrow cap stood tall and dragged the sleeve up the arm
+// So does a fitted sleeve on a looser body: in the deep armhole its narrow cap stood tall and dragged the sleeve up the arm.
+// A loose sleeve on a fitted body rises less, the more it is wider than the body (8 cm wider on, up to 4 cm lower): just
+// under the armpit its wide flat cap stood out off the shoulder, a cap sleeve 5 cm up the arm (fuzz 162, 394). Only
+// with a sleeve: a strap top's armhole dropped by the sleeves' unused ease stood off in an ear (r18)
 const adOf = T => {
   const ad = base().ad + Math.max(0, T.sEase - 2) * .85, m = A && measure();
-  return m ? lerp(ad, Math.min(ad, m.armpit + 2.5), fitOf(Math.min(T.ease, T.sEase))) : ad;
+  return m ? lerp(ad, Math.min(ad, m.armpit + 2.5 + (Math.max(...T.sl) >= 1.2 ? clamp((T.sEase - T.ease - 8) * .4, 0, 4) : 0)), fitOf(Math.min(T.ease, T.sEase))) : ad;
 };
 // cm down the arm's bones from the shoulder joint to the elbow, and to the wrist (a sleeve's cm sit about as far down)
 const elbowOf = () => { const [J, E] = A.bones.l; return Math.hypot(E[0] - J[0], E[1] - J[1], E[2] - J[2]) * 100; };
@@ -378,7 +381,7 @@ const world = mesh => {   // rest pose = bind pose = world here (the asset's roo
 };
 
 /* ---------- the cloth ---------- */
-const worker = new Worker('cloth.js?v=48', { type: 'module' });
+const worker = new Worker('cloth.js?v=49', { type: 'module' });
 worker.onerror = e => console.error('[cloth]', e.message);
 const fabricU = { uC1: { value: new THREE.Color() }, uC2: { value: new THREE.Color() }, uPat: { value: 0 }, uScale: { value: 1 } };
 // the knit's grain as a normal map over the flat pattern (m): a jersey's columns of V-shaped loops, or for the fitted
