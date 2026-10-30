@@ -816,8 +816,8 @@ function pullRim(t) {
     let a = -1, b = -1;
     for (let j = j0; j < j1; j++) if (R.curve[j] === c) { if (a < 0) a = s[j - j0]; b = s[j - j0]; }
     if (a < 0) continue;
-    const st = lerp(a, b, t.t);
-    for (let j = j0; j < j1; j++) if (Math.abs(s[j - j0] - st) <= t.r && (!t.local || R.curve[j] === c)) out.push(j);
+    const st = lerp(a, b, t.t), en = lerp(a, b, t.t2 ?? t.t);
+    for (let j = j0; j < j1; j++) if (Math.max(st - s[j - j0], s[j - j0] - en) <= t.r && (!t.local || R.curve[j] === c)) out.push(j);
   }
   return out;
 }
@@ -965,6 +965,7 @@ function edgeTarget(i) {
     d.keys = (both ? ['F', 'B'] : [pc ? 'B' : 'F']).flatMap(k => sym ? [k + 'p', k + 'm'] : [k + (half ? 'm' : 'p')]);
     d.local = both ? 0 : 1;
   }
+  if (balance && curve === 'hem') Object.assign(d, { t: 0, t2: 1 });   // (밸런스: all of the hem or cuff alike, it stays level)
   return d;
 }
 // the bump at k of (dx, dy): the start's bumps and this one
@@ -974,7 +975,8 @@ const withBump = (d, dx, dy, k) => {
     // (as wide as it is far, about: a long pull 6 cm wide was a tongue, and pulls side by side 6 cm wide a sharp zigzag)
     const b = [d.curve, d.t, r1(dx * k), r1(dy * k), r1(Math.max(8, Math.hypot(dx, dy) * k * 1.2))];
     if (!b[2] && !b[3]) continue;   // (a click, or a pull stopped at once: nothing drawn, nothing kept)
-    if (d.local) b.push(1);
+    if (d.local || d.t2 != null) b.push(d.local);
+    if (d.t2 != null) b.push(d.t2);
     E[key] = [...(E[key] || []), b];
   }
   return T;
@@ -1027,6 +1029,16 @@ const editNear = (pc, x, y) => (cloth && cloth.userData.info.bumps || []).some(b
 // goes there), round both sleeves at that length, or near the top of a sleeve its whole armhole seam (sleeveless);
 // a click cuts there. Pull: the fixed points and the edge's point as before (2단계)
 let tool = 'cut', hov = null;
+// 자유 / 밸런스 (2026-10-30, the user: pulled here and there the hem and sides went wavy ~~~, ordinary tops are straight ---):
+// 밸런스 pulls a hem or cuff all alike and takes 통 on down to the hem; 자유 as before. Kept per browser, not in the top
+let balance = (() => { try { return localStorage.getItem(KEY + ':mode') !== 'free'; } catch (e) { return true; } })();
+const showMode = () => { const b = $('mode'); b.textContent = balance ? '밸런스' : '자유'; b.setAttribute('aria-pressed', balance); };
+showMode();
+$('mode').addEventListener('click', () => {
+  balance = !balance; showMode(); closeGrip();
+  try { localStorage.setItem(KEY + ':mode', balance ? 'bal' : 'free'); } catch (e) { /* storage blocked: this session only */ }
+  say(balance ? '밸런스 — 밑단·옆선이 곧게 움직여요' : '자유 — 만진 곳만 움직여요');
+});
 const HINT = { cut: '가위 — 옷 위에 올리면 노란 선, 누르면 거기서 잘려요(소매는 양쪽 같이). 누른 채 그으면 그은 대로 잘려요. 잘릴 곳은 반투명하게 보여요.', pull: '당기기 — 흰 점이나 옷 가장자리를 위아래(소매는 팔 방향)로 끌어 길이를 바꿔요. 올리면 움직일 곳이 금색 선, 끄는 동안 원래 자리는 점선. 펼친 모양의 밑단·소매 끝 선을 끌어도 돼요. 폭은 통 도구로.', fit: '통 — 펼친 모양에서 위아래로 끌어 범위를 고르고(옷을 누르면 그 자리), 금색 손잡이나 막대로 한 번에 줄이거나 늘려요.' };
 function setTool(t) {
   tool = t;
@@ -1292,11 +1304,12 @@ function choose(part, ya, yb, xs) {
   }
   const top = -g.c[0][1], bot = -g.c.at(-1)[1];
   ya = clamp(ya, top, bot); yb = clamp(yb, top, bot);
+  if (balance) yb = bot;   // (밸런스: on down to the hem or cuff, easing in from the underarm above: the seam stays straight)
   if (yb - ya < 1) { closeGrip(); say(part === 'body' ? '겨드랑이 아래 몸판을 골라 주세요' : '소매 아래쪽을 골라 주세요'); return; }
   const na = g.name(ya), nb = g.name(yb);
   g.name = (sym ? '' : (part === 'body' ? xs >= 0 : part === 'l') ? '왼쪽 ' : '오른쪽 ') + (part === 'body' ? (na === nb ? na : `${na}~${nb}`) + ' 둘레' : '소매 통');
   // n: how many halves' edges move, so the round changes by n × dx
-  Object.assign(g, { ya, yb, x: xs, r: 6, t: Math.round(tAt(g.c, -ya) * 1000) / 1000, t2: Math.round(tAt(g.c, -yb) * 1000) / 1000,
+  Object.assign(g, { ya, yb, x: xs, r: balance ? r1(Math.max(6, ya - top)) : 6, t: Math.round(tAt(g.c, -ya) * 1000) / 1000, t2: Math.round(tAt(g.c, -yb) * 1000) / 1000,
     n: g.curve === 'side' ? g.keys.length : 2, start: structuredClone(T), from: sleeves(params({ ...T, cuts: undefined })) });
   g.ok0 = piecesOk(T, sleeves(params({ ...T, edit: undefined, cuts: undefined })));
   g.lo = gripEnd(g, -15); g.hi = gripEnd(g, 15);

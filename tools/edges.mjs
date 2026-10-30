@@ -67,6 +67,25 @@ for (const [body, part, ya, yb, v, top] of [['f', 'body', 30, 50, 'fit', { ...TO
   ['m', 'l', 24, 40, 'fit', { ...TOP, sl: [55, 55], ease: 4, sEase: 4 }], ['f', 'l', 14, 22, 3, TOP]])
   cases.push({ name: `${body} 통 ${part === 'body' ? '몸판' : '소매'} ${ya}~${yb} ${v}`, state: { v: 2, body, bottom: 'jeans', top },
     steps: [{ t: 'view', a: 0 }, { t: 'wait', ms: 400 }, { t: 'band', part, ya, yb, v }, { t: 'settle' }], check: bandOk(part, ya, yb) });
+// 밸런스 (2026-10-30): a hem pulled at one spot moves all of it alike (it keeps its shape, only lower), and 통 runs on
+// down to the hem (the seam moved there as much as in the band)
+cases.push({ name: 'f 밸런스 밑단', mode: 'bal', state: { v: 2, body: 'f', bottom: 'jeans', top: TOP },
+  steps: [{ t: 'view', a: 0 }, { t: 'wait', ms: 400 }, { t: 'edge', pc: 0, curve: 'hem', at: .8, half: 'p', dx: 0, dy: 40 }, { t: 'settle' }],
+  check: async () => {
+    const S = window.__studio, { halves } = await import('./pattern.js?v=34'), h = halves(S.params()), y = c => c.map(p => p[1]);
+    // (the hem's points then the drop of each from the uncut hem's at the same x: all alike)
+    const xs = [2, 8, 14], at = (c, x) => { for (let i = 1; i < c.length; i++) if ((c[i][0] - x) * (c[i - 1][0] - x) <= 0) return c[i][1]; return NaN; };
+    const d = xs.map(x => at(h.F.hem, x) - at(h.Fp.hem, x));
+    return [...(Math.max(...d) - Math.min(...d) < .3 && d[0] > 1 ? [] : ['밑단이 고르게 안 내려감 ' + d.map(v => v.toFixed(2)).join(' ')]), ...(S.editOk() ? [] : ['조각이 깨짐'])];
+  } });
+cases.push({ name: 'm 밸런스 통 허리', mode: 'bal', state: { v: 2, body: 'm', bottom: 'jeans', top: TOP },
+  steps: [{ t: 'view', a: 0 }, { t: 'wait', ms: 400 }, { t: 'band', part: 'body', ya: 34, yb: 40, v: -3 }, { t: 'settle' }],
+  check: async () => {
+    const S = window.__studio, b = ((S.state.top.edit || {}).Fp || []).at(-1), { sleeves } = await import('./pattern.js?v=34'), p = S.params();
+    if (!b || b[6] !== 1) return ['밑단까지 안 감 ' + JSON.stringify(b)];
+    const A = sleeves(p).h.Fp.side, B = sleeves({ ...p, edit: undefined }).h.Fp.side, dx = A.at(-1)[0] - B.at(-1)[0];
+    return [...(Math.abs(dx - b[2]) < .25 ? [] : [`밑단 옆이 ${dx.toFixed(2)} (바람 ${b[2]})`]), ...(S.editOk() ? [] : ['조각이 깨짐'])];
+  } });
 // the scissors (가위, 1단계 of the 2026-10-30 plan): a click on the ring cuts the hem or both sleeves there and nothing
 // else; above the underarm nothing; on a sleeve's cap the sleeves come off; a flared hem cut higher is narrower; undo
 // puts it back

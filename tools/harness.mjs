@@ -160,7 +160,8 @@ export async function run(h, page, cas) {
   page.errors.length = 0;
   try {
     await page.goto(h.url);
-    await page.evaluate(([k, s]) => localStorage.setItem(k, JSON.stringify(s)), [KEY, cas.state]);
+    // (자유 unless the case says 밸런스: the cases before 2026-10-30 were all pulled free)
+    await page.evaluate(([k, s, m]) => { localStorage.setItem(k, JSON.stringify(s)); localStorage.setItem(k + ':mode', m); }, [KEY, cas.state, cas.mode || 'free']);
     await page.goto(h.url);
     await page.waitForFunction(() => window.__studio && window.__studio.cloth && window.__studio.A, null, { timeout: 60000 });
     await page.addScriptTag({ content: h.metrics });
