@@ -284,7 +284,143 @@ export function halves(params) {
   const uS = { l: Math.min(P.sleeveL ?? P.sleeve, P.arm + P.over), r: Math.min(P.sleeveR ?? P.sleeve, P.arm + P.over) };
   if (uS.l >= 1.2 || uS.r >= 1.2) P.strap = null;   // a strap only once both sleeves are gone
   const F = bodyHalf(P, true), B = bodyHalf(P, false), E = P.edit || {};
-  return { P, uS, F, B, Fp: edited(F, E.Fp, solo(E.Fm, E.Fp)), Fm: edited(F, E.Fm, solo(E.Fp, E.Fm)), Bp: edited(B, E.Bp, solo(E.Bm, E.Bp)), Bm: edited(B, E.Bm, solo(E.Bp, E.Bm)) };
+  const h = { P, uS, F, B, Fp: edited(F, E.Fp, solo(E.Fm, E.Fp)), Fm: edited(F, E.Fm, solo(E.Fp, E.Fm)), Bp: edited(B, E.Bp, solo(E.Bm, E.Bp)), Bm: edited(B, E.Bm, solo(E.Bp, E.Bm)) };
+  if (P.cuts) {   // (an armhole cut away takes that side's sleeve off: nothing to sew it to)
+    const c = applyCuts(h, P.cuts);
+    Object.assign(h, c.h);
+    for (const k of ['l', 'r']) if (c.arm[k]) uS[k] = 0;
+  }
+  return h;
+}
+
+/* ---------- cut by hand (가위로 그은 선) ---------- */
+// P.cuts: [{ k: 'Fp' | 'Fm' | 'Bp' | 'Bm', pts }] lines drawn with the scissors over a body half, in that half's own +x
+// frame (cm). Each is run on straight past both ends until it meets the half's outline; of the two parts it makes, the
+// one holding the shoulder seam's middle (the top hangs from it) is kept and the line is its new edge: the hem where it
+// took off hem or side, the armhole where it took off armhole (that side's sleeve comes off), else the neckline.
+// → { H, gone: the outline of what is cut off, name } or { err } (a line that would leave no top), null: nothing crossed
+const CH = ['neck', 'shoulder', 'arm', 'side', 'hem'];
+const NAME = { hem: '밑단', neck: '목선', arm: '진동둘레' };
+export function cutHalf(H, line) {
+  if (!line || line.length < 2) return null;
+  // the outline closed by the middle line, each point named by the curve of the stretch that ends at it
+  const lp = [], nm = [];
+  for (const k of CH) H[k].forEach((p, i) => { if (i || !lp.length) { lp.push(p); nm.push(k); } });
+  nm[0] = 'mid';
+  const n = lp.length, segName = i => nm[(i + 1) % n];
+  // each end run on to the outline: the way the line was going over its last 2 cm, or straight across to the edge where
+  // that is near (within 4 cm) and the way it was going isn't (a line ending beside the side seam, going down along it,
+  // ran on down to the hem and took the whole side off)
+  const away = (i, s) => { let j = i + s; while (j > 0 && j < line.length - 1 && dist(line[i], line[j]) < 2) j += s; return line[j]; };
+  const ext = (a, b) => {
+    const l = dist(a, b) || 1, far = [a[0] + (a[0] - b[0]) / l * 300, a[1] + (a[1] - b[1]) / l * 300];
+    if (!inside(a, lp)) return far;
+    let q = null, d = 4, de = 1e9;
+    for (let i = 0; i < n; i++) {
+      const c = closest(a, lp[i], lp[(i + 1) % n]), dc = dist(a, c), h = meet(a, far, lp[i], lp[(i + 1) % n]);
+      if (dc < d) { d = dc; q = c; }
+      if (h) de = Math.min(de, h[0] * 300);
+    }
+    if (!q || d < .05 || de <= d * 1.5) return far;
+    const k = (d + .5) / d;
+    return [a[0] + (q[0] - a[0]) * k, a[1] + (q[1] - a[1]) * k];
+  };
+  const E = [ext(line[0], away(0, 1)), ...line, ext(line.at(-1), away(line.length - 1, -1))];
+  const hits = [];
+  for (let j = 1; j < E.length; j++) for (let i = 0; i < n; i++) {
+    const a = lp[i], b = lp[(i + 1) % n], h = meet(E[j - 1], E[j], a, b);
+    if (h) hits.push({ t: j - 1 + h[0], i, u: h[1], p: [lerp(a[0], b[0], h[1]), lerp(a[1], b[1], h[1])] });
+  }
+  hits.sort((a, b) => a.t - b.t);
+  // where the line comes onto the piece (or, starting on it, where its run back meets the edge) and the next edge after
+  const X = inside(line[0], lp) ? hits.filter(h => h.t <= 1).at(-1) : hits.find(h => h.t >= 1), Y = X && hits.find(h => h.t > X.t + 1e-6);
+  if (!Y) return null;
+  const C = [X.p, ...E.filter((_, k) => k > X.t && k < Y.t), Y.p];
+  // the outline forward from hit a to hit b: its points and the names of the stretches between them
+  const arc = (a, b) => {
+    const pts = [a.p], names = [];
+    if (a.i !== b.i || a.u > b.u) for (let i = a.i; ;) { const j = (i + 1) % n; pts.push(lp[j]); names.push(segName(i)); i = j; if (i === b.i) break; }
+    pts.push(b.p); names.push(segName(b.i));
+    return { pts, names };
+  };
+  const XY = arc(X, Y), YX = arc(Y, X), back = C.slice(1, -1).reverse(), fwd = C.slice(1, -1);
+  // the part kept by that side of the line, or why it can't be. Only one part can be a whole top (neckline, shoulder,
+  // armhole, side, hem and the middle line in order): that one is kept, else the reason for the one holding the
+  // shoulder's middle
+  const make = keepXY => {
+    const K = keepXY ? XY : YX, G = keepXY ? YX : XY, close = keepXY ? back : fwd;
+    const R = new Set(G.names), name = R.has('arm') ? 'arm' : R.has('hem') || R.has('side') ? 'hem' : 'neck';
+    // the new outline, from where the neckline starts on the middle line
+    const L = [...K.pts, ...close], lab = [name, ...K.names, ...close.map(() => name)], m = L.length;
+    const s0 = lab.findIndex((k, i) => k === 'neck' && lab[(i + m - 1) % m] !== 'neck');
+    if (s0 < 0) return { err: '어깨가 잘리면 옷이 흘러내려요' };
+    const P2 = [], N2 = [];
+    for (let i = 0; i < m; i++) { P2.push(L[(s0 + i) % m]); N2.push(lab[(s0 + i) % m]); }
+    const order = N2.filter((k, i) => !i || k !== N2[i - 1]);
+    if (order.join() !== [...CH, 'mid'].join()) return { err: !order.includes('mid') ? '가운데가 다 잘려 나가요' : !order.includes('shoulder') ? '어깨가 잘리면 옷이 흘러내려요' : !order.includes('side') ? '옆선이 다 잘려요' : '가장자리에서 가장자리로 그어 주세요' };
+    const out = {};
+    for (const k of CH) { const a = N2.indexOf(k), b = N2.lastIndexOf(k); out[k] = (a ? P2.slice(a - 1, b + 1) : [P2[m - 1], ...P2.slice(0, b + 1)]).map(p => p.slice()); }
+    out.neck[0][0] = 0; out.hem.at(-1)[0] = 0;   // (the two halves meet on the middle line)
+    for (let i = 1; i < m; i++) for (let j = i + 2; j < m; j++) if (cross(P2[i - 1], P2[i], P2[j - 1], P2[j])) return { err: '선이 꼬였어요' };
+    if (plen(out.shoulder) < 1.5) return { err: '어깨가 잘리면 옷이 흘러내려요' };
+    if (plen(out.side) < 3) return { err: '옆선이 다 잘려요' };
+    if (area(P2) < .25 * area(lp)) return { err: '너무 많이 잘려요' };
+    return { H: { ...H, ...out }, gone: [...G.pts, ...(keepXY ? fwd : back)], name, label: NAME[name] };
+  };
+  const sm = at(H.shoulder, .5), first = inside([sm[0], sm[1] - .3], [...XY.pts, ...back]), a = make(first);
+  if (a.H) return a;
+  const b = make(!first);
+  return b.H ? b : a;
+}
+const closest = (p, a, b) => {
+  const ab = [b[0] - a[0], b[1] - a[1]], t = clamp(((p[0] - a[0]) * ab[0] + (p[1] - a[1]) * ab[1]) / Math.max(1e-9, ab[0] * ab[0] + ab[1] * ab[1]), 0, 1);
+  return [a[0] + ab[0] * t, a[1] + ab[1] * t];
+};
+const area = pts =>Math.abs(pts.reduce((s, p, i) => { const q = pts[(i + 1) % pts.length]; return s + p[0] * q[1] - q[0] * p[1]; }, 0)) / 2;
+// where segment p→q meets a→b: [along p→q, along a→b] (each 0 … <1), or null
+const meet = (p, q, a, b) => {
+  const rx = q[0] - p[0], ry = q[1] - p[1], sx = b[0] - a[0], sy = b[1] - a[1], d = rx * sy - ry * sx;
+  if (Math.abs(d) < 1e-12) return null;
+  const t = ((a[0] - p[0]) * sy - (a[1] - p[1]) * sx) / d, u = ((a[0] - p[0]) * ry - (a[1] - p[1]) * rx) / d;
+  return t >= 0 && t < 1 && u >= 0 && u < 1 ? [t, u] : null;
+};
+// a curve split where g(point) passes v
+function split(c, g, v) {
+  const s = Math.sign(g(c[0]) - v);
+  for (let i = 1; i < c.length; i++) if (Math.sign(g(c[i]) - v) !== s) {
+    const a = g(c[i - 1]) - v, b = g(c[i]) - v, k = a / (a - b || 1e-9), q = [lerp(c[i - 1][0], c[i][0], k), lerp(c[i - 1][1], c[i][1], k)];
+    return [[...c.slice(0, i), q], [q, ...c.slice(i)]];
+  }
+  return [c, [c.at(-1)]];
+}
+// front and back halves sewn only as far as both still reach: what one has past the other is left open (a slit), joined
+// to the free edge beside it — a side's to the hem below or the armhole above, a shoulder's to the neckline or the
+// armhole. null: too little left to sew (the side under 3 cm, the shoulder under 1.5)
+function match(F, B) {
+  const top = Math.min(F.side[0][1], B.side[0][1]), bot = Math.max(F.side.at(-1)[1], B.side.at(-1)[1]);
+  const inn = Math.max(F.shoulder[0][0], B.shoulder[0][0]), out = Math.min(F.shoulder.at(-1)[0], B.shoulder.at(-1)[0]);
+  if (top - bot < 3 || out - inn < 1.5) return null;
+  return [F, B].map(H => {
+    let { neck, shoulder, arm, side, hem } = H;
+    if (side[0][1] > top + .01) { const [a, b] = split(side, p => p[1], top); arm = [...arm, ...a.slice(1)]; side = b; }
+    if (side.at(-1)[1] < bot - .01) { const [a, b] = split(side, p => p[1], bot); side = a; hem = [...b, ...hem.slice(1)]; }
+    if (shoulder[0][0] < inn - .01) { const [a, b] = split(shoulder, p => p[0], inn); neck = [...neck, ...a.slice(1)]; shoulder = b; }
+    if (shoulder.at(-1)[0] > out + .01) { const [a, b] = split(shoulder, p => p[0], out); shoulder = a; arm = [...b, ...arm.slice(1)]; }
+    return { ...H, neck, shoulder, arm, side, hem };
+  });
+}
+// the halves h with cuts made in order → { h, res: cutHalf's per cut, arm: { l, r } an armhole cut away on that side }.
+// A side whose front and back can't be sewn any more keeps its halves uncut
+export function applyCuts(h, cuts) {
+  const out = { ...h }, res = cuts.map(c => { const r = cutHalf(out[c.k], c.pts); if (r && r.H) out[c.k] = r.H; return r; }), arm = { l: false, r: false };
+  for (const [f, b, s] of [['Fp', 'Bp', 'l'], ['Fm', 'Bm', 'r']]) {
+    if (out[f] === h[f] && out[b] === h[b]) continue;
+    const mine = i => cuts[i].k === f || cuts[i].k === b, m = match(out[f], out[b]);
+    if (!m) { out[f] = h[f]; out[b] = h[b]; res.forEach((r, i) => { if (r && r.H && mine(i)) res[i] = { err: '옆선이 거의 다 잘려요' }; }); continue; }
+    [out[f], out[b]] = m;
+    arm[s] = res.some((r, i) => r && r.name === 'arm' && mine(i));
+  }
+  return { h: out, res, arm };
 }
 // a sleeve's +x half as cut (underarm → hem → the middle line), its bumps on; null: a cap cut short, no underarm
 function sleeveHalf(sl, u, bumps) {
@@ -476,7 +612,7 @@ function pieceMesh(segs) {
   }
   return { pts, tris, bound, nb };
 }
-function inside(p, poly) {
+export function inside(p, poly) {
   let c = false;
   for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
     const a = poly[i], b = poly[j];

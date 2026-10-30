@@ -15,7 +15,7 @@ import { LineSegments2 } from 'three/addons/lines/LineSegments2.js';
 import { LineSegmentsGeometry } from 'three/addons/lines/LineSegmentsGeometry.js';
 import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import { smoothChest, tuckUnder } from './mannequin.js?v=1';
-import { BASE, BASE_M, fitSide, halfOk, resample, sleeves, sleeveOk } from './pattern.js?v=32';
+import { BASE, BASE_M, applyCuts, fitSide, halfOk, halves, inside, resample, sleeves, sleeveOk } from './pattern.js?v=33';
 
 const $ = id => document.getElementById(id);
 const PI = Math.PI;
@@ -115,6 +115,7 @@ function params(T = state.top) {
     bw: r1(b.bw + (es > 0 ? es * .4 : es * .3)), cuff: r1(b.cuff + (es > 0 ? es * .3 : es * .2)),
     stretch: Math.round(clamp(t / 2, 0, 1) * 100) / 100,
     edit: T.edit && Object.values(T.edit).some(l => l.length) ? T.edit : undefined,
+    cuts: T.cuts && T.cuts.length ? T.cuts : undefined,
   };
 }
 // the hem taken in (the hem's corners dragged in, or the bar): down to 1 cm over the body's round at the hem, no further.
@@ -158,7 +159,7 @@ function fix(T) {
 // again (else they rode on the new shape unchecked: a narrower body under an old side bump crossed itself)
 function fitEdit(T) {
   if (!A || !T.edit) return;
-  const from = sleeves(params({ ...T, edit: undefined }));
+  const from = sleeves(params({ ...T, edit: undefined, cuts: undefined }));
   if (piecesOk(T, from)) return;
   const E0 = structuredClone(T.edit), scale = k => { for (const key in E0) T.edit[key] = E0[key].map(b => [b[0], b[1], r1(b[2] * k), r1(b[3] * k), ...b.slice(4)]); };
   let lo = 0, hi = 1;
@@ -167,9 +168,9 @@ function fitEdit(T) {
   for (const key in T.edit) T.edit[key] = T.edit[key].filter(b => b[2] || b[3]);   // (shrunk to nothing: gone)
 }
 // the pieces still whole (pattern.js halfOk, sleeveOk), each against `from`'s (a side or an underarm comes in no further
-// than the body or arm allows, or than it already was)
+// than the body or arm allows, or than it already was). On the outline before any scissors cut: a cut is its own check
 function piecesOk(T, from) {
-  const m = measure(), s = sleeves(params(T)), h = s.h, h0 = from.h;
+  const m = measure(), s = sleeves(params({ ...T, cuts: undefined })), h = s.h, h0 = from.h;
   return ['Fp', 'Fm', 'Bp', 'Bm'].every(k => halfOk(h[k], h0[k], m.q, h[k[0]]))
     && ['l', 'r'].every(k => !s[k] || sleeveOk(s[k].H, (from[k] || s[k]).H, s.sl[k].capb, m.arm, h.P.arm + h.P.over, s[k].H0));
 }
@@ -384,7 +385,7 @@ const world = mesh => {   // rest pose = bind pose = world here (the asset's roo
 };
 
 /* ---------- the cloth ---------- */
-const worker = new Worker('cloth.js?v=54', { type: 'module' });
+const worker = new Worker('cloth.js?v=55', { type: 'module' });
 worker.onerror = e => console.error('[cloth]', e.message);
 const fabricU = { uC1: { value: new THREE.Color() }, uC2: { value: new THREE.Color() }, uPat: { value: 0 }, uScale: { value: 1 } };
 // the knit's grain as a normal map over the flat pattern (m): a jersey's columns of V-shaped loops, or for the fitted
@@ -416,17 +417,21 @@ const jersey = knitMap(false), rib2 = knitMap(true);
 const fabric = new THREE.MeshPhysicalMaterial({ roughness: .86, sheen: .6, sheenRoughness: .8, side: THREE.DoubleSide, normalMap: jersey, normalScale: new THREE.Vector2(.45, .45) });
 fabric.onBeforeCompile = sh => {
   Object.assign(sh.uniforms, fabricU);
-  sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nattribute vec2 pat; varying vec2 vPat;')
-    .replace('#include <begin_vertex>', '#include <begin_vertex>\nvPat = pat;');
+  sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nattribute vec2 pat; attribute float cut; varying vec2 vPat; varying float vCut;')
+    .replace('#include <begin_vertex>', '#include <begin_vertex>\nvPat = pat; vCut = cut;');
   // colour and print follow the fabric's grain (the flat pattern), so stripes run round the body and across a sleeve
-  sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nvarying vec2 vPat; uniform vec3 uC1; uniform vec3 uC2; uniform float uPat; uniform float uScale;')
+  sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nvarying vec2 vPat; varying float vCut; uniform vec3 uC1; uniform vec3 uC2; uniform float uPat; uniform float uScale;')
     .replace('#include <map_fragment>', `#include <map_fragment>
 vec3 base = uC1;
 vec2 q = vPat / uScale;
 if (uPat > .5 && uPat < 1.5) { if (fract(q.y / .05) < .4) base = uC2; }
 else if (uPat > 1.5 && uPat < 2.5) { float b = step(fract(q.y / .06), .42) + step(fract(q.x / .06), .42); base = mix(uC1, uC2, min(1.0, b) * .55 + step(1.5, b) * .3); }
 else if (uPat > 2.5) { vec2 g = q / .028; vec2 c = fract(g + vec2(.5 * mod(floor(g.y), 2.0), 0.0)) - .5; if (length(c) < .27) base = uC2; }
-diffuseColor.rgb = gl_FrontFacing ? base : base * .72;   // the inside of the garment a shade darker`);
+diffuseColor.rgb = gl_FrontFacing ? base : base * .72;   // the inside of the garment a shade darker
+// what the scissors would cut off: half see-through, in the scissors' gold stripes (see-through alone, a front cut off
+// over the back's own white inside hardly showed) (setFade)
+float stripe = step(.5, fract((gl_FragCoord.x + gl_FragCoord.y) / 18.0));
+diffuseColor.rgb = mix(diffuseColor.rgb, vec3(.95, .66, .22), vCut * (.3 + .5 * stripe)); diffuseColor.a *= 1.0 - .5 * vCut;`);
 };
 let cloth = null, next = null, busy = false, awake = 0, sent = '', laid = '', simMs = 0;
 // fresh: the cloth laid out anew for these values (once per shape: laid). While a point or a bar is dragged it is carried
@@ -454,6 +459,7 @@ worker.onmessage = e => {
     g.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(n * 3), 3));
     g.setAttribute('pat', new THREE.BufferAttribute(t.uv, 2));
     g.setAttribute('uv', g.attributes.pat);   // the knit's normal map follows the pattern too
+    g.setAttribute('cut', new THREE.BufferAttribute(new Float32Array(n), 1));
     g.setIndex(new THREE.BufferAttribute(t.index, 1));
     if (!cloth) { cloth = new THREE.Mesh(g, fabric); cloth.castShadow = cloth.receiveShadow = true; cloth.frustumCulled = false; scene.add(cloth); }
     else { cloth.geometry.dispose(); cloth.geometry = g; }
@@ -856,8 +862,8 @@ const withBump = (d, dx, dy, k) => {
 };
 // still whole pieces (piecesOk) against the start; a start that already fails isn't held
 function edgeOk(T, d) {
-  const s0 = d.s0 || (d.s0 = sleeves(params(d.start)));
-  if (d.ok0 == null) d.ok0 = piecesOk(d.start, sleeves(params({ ...d.start, edit: undefined })));
+  const s0 = d.s0 || (d.s0 = sleeves(params({ ...d.start, cuts: undefined })));
+  if (d.ok0 == null) d.ok0 = piecesOk(d.start, sleeves(params({ ...d.start, edit: undefined, cuts: undefined })));
   return !d.ok0 || piecesOk(T, s0);
 }
 function edgeMove(e, d) {
@@ -898,7 +904,7 @@ const editNear = (pc, x, y) => (cloth && cloth.userData.info.bumps || []).some(b
 // goes there), round both sleeves at that length, or near the top of a sleeve its whole armhole seam (sleeveless);
 // a click cuts there. Pull: the fixed points and the edge's point as before (2단계)
 let tool = 'cut', hov = null;
-const HINT = { cut: '가위 — 옷 위에 올리면 노란 선이 나와요. 누르면 거기서 잘려요(소매는 양쪽 같이, 어깨 솔기 근처면 민소매).', pull: '당기기 — 흰 점이나 옷 가장자리를 끌어 늘리거나 모양을 바꿔요.' };
+const HINT = { cut: '가위 — 옷 위에 올리면 노란 선, 누르면 거기서 잘려요(소매는 양쪽 같이). 누른 채 그으면 그은 대로 잘려요. 잘릴 곳은 반투명하게 보여요.', pull: '당기기 — 흰 점이나 옷 가장자리를 끌어 늘리거나 모양을 바꿔요.' };
 function setTool(t) {
   tool = t;
   document.querySelectorAll('#tools [data-t]').forEach(b => b.setAttribute('aria-pressed', b.dataset.t === t));
@@ -910,16 +916,35 @@ const ringMat = new LineMaterial({ color: 0xf2c46b, linewidth: 3 });
 const cutLine = new LineSegments2(new LineSegmentsGeometry(), ringMat);
 cutLine.visible = false; cutLine.frustumCulled = false; cutLine.renderOrder = 2;
 scene.add(cutLine);
-function hideRing() { if (hov) { hov = null; cutLine.visible = false; needs = true; tip.classList.remove('show'); } }
-const ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
-// what the scissors would cut at the pointer, or null off the cloth
-function ringAt(e) {
+function hideRing() { if (hov) { hov = null; cutLine.visible = false; needs = true; tip.classList.remove('show'); setFade(null); } }
+const ray = new THREE.Raycaster(), ndc = new THREE.Vector2(), SHIFT = [0, 70, 140, 190];
+// the cloth under the pointer: its piece, the pattern there (cm: x across, y up from the high shoulder point / down the
+// sleeve from the cap's top, negative) and the point a little toward you; null off the cloth
+function hitAt(e) {
   if (!cloth || next || !cloth.userData.pcv) return null;
   const r = canvas.getBoundingClientRect();
   ray.setFromCamera(ndc.set((e.clientX - r.left) / r.width * 2 - 1, -(e.clientY - r.top) / r.height * 2 + 1), camera);
   const h = ray.intersectObject(cloth)[0];
   if (!h) return null;
-  const pc = cloth.userData.pcv[h.face.a], v0 = h.uv.y, y = -v0 * 100;   // (uv = the pattern: y cm below the high shoulder point / down the sleeve)
+  const pc = cloth.userData.pcv[h.face.a];
+  return { pc, x: h.uv.x * 100 - SHIFT[pc], y: h.uv.y * 100, p: h.point.clone().addScaledVector(ray.ray.direction, -.004) };
+}
+// the cloth's vertices that fn(pc, x, y) says would be cut off shown half see-through (null: none)
+function setFade(fn) {
+  const a = cloth && cloth.geometry.attributes.cut;
+  if (!a) return;
+  const U = cloth.geometry.attributes.pat.array, pcv = cloth.userData.pcv;
+  let any = false;
+  for (let v = 0; v < a.count; v++) { const f = fn && fn(pcv[v], U[v * 2] * 100 - SHIFT[pcv[v]], U[v * 2 + 1] * 100) ? 1 : 0; a.array[v] = f; any ||= !!f; }
+  a.needsUpdate = true;
+  if (fabric.transparent !== any) { fabric.transparent = any; fabric.needsUpdate = true; }
+  needs = true;
+}
+// what the scissors would cut at the pointer, or null off the cloth
+function ringAt(e) {
+  const h = hitAt(e);
+  if (!h) return null;
+  const pc = h.pc, v0 = h.y / 100, y = -h.y;
   if (pc < 2) { const L = r1(y - .5); return { kind: 'body', pcs: [0, 1], v0, L, ok: L >= LIM().L[0] }; }
   // (on the cap, above the underarm, a ring would only run part way round: the whole sleeve comes off)
   const S = cloth.userData.info.sleeve;
@@ -964,25 +989,108 @@ function capEdges() {
   return ud.cap = out;
 }
 const ringName = h => h.kind === 'off' ? '소매 떼기 → 민소매' : h.kind === 'sleeve' ? `소매 ${sleeveName(h.u)} (양쪽)` : h.ok ? `기장 ${lenName(h.L)}` : '여기보다 위로는 못 잘라요 (겨드랑이)';
+// what the ring would cut off: below it on those pieces, or the whole sleeves
+const ringGone = h => h.kind === 'off' ? pc => pc >= 2 : (pc, x, y) => h.pcs.includes(pc) && y < h.v0 * 100;
 addEventListener('pointermove', e => {
-  if (tool !== 'cut' || drag) return;
+  if (tool !== 'cut' || drag || stroke) return;
   if (e.buttons || e.target !== canvas) { hideRing(); return; }
   hov = ringAt(e);
   if (!hov) { hideRing(); return; }
   const r = layer.getBoundingClientRect();
   showTip(ringName(hov), e.clientX - r.left, e.clientY - r.top);
-  drawRing();
+  drawRing(); setFade(hov.ok && ringGone(hov));
 });
-// a click on the ring cuts (pressed and let go in place: a drag from the cloth still turns the view)
+// on the cloth the scissors cut: a click on the ring cuts there, pressed and drawn the line cuts where it was drawn
+// (the view turns from beside the cloth)
+let stroke = null;
 wrap.addEventListener('pointerdown', e => {
   if (tool !== 'cut' || !hov || e.button) return;
-  const h = hov, x0 = e.clientX, y0 = e.clientY, up = ev => {
-    removeEventListener('pointerup', up);
-    if (Math.hypot(ev.clientX - x0, ev.clientY - y0) > 6) return;
-    if (h.ok) cutAt(h); else say(ringName(h));
+  controls.enabled = false;
+  const h = hov, id = e.pointerId, first = hitAt(e);
+  stroke = { x0: e.clientX, y0: e.clientY, drawn: false, s: first ? [first] : [] };
+  const move = ev => { if (ev.pointerId === id) strokeMove(ev); }, up = ev => {
+    if (ev.pointerId !== id) return;
+    removeEventListener('pointermove', move); removeEventListener('pointerup', up); removeEventListener('pointercancel', up);
+    controls.enabled = true;
+    const s = stroke; stroke = null;
+    if (s.drawn) strokeEnd(s, ev.type === 'pointerup');
+    else if (h.ok) cutAt(h); else say(ringName(h));
   };
-  addEventListener('pointerup', up);
+  addEventListener('pointermove', move); addEventListener('pointerup', up); addEventListener('pointercancel', up);
 }, true);
+const strokeMat = new LineMaterial({ color: 0xf2c46b, linewidth: 3 });
+const strokeLine = new LineSegments2(new LineSegmentsGeometry(), strokeMat);
+strokeLine.visible = false; strokeLine.frustumCulled = false; strokeLine.renderOrder = 2;
+scene.add(strokeLine);
+let planT = 0;
+function strokeMove(e) {
+  const s = stroke;
+  if (!s.drawn) {
+    if (Math.hypot(e.clientX - s.x0, e.clientY - s.y0) < 6) return;
+    s.drawn = true; hideRing();
+    s.T = structuredClone(state.top); s.h = halves(params({ ...s.T, cuts: undefined }));
+  }
+  const q = hitAt(e);
+  if (q) s.s.push(q);
+  // the line as drawn on the cloth (a jump across the outline, from front to back, is no line)
+  const out = [];
+  for (let i = 1; i < s.s.length; i++) if (s.s[i].p.distanceTo(s.s[i - 1].p) < .05) out.push(...s.s[i - 1].p.toArray(), ...s.s[i].p.toArray());
+  strokeLine.geometry.dispose(); strokeLine.geometry = new LineSegmentsGeometry().setPositions(out);
+  const r = canvas.getBoundingClientRect(); strokeMat.resolution.set(r.width, r.height);
+  strokeLine.visible = out.length > 0; needs = true;
+  const lr = layer.getBoundingClientRect(), tx = e.clientX - lr.left, ty = e.clientY - lr.top;
+  if (performance.now() - planT < 50) return;   // (the plan and the fade: some 20 times a second)
+  planT = performance.now();
+  const pl = s.pl = plan(s);
+  strokeMat.color.set(pl.any ? 0xf2c46b : 0xe0533a);
+  setFade(pl.any && pl.gone);
+  showTip(pl.any ? pl.say + ' — 손을 떼면 잘려요' : pl.err || '옷을 가로질러 그어 보세요', tx, ty);
+}
+// the drawn line → what it cuts: each stretch of it over one body half a cut of that half (crossing the middle line,
+// both halves run on to it), over a sleeve's cap that sleeve off, lower down that sleeve shortened to where it was drawn
+function plan(s) {
+  const cuts = [], sv = { 2: [], 3: [] }, S = s.s;
+  let cur = null;
+  for (let i = 0; i < S.length; i++) {
+    const q = S[i], pr = S[i - 1];
+    if (q.pc >= 2) { sv[q.pc].push(-q.y); cur = null; continue; }
+    const k = (q.pc ? 'B' : 'F') + (q.x >= 0 ? 'p' : 'm');
+    if (cur && cur.k !== k && pr && pr.pc === q.pc) {
+      const y = r1(lerp(pr.y, q.y, pr.x / (pr.x - q.x)));
+      cur.pts.push([-.05, y]); cur = { k, pts: [[-.05, y]] }; cuts.push(cur);
+    } else if (!cur || cur.k !== k) { cur = { k, pts: [] }; cuts.push(cur); }
+    const p = [r1(Math.abs(q.x)), r1(q.y)], l = cur.pts.at(-1);
+    if (!l || Math.hypot(p[0] - l[0], p[1] - l[1]) >= .4) cur.pts.push(p);
+  }
+  const mine = cuts.filter(c => c.pts.length > 1), old = s.T.cuts || [], c = applyCuts(s.h, [...old, ...mine]), res = c.res.slice(old.length);
+  const ok = mine.filter((_, i) => res[i] && res[i].H), gone = res.map((r, i) => r && r.H && [mine[i].k, r.gone]).filter(Boolean);
+  const sl = {}, I = cloth.userData.info.sleeve;
+  for (const pc of [2, 3]) if (sv[pc].length) {
+    const u = sv[pc].sort((a, b) => a - b)[sv[pc].length >> 1];
+    sl[pc - 2] = u < (pc === 2 ? I.chL : I.chR) ? 0 : r1(u);
+  }
+  for (const [k, i] of [['l', 0], ['r', 1]]) if (c.arm[k] && !(i in sl)) sl[i] = 0;
+  const said = [...new Set(res.filter(r => r && r.H).map(r => r.label + ' 자르기'))];
+  for (const i in sl) said.push(`${i === '0' ? '왼쪽' : '오른쪽'} 소매 ${sl[i] ? sleeveName(sl[i]) : '떼기'}`);
+  return {
+    cuts: ok, sl, any: !!(ok.length || Object.keys(sl).length), say: said.join(' · '), err: (res.find(r => r && r.err) || {}).err,
+    // (the half's own frame: the −x halves mirrored)
+    gone: (pc, x, y) => pc < 2 ? gone.some(([k, poly]) => (k[0] === 'B') === (pc === 1) && (k[1] === 'p') === (x >= 0) && inside([Math.abs(x), y], poly))
+      : (pc - 2) in sl && -y > sl[pc - 2],
+  };
+}
+// the line let go: cut what it showed, every other number as it was (a sleeve only ever shorter; a strap stays one)
+function strokeEnd(s, done) {
+  strokeLine.visible = false; setFade(null); tip.classList.remove('show'); needs = true;
+  if (!done) return;
+  const pl = plan(s);
+  if (!pl.any) { say(pl.err || '옷을 가로질러 그어 주세요'); return; }
+  const T = s.T, E = T.edit || {};
+  if (pl.cuts.length) T.cuts = [...(T.cuts || []), ...pl.cuts];
+  for (const i in pl.sl) { T.sl[i] = Math.min(T.sl[i], pl.sl[i]); if (E['S' + 'lr'[i]]) E['S' + 'lr'[i]] = E['S' + 'lr'[i]].filter(b => b[0] !== 'hem'); }
+  fix(T);
+  state.top = T; apply(); commit(); say('잘랐어요 — ' + pl.say);
+}
 // cut there: the hem (or both sleeves) where the ring was, every other number as it was. The hem is as wide as the
 // side seam was at that depth (scissors cut what is there: a flared top cut higher has a narrower hem), and an outline
 // drawn by hand below the cut goes with it
@@ -1041,9 +1149,9 @@ fix(state.top);
 renderSeg(); apply(); undoState();
 showBody(state.body);
 window.__studio = { get state() { return state; }, apply, showBody, camera, controls, canvas, project, get cloth() { return cloth; }, get awake() { return awake; }, get A() { return A; }, composer, renderer, params, edgePoint, edgeAt, editNear,
-  editOk: () => piecesOk(state.top, sleeves(params({ ...state.top, edit: undefined }))),
+  editOk: () => piecesOk(state.top, sleeves(params({ ...state.top, edit: undefined, cuts: undefined }))),
   // how far in (cm) a side's armhole was pulled by hand, at most: its sleeve sits that much further up the arm
   armIn: s => {
-    const e = sleeves(params(state.top)).h, o = sleeves(params({ ...state.top, edit: undefined })).h, n = 24;
+    const e = sleeves(params({ ...state.top, cuts: undefined })).h, o = sleeves(params({ ...state.top, edit: undefined, cuts: undefined })).h, n = 24;
     return Math.max(0, ...(s === 'l' ? ['Fp', 'Bp'] : ['Fm', 'Bm']).flatMap(k => { const a = resample(o[k].arm, n), b = resample(e[k].arm, n); return a.map((p, i) => p[0] - b[i][0]); }));
   } };

@@ -67,6 +67,27 @@ cases.push(
     check: () => { const T = window.__studio.state.top; return T.flare < 6 && Math.abs(T.L - 49.5) < 1 && window.__studio.editOk() ? [] : [`flare ${T.flare} L ${T.L}`]; } },
   { name: 'm 가위 되돌리기', state: { v: 2, body: 'm', bottom: 'jeans', top: TOP }, steps: [...cut(0, 40), { t: 'undo' }, { t: 'settle' }], check: new Function(same({ ...keep, L: 62, sl: [20, 20] }, {})) },
 );
+// the scissors drawn (2단계): a line across the front cuts the front only (diagonal too; the side seams sewn only as far
+// as both halves reach, open below); over a sleeve's cap that sleeve comes off; a line under the neck scoops one side; one
+// from the shoulder down past the armhole takes that armhole, and its sleeve, off; one that would leave no top cuts
+// nothing; undo puts it back
+const draw = pts => [{ t: 'view', a: 0 }, { t: 'wait', ms: 400 }, { t: 'stroke', pts }, { t: 'settle' }];
+const cutsAre = (want, sl) => new Function(`const T = window.__studio.state.top, k = [...new Set((T.cuts || []).map(c => c.k))].sort().join(), bad = [];
+  if (k !== ${JSON.stringify(want)}) bad.push('자른 곳 [' + k + ']');
+  if (JSON.stringify(T.sl) !== ${JSON.stringify(JSON.stringify(sl))}) bad.push('소매 ' + JSON.stringify(T.sl));
+  return bad;`);
+const DIAG = [[0, 18, -38], [0, 0, -46], [0, -18, -54]];
+cases.push(
+  { name: 'f 그어 대각 밑단', state: { v: 2, body: 'f', bottom: 'jeans', top: TOP }, steps: draw(DIAG), check: cutsAre('Fm,Fp', [20, 20]) },
+  { name: 'm 그어 앞만 짧게', state: { v: 2, body: 'm', bottom: 'jeans', top: TOP }, steps: draw([[0, 20, -45], [0, -20, -45]]), check: cutsAre('Fm,Fp', [20, 20]) },
+  { name: 'f 그어 소매 떼기', state: { v: 2, body: 'f', bottom: 'jeans', top: TOP }, steps: draw([[2, -9, -3], [2, -2, -6]]), check: cutsAre('', [0, 20]) },
+  { name: 'f 그어 목선 한쪽', state: { v: 2, body: 'f', bottom: 'jeans', top: TOP }, steps: draw([[0, 2, -17], [0, 4.5, -13], [0, 7, -9]]), check: cutsAre('Fp', [20, 20]) },
+  { name: 'f 그어 진동 깊게', state: { v: 2, body: 'f', bottom: 'jeans', top: TOP }, steps: draw([[0, 15, -6], [0, 21, -24], [0, 23, -33]]), check: cutsAre('Fp', [0, 20]) },
+  { name: 'f 그어 가운데 다 잘림', state: { v: 2, body: 'f', bottom: 'jeans', top: TOP }, steps: draw([[0, 5, -15], [0, 5, -50]]), check: cutsAre('', [20, 20]) },
+  { name: 'm 그어 되돌리기', state: { v: 2, body: 'm', bottom: 'jeans', top: TOP }, steps: [...draw(DIAG), { t: 'undo' }, { t: 'settle' }], check: cutsAre('', [20, 20]) },
+);
+// --cut: the scissors' cases only
+if (process.argv.includes('--cut')) cases.splice(0, cases.length, ...cases.filter(c => /가위|그어/.test(c.name)));
 const h = await start({ pages: +arg('pages', 4) });
 let fail = 0;
 try {

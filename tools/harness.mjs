@@ -9,7 +9,8 @@
 //   { t: 'edge', f: 0…1 (of the edge points in view), dx, dy } or { t: 'edge', pc, curve, at (0…1 along it), half?, dx, dy }:
 //   the outline pulled by hand there   { t: 'toggle', id: 'sym'|'fb' }   { t: 'tool', v: 'cut'|'pull' }
 //   { t: 'cut', x, y } or { t: 'cut', pc, at }: the scissors clicked there (px from the canvas's top left, or the cloth's
-//   piece pc 0 front … 3 right sleeve on its middle line at cm down its pattern)
+//   piece pc 0 front … 3 right sleeve on its middle line at cm down its pattern)   { t: 'stroke', pts: [[pc, x, y], …] }: the
+//   scissors pressed and drawn through those pattern points (cm, x signed: + the wearer's left)
 import { createRequire } from 'node:module';
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
@@ -85,6 +86,7 @@ const settle = async page => {   // seconds until the cloth stops (Infinity if i
   const ok = await page.waitForFunction(() => window.__studio.cloth && !window.__studio.awake && document.getElementById('loading').hidden, null, { timeout: 30000, polling: 200 }).then(() => true, () => false);
   return ok ? (Date.now() - t0) / 1000 : Infinity;
 };
+const lerpP = (a, b, t) => a + (b - a) * t;
 const click = (page, sel) => page.evaluate(s => { const el = document.querySelector(s); if (el) el.click(); return !!el; }, sel);
 
 async function step(page, st) {
@@ -116,6 +118,24 @@ async function step(page, st) {
       }, st);
       await page.mouse.move(b[0] + 4, b[1]); await page.mouse.move(b[0], b[1]); await page.waitForTimeout(60);
       await page.mouse.down(); await page.mouse.up();
+      return click(page, '#tools [data-t="pull"]');
+    }
+    case 'stroke': {   // the scissors drawn through these pattern points [pc, x, y] (cm), pressed to let go (then back to pull)
+      await click(page, '#tools [data-t="cut"]');
+      const b = await page.evaluate(pts => {
+        const S = window.__studio, c = S.cloth, r = S.canvas.getBoundingClientRect(), U = c.geometry.attributes.pat.array, P = c.geometry.attributes.position, pcv = c.userData.pcv;
+        return pts.map(([pc, x, y]) => {
+          const sh = [0, .7, 1.4, 1.9][pc];
+          let best = -1, bd = 1e9;
+          for (let i = 0; i < pcv.length; i++) if (pcv[i] === pc) { const d = (U[i * 2] - sh - x / 100) ** 2 + (U[i * 2 + 1] - y / 100) ** 2; if (d < bd) { bd = d; best = i; } }
+          const [sx, sy] = S.project(new (S.camera.position.constructor)(P.getX(best), P.getY(best), P.getZ(best)));
+          return [r.left + sx, r.top + sy];
+        });
+      }, st.pts);
+      await page.mouse.move(b[0][0] + 4, b[0][1]); await page.mouse.move(b[0][0], b[0][1]); await page.waitForTimeout(60);
+      await page.mouse.down();
+      for (let i = 1; i < b.length; i++) for (let k = 1; k <= 10; k++) { await page.mouse.move(lerpP(b[i - 1][0], b[i][0], k / 10), lerpP(b[i - 1][1], b[i][1], k / 10)); await page.waitForTimeout(25); }
+      await page.waitForTimeout(80); await page.mouse.up();
       return click(page, '#tools [data-t="pull"]');
     }
     case 'drag': case 'edge': {
