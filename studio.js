@@ -682,8 +682,8 @@ DOTS.forEach(d => {
   d.el.className = 'dot' + (d.k === 'hem' || d.k === 'hemSide' || d.k === 'side' ? ' sq' : '');
   d.el.setAttribute('aria-label', LABEL[d.k] + ' 점 — 끌어서 바꾸기');
   d.el.addEventListener('pointerdown', e => dragStart(e, d));
-  d.el.addEventListener('pointerenter', () => { if (!drag) showTip(LABEL[d.k], d.sx, d.sy); });
-  d.el.addEventListener('pointerleave', () => { if (!drag) tip.classList.remove('show'); });
+  d.el.addEventListener('pointerenter', () => { if (!drag) { showTip(LABEL[d.k], d.sx, d.sy); setPullT(d); } });
+  d.el.addEventListener('pointerleave', () => { if (!drag) { tip.classList.remove('show'); if (pullT === d) setPullT(null); } });
   layer.appendChild(d.el);
 });
 const v3 = new THREE.Vector3(), n3 = new THREE.Vector3(), c3 = new THREE.Vector3();
@@ -725,8 +725,9 @@ function nearBump(d, vi) {
   const U = cloth.geometry.attributes.pat.array;
   return editNear(pc, U[vi * 2] * 100 - [0, 70, 140, 190][pc], U[vi * 2 + 1] * 100);
 }
-function showTip(text, x, y) {
-  tip.textContent = text;
+// bad: why a pull stopped, in red
+function showTip(text, x, y, bad) {
+  tip.textContent = text; tip.classList.toggle('no', !!bad);
   const w = tip.offsetWidth || 100, r = layer.getBoundingClientRect();
   tip.style.left = (x + 16 + w > r.width ? x - 16 - w : x + 16) + 'px'; tip.style.top = (y - 30) + 'px';
   tip.classList.add('show');
@@ -741,31 +742,134 @@ function dragStart(e, d) {
   const ox = d.sx - ax, oy = d.sy - ay, ol = Math.hypot(ox, oy);
   d.out = ol > 6 ? [ox / ol, oy / ol] : [1, 0];
   d.mpp = 2 * camera.position.distanceTo(d.p) * Math.tan(camera.fov * PI / 360) / canvas.getBoundingClientRect().height;
+  pullBegin(d);
   // followed on the window, not the point: the point moves (and can be re-placed) under the pointer
   const id = e.pointerId, move = ev => { if (ev.pointerId === id) dragMove(ev, d); }, up = ev => {
     if (ev.pointerId !== id) return;
     removeEventListener('pointermove', move); removeEventListener('pointerup', up); removeEventListener('pointercancel', up);
-    drag = null; controls.enabled = true; tip.classList.remove('show'); commit(); apply();
+    drag = null; controls.enabled = true; tip.classList.remove('show'); pullEnd(); commit(); apply();
   };
   addEventListener('pointermove', move); addEventListener('pointerup', up); addEventListener('pointercancel', up);
+}
+// why a length stops where fix() held it: [shorter, longer]
+const STOP = { sleeve: ['끈은 이보다 좁게 못 해요', '손을 다 덮는 데까지예요'], hem: ['겨드랑이 바로 아래까지예요', '더 길게는 못 해요'], neck: ['목선은 더 못 올려요', '더 깊게는 못 파요'] };
+// a length (the sleeve, the hem, a neckline's depth) set to v from the drag's start, held to its range → [label, why it stopped]
+function setLen(d, v) {
+  const T = state.top, S = d.start;
+  T.sl = S.sl.slice();
+  let got, label;
+  if (d.k === 'sleeve') {   // past nothing the shoulder narrows into a strap
+    T.sl[d.i] = v; if ($('sym').checked) T.sl[1 - d.i] = v;
+    fix(T); got = T.sl[d.i]; label = sleeveName(got);
+  } else if (d.k === 'hem') { T.L = v; fix(T); got = T.L; label = lenName(got); }
+  else { const k = d.i ? 'ndB' : 'ndF'; T[k] = v; fix(T); got = T[k]; label = `${d.i ? '뒤' : '앞'} 목 깊이 ${got.toFixed(1)}cm`; }
+  return [label, Math.abs(v - got) > .05 ? STOP[d.k][v < got ? 0 : 1] : ''];
 }
 function dragMove(e, d) {
   const dx = e.clientX - d.x0, dy = e.clientY - d.y0, down = dy * d.mpp, out = (dx * d.out[0] + dy * d.out[1]) * d.mpp;
   const T = state.top, S = d.start;
-  T.sl = S.sl.slice();
-  let label;
-  if (d.k === 'sleeve') {   // down / out the sleeve grows, up / in it shortens, past nothing the shoulder narrows into a strap
-    const v = S.sl[d.i] + (down + out * .6) * 80;
-    T.sl[d.i] = v; if ($('sym').checked) T.sl[1 - d.i] = v;
-    fix(T); label = sleeveName(T.sl[d.i]);
-  } else if (d.k === 'hem') { T.L = S.L + down * 100; fix(T); label = lenName(T.L); }
-  else if (d.k === 'hemSide') { T.flare = S.flare + out * 100; fix(T); label = `밑단 폭 ${T.flare >= 0 ? '+' : ''}${T.flare.toFixed(1)}cm`; }
-  else if (d.k === 'side') { T.ease = S.ease + out * 100; fix(T); label = '품 ' + fitName(T.ease); }
-  else if (d.k === 'neck') { const k = d.i ? 'ndB' : 'ndF'; T[k] = S[k] + down * 100; fix(T); label = `${d.i ? '뒤' : '앞'} 목 깊이 ${T[k].toFixed(1)}cm`; }
-  else { T.dNw = S.dNw + out * 100; fix(T); label = `목 넓이 ${T.dNw >= 0 ? '+' : ''}${T.dNw.toFixed(1)}cm`; }
+  let label, why = '';
+  // down / out the sleeve grows, up / in it shortens
+  if (d.k === 'sleeve') [label, why] = setLen(d, S.sl[d.i] + (down + out * .6) * 80);
+  else if (d.k === 'hem') [label, why] = setLen(d, S.L + down * 100);
+  else if (d.k === 'neck') [label, why] = setLen(d, S[d.i ? 'ndB' : 'ndF'] + down * 100);
+  else {
+    T.sl = S.sl.slice();
+    if (d.k === 'hemSide') { T.flare = S.flare + out * 100; fix(T); label = `밑단 폭 ${T.flare >= 0 ? '+' : ''}${T.flare.toFixed(1)}cm`; }
+    else if (d.k === 'side') { T.ease = S.ease + out * 100; fix(T); label = '품 ' + fitName(T.ease); }
+    else { T.dNw = S.dNw + out * 100; fix(T); label = `목 넓이 ${T.dNw >= 0 ? '+' : ''}${T.dNw.toFixed(1)}cm`; }
+  }
   apply(true);
   const r = layer.getBoundingClientRect();
-  showTip(label, e.clientX - r.left, e.clientY - r.top);
+  showTip(why ? `${label} · ${why}` : label, e.clientX - r.left, e.clientY - r.top, why);
+}
+
+/* ---------- what a pull moves, shown (2026-10-30) ---------- */
+// the user: "pulling is hard to read, I can't tell what moves where". Before you press, the edge a point (or the
+// edge's point) would move is a gold line on the cloth and on the flat top; while it is dragged, where that edge was
+// stays dashed on both (the cloth takes a moment to follow the pattern)
+let pullT = null;   // the point or edge under the pointer: a DOTS entry, an edge target, or { k: 'hem' | 'sleeve', i } off the flat top
+const setPullT = t => { if (t !== pullT) { pullT = t; if (A) drawFlat(); } };
+const hotMat = new LineMaterial({ color: 0xf2c46b, linewidth: 3 }), ghostMat = new LineMaterial({ color: 0xf5f2ea, linewidth: 2, dashed: true, dashSize: .012, gapSize: .009 });
+const hotLine = new LineSegments2(new LineSegmentsGeometry(), hotMat), ghostLine = new LineSegments2(new LineSegmentsGeometry(), ghostMat);
+for (const l of [hotLine, ghostLine]) { l.visible = false; l.frustumCulled = false; l.renderOrder = 2; scene.add(l); }
+// the rim entries (cloth.userData.rim) a pull of t would move
+function pullRim(t) {
+  const R = cloth && !next && cloth.userData.rim, out = [];
+  if (!R || !t) return out;
+  const ci = n => R.names.indexOf(n), has = cloth.userData.info.has, pick = f => { for (let j = 0; j < R.v.length; j++) if (f(j)) out.push(j); return out; };
+  if (t.k === 'hem') return pick(j => R.pc[j] < 2 && R.curve[j] === ci('hem'));
+  if (t.k === 'neck') return pick(j => R.pc[j] === t.i && R.curve[j] === ci('neck'));
+  if (t.k === 'sleeve') {
+    const sides = $('sym').checked ? [0, 1] : [t.i];   // (a side with no sleeve: its shoulder, which a strap narrows)
+    return pick(j => sides.some(i => has[i ? 'r' : 'l'] ? R.pc[j] === 2 + i && R.curve[j] === ci('hem') : R.pc[j] < 2 && R.half[j] === i && R.curve[j] === ci('shoulder')));
+  }
+  if (t.k !== 'edge') return out;
+  // an edge: on each piece and half it bumps, as far along the outline as the bump reaches (pattern.js bend: r cm)
+  const U = cloth.geometry.attributes.pat.array, c = ci(t.curve);
+  const on = new Set(t.keys.flatMap(k => k[0] === 'S' ? [k === 'Sl' ? '20' : '30', k === 'Sl' ? '21' : '31'] : [(k[0] === 'F' ? '0' : '1') + (k[1] === 'p' ? '0' : '1')]));
+  for (let j0 = 0, j1; j0 < R.v.length; j0 = j1) {
+    for (j1 = j0; j1 < R.v.length && R.pc[j1] === R.pc[j0] && R.half[j1] === R.half[j0];) j1++;
+    if (!on.has(`${R.pc[j0]}${R.half[j0]}`)) continue;
+    const s = [0];
+    for (let j = j0 + 1; j < j1; j++) s.push(s[s.length - 1] + Math.hypot(U[R.v[j] * 2] - U[R.v[j - 1] * 2], U[R.v[j] * 2 + 1] - U[R.v[j - 1] * 2 + 1]) * 100);
+    let a = -1, b = -1;
+    for (let j = j0; j < j1; j++) if (R.curve[j] === c) { if (a < 0) a = s[j - j0]; b = s[j - j0]; }
+    if (a < 0) continue;
+    const st = lerp(a, b, t.t);
+    for (let j = j0; j < j1; j++) if (Math.abs(s[j - j0] - st) <= t.r && (!t.local || R.curve[j] === c)) out.push(j);
+  }
+  return out;
+}
+// those entries as line segments on the cloth as it hangs now, a little off it along its normal (as the scissors' ring)
+function rimSegs(sel) {
+  const R = cloth.userData.rim, P = cloth.geometry.attributes.position.array, N = cloth.geometry.attributes.normal.array, on = new Set(sel), out = [];
+  const pt = v => [0, 1, 2].map(k => P[v * 3 + k] + N[v * 3 + k] * .004);
+  for (const j of sel) if (on.has(j + 1) && R.pc[j + 1] === R.pc[j] && R.half[j + 1] === R.half[j]) out.push(...pt(R.v[j]), ...pt(R.v[j + 1]));
+  return out;
+}
+function setLine(l, segs) {
+  l.geometry.dispose(); l.geometry = new LineSegmentsGeometry().setPositions(segs);
+  if (l.material.dashed) l.computeLineDistances();
+  const r = canvas.getBoundingClientRect(); l.material.resolution.set(r.width, r.height);
+  l.visible = segs.length > 0; needs = true;
+}
+let pullLast = null;
+// each frame: the gold line rides on the cloth while it moves (drawn anew only when it moved or another edge is meant)
+function drawPull() {
+  const t = cloth && !next && (drag || (tool === 'pull' || pullT && pullT.flat) && pullT);   // (the flat top's ends: in any tool)
+  if (!t) { if (hotLine.visible) { hotLine.visible = false; needs = true; } pullLast = null; return; }
+  const key = [t, t.r, cloth.geometry, $('sym').checked, $('fb').checked];
+  if (!awake && pullLast && key.every((v, i) => v === pullLast[i])) return;
+  pullLast = key;
+  setLine(hotLine, rimSegs(pullRim(t)));
+}
+// the flat top and the edge as they were when a pull starts, dashed while it is dragged
+let flatGhost = null;
+function pullBegin(d) {
+  pullT = null; flatGhost = flat && { body: flat.body, back: flat.back, sl: ['l', 'r'].map(k => flat.sl[k] && flat.sl[k].poly).filter(Boolean) };
+  if (cloth && !next) setLine(ghostLine, rimSegs(pullRim(d)));
+}
+function pullEnd() { ghostLine.visible = false; flatGhost = null; needs = true; }
+// the edge the gold line runs along, on the flat top (a body piece's pattern as is, a sleeve folded along its middle line)
+function flatHotPath() {
+  const t = !drag && pullT, R = t && cloth && !next && cloth.userData.rim;
+  if (!R || !flat) return '';
+  const U = cloth.geometry.attributes.pat.array, pcv = cloth.userData.pcv, sel = pullRim(t), on = new Set(sel);
+  const fp = v => {
+    const pc = pcv[v], x = U[v * 2] * 100 - SHIFT[pc], y = U[v * 2 + 1] * 100;
+    if (pc < 2) return [x, -y];
+    const F = flat.sl[pc === 2 ? 'l' : 'r'];
+    if (!F || !F.m) return null;
+    const p = F.m([Math.abs(x), y]);
+    return [F.sg * p[0], p[1]];
+  };
+  let d = '';
+  for (const j of sel) if (on.has(j + 1) && R.pc[j + 1] === R.pc[j] && R.half[j + 1] === R.half[j]) {
+    const a = fp(R.v[j]), b = fp(R.v[j + 1]);
+    if (a && b) d += `M${a[0].toFixed(2)} ${a[1].toFixed(2)}L${b[0].toFixed(2)} ${b[1].toFixed(2)}`;
+  }
+  return d;
 }
 
 /* ---------- the outline pulled anywhere ---------- */
@@ -804,7 +908,7 @@ function placeEdge() {
   const [x, y] = project(v3.fromBufferAttribute(cloth.geometry.attributes.position, R.v[edgeI]));
   edgeDot.style.transform = `translate(${x}px, ${y}px)`;
 }
-const hideEdge = () => { edgeDot.hidden = true; edgeI = -1; tip.classList.remove('show'); };
+const hideEdge = () => { edgeDot.hidden = true; edgeI = -1; tip.classList.remove('show'); if (pullT && pullT.k === 'edge') setPullT(null); };
 // (on the window: over a fixed point's wide grip the canvas hears nothing, and the edge's point may still show there)
 addEventListener('pointermove', e => {
   if (drag || e.buttons) return;
@@ -816,6 +920,7 @@ addEventListener('pointermove', e => {
   // (not the side seams, a body's or a sleeve's: pulled the long way they only slide along themselves)
   const R0 = cloth && cloth.userData.rim, along = i => { const nm = R0.names[R0.curve[i]]; return nm !== 'side' && nm !== 'und'; };
   if (!nearDot) for (const [i, px, py, f] of rimInView()) { const d = (px - x) ** 2 + (py - y) ** 2 - f * 4; if (d < bd && along(i)) { bd = d; best = i; } }
+  if (best !== edgeI || best >= 0 && !pullT) { if (best >= 0) setPullT(edgeTarget(best)); else if (pullT && pullT.k === 'edge') setPullT(null); }
   edgeI = best; edgeDot.hidden = best < 0;
   if (best >= 0) { placeEdge(); const R = cloth.userData.rim; showTip(edgeName(R, best), x, y); }
   else if (e.target === canvas || e.target === edgeDot) tip.classList.remove('show');   // (a fixed point shows its own)
@@ -824,35 +929,44 @@ edgeDot.addEventListener('pointerdown', e => {
   const R = cloth && cloth.userData.rim;
   if (!R || edgeI < 0) return;
   e.preventDefault(); e.stopPropagation();
-  const i = edgeI, curve = R.names[R.curve[i]], pc = R.pc[i], half = R.half[i];
+  const i = edgeI, pc = R.pc[i];
   const p = v3.fromBufferAttribute(cloth.geometry.attributes.position, R.v[i]).clone();
-  const d = { k: 'edge', curve, name: edgeName(R, i), t: Math.round(R.t[i] * 1000) / 1000, x0: e.clientX, y0: e.clientY, start: structuredClone(state.top), along: [0, 1] };
+  const d = Object.assign(edgeTarget(i), { x0: e.clientX, y0: e.clientY, start: structuredClone(state.top), along: [0, 1] });
   if (pc >= 2) {
-    // a sleeve: both alike while 좌우 같이 is on; "down" is along the arm (shoulder → cuff on screen)
-    d.keys = $('sym').checked ? ['Sl', 'Sr'] : [pc === 2 ? 'Sl' : 'Sr'];
-    d.local = 0;
+    // "down" on a sleeve is along the arm (shoulder → cuff on screen)
     const P = cloth.geometry.attributes.position, c = new THREE.Vector3();
     let n = 0;
     for (let j = 0; j < R.v.length; j++) if (R.pc[j] === pc && R.names[R.curve[j]] === 'hem') { c.add(v3.fromBufferAttribute(P, R.v[j])); n++; }
     const [hx, hy] = project(c.divideScalar(n)), [ux, uy] = project(v3.fromBufferAttribute(P, cloth.userData.marks.shoulder[pc - 2]));
     const al = Math.hypot(hx - ux, hy - uy) || 1;
     d.along = [(hx - ux) / al, (hy - uy) / al];
-  } else {
-    // which panels, and whether it keeps to its own curve (a free edge pulled on one panel: its corner is sewn to the other)
-    const both = !(curve === 'neck' || curve === 'hem') || $('fb').checked;
-    d.keys = (both ? ['F', 'B'] : [pc ? 'B' : 'F']).flatMap(k => $('sym').checked ? [k + 'p', k + 'm'] : [k + (half ? 'm' : 'p')]);
-    d.local = both ? 0 : 1;
   }
   d.mpp = 2 * camera.position.distanceTo(p) * Math.tan(camera.fov * PI / 360) / canvas.getBoundingClientRect().height;
+  pullBegin(d);
   drag = d; controls.enabled = false; edgeDot.classList.add('on');
   const id = e.pointerId, move = ev => { if (ev.pointerId === id) edgeMove(ev, d); }, up = ev => {
     if (ev.pointerId !== id) return;
     removeEventListener('pointermove', move); removeEventListener('pointerup', up); removeEventListener('pointercancel', up);
     drag = null; controls.enabled = true; edgeDot.classList.remove('on'); edgeDot.hidden = true; edgeI = -1;
-    tip.classList.remove('show'); commit(); apply();
+    tip.classList.remove('show'); pullEnd(); commit(); apply();
   };
   addEventListener('pointermove', move); addEventListener('pointerup', up); addEventListener('pointercancel', up);
 });
+// the edge at rim entry i as a pull's target: which halves it bumps (keys), and whether it keeps to its own curve;
+// r: how far along the outline it reaches (withBump's, at least 8 cm)
+function edgeTarget(i) {
+  const R = cloth.userData.rim, curve = R.names[R.curve[i]], pc = R.pc[i], half = R.half[i], sym = $('sym').checked;
+  const d = { k: 'edge', curve, pc, name: edgeName(R, i), t: Math.round(R.t[i] * 1000) / 1000, r: 8, local: 0 };
+  // a sleeve: both alike while 좌우 같이 is on
+  if (pc >= 2) d.keys = sym ? ['Sl', 'Sr'] : [pc === 2 ? 'Sl' : 'Sr'];
+  else {
+    // which panels, and whether it keeps to its own curve (a free edge pulled on one panel: its corner is sewn to the other)
+    const both = !(curve === 'neck' || curve === 'hem') || $('fb').checked;
+    d.keys = (both ? ['F', 'B'] : [pc ? 'B' : 'F']).flatMap(k => sym ? [k + 'p', k + 'm'] : [k + (half ? 'm' : 'p')]);
+    d.local = both ? 0 : 1;
+  }
+  return d;
+}
 // the bump at k of (dx, dy): the start's bumps and this one
 const withBump = (d, dx, dy, k) => {
   const T = structuredClone(d.start), E = T.edit = T.edit || {};
@@ -883,10 +997,13 @@ function edgeMove(e, d) {
     k = lo;
   }
   state.top = withBump(d, dx, dy, k);
+  d.r = Math.max(8, Math.hypot(dx, dy) * k * 1.2);   // (withBump's reach: the gold line follows it)
   apply(true);
   const r = layer.getBoundingClientRect();
   edgeDot.style.transform = `translate(${e.clientX - r.left}px, ${e.clientY - r.top}px)`;
-  showTip(`${d.name} ${(Math.hypot(dx, dy) * k).toFixed(1)}cm${k < .999 ? ' · 더는 안 돼요' : ''}`, e.clientX - r.left, e.clientY - r.top);
+  // (the shoulder line and a neckline pulled up have rules of their own, pattern.js halfOk; elsewhere it is the outline's shape)
+  const why = k >= .999 ? '' : d.curve === 'shoulder' ? '어깨선은 1.5cm 안에서만 움직여요' : d.curve === 'neck' && dy > 0 ? '목선은 어깨보다 위로 못 올려요' : '여기까지예요 — 더 당기면 옷본 선이 꼬여요';
+  showTip(`${d.name} ${(Math.hypot(dx, dy) * k).toFixed(1)}cm${why ? ' · ' + why : ''}`, e.clientX - r.left, e.clientY - r.top, why);
 }
 // for the checks (tools/harness.mjs): a rim point on the page — by curve and fraction, or the f-th of those in view
 function edgePoint(pc, curve, at, half = 'p') {
@@ -910,12 +1027,12 @@ const editNear = (pc, x, y) => (cloth && cloth.userData.info.bumps || []).some(b
 // goes there), round both sleeves at that length, or near the top of a sleeve its whole armhole seam (sleeveless);
 // a click cuts there. Pull: the fixed points and the edge's point as before (2단계)
 let tool = 'cut', hov = null;
-const HINT = { cut: '가위 — 옷 위에 올리면 노란 선, 누르면 거기서 잘려요(소매는 양쪽 같이). 누른 채 그으면 그은 대로 잘려요. 잘릴 곳은 반투명하게 보여요.', pull: '당기기 — 흰 점이나 옷 가장자리를 위아래(소매는 팔 방향)로 끌어 길이를 바꿔요. 폭은 통 도구로.', fit: '통 — 펼친 모양에서 위아래로 끌어 범위를 고르고(옷을 누르면 그 자리), 금색 손잡이나 막대로 한 번에 줄이거나 늘려요.' };
+const HINT = { cut: '가위 — 옷 위에 올리면 노란 선, 누르면 거기서 잘려요(소매는 양쪽 같이). 누른 채 그으면 그은 대로 잘려요. 잘릴 곳은 반투명하게 보여요.', pull: '당기기 — 흰 점이나 옷 가장자리를 위아래(소매는 팔 방향)로 끌어 길이를 바꿔요. 올리면 움직일 곳이 금색 선, 끄는 동안 원래 자리는 점선. 펼친 모양의 밑단·소매 끝 선을 끌어도 돼요. 폭은 통 도구로.', fit: '통 — 펼친 모양에서 위아래로 끌어 범위를 고르고(옷을 누르면 그 자리), 금색 손잡이나 막대로 한 번에 줄이거나 늘려요.' };
 function setTool(t) {
   tool = t;
   document.querySelectorAll('#tools [data-t]').forEach(b => b.setAttribute('aria-pressed', b.dataset.t === t));
   $('hint').textContent = HINT[t] + ' 빈 곳을 끌면 돌려 보기, 휠로 확대.';
-  hideRing(); hideEdge(); closeGrip();
+  hideRing(); hideEdge(); closeGrip(); pullT = null;
 }
 $('tools').addEventListener('click', e => { const b = e.target.closest('[data-t]'); if (b) setTool(b.dataset.t); });
 const ringMat = new LineMaterial({ color: 0xf2c46b, linewidth: 3 });
@@ -1234,7 +1351,7 @@ function flatSleeve(s, k) {
   if (!s[k]) return { poly: [O, [O[0] + d[0] * u, O[1] + d[1] * u], [U[0] + d[0] * u * .4, U[1] + d[1] * u * .4], U, ...arm].map(M) };
   const { und, hem } = s[k].H, ch = s.sl[k].ch, w0 = und[0][0], T0 = [U[0] + n[0] * w0, U[1] + n[1] * w0];
   const m = ([x, y]) => [T0[0] + d[0] * (-y - ch) - n[0] * x, T0[1] + d[1] * (-y - ch) - n[1] * x];
-  return { poly: [O, T0, ...hem.slice().reverse().map(m), ...und.slice().reverse().map(m), ...arm].map(M), T0, d, n, ch, sg, m, und };
+  return { poly: [O, T0, ...hem.slice().reverse().map(m), ...und.slice().reverse().map(m), ...arm].map(M), T0, d, n, ch, sg, m, und, cuff: hem.map(m).map(M) };
 }
 // a sleeve's length (cm from its cap's top) at a flat point
 const sleeveLen = (F, p) => F.ch + (F.sg * p[0] - F.T0[0]) * F.d[0] + (p[1] - F.T0[1]) * F.d[1];
@@ -1242,11 +1359,15 @@ const pathOf = pts => 'M' + pts.map(p => p[0].toFixed(2) + ' ' + p[1].toFixed(2)
 // refit: frame the drawing anew (not while something is dragged: the drawing would shift under the hand)
 function drawFlat(refit) {
   const T = state.top, s = sleeves(params());
-  flat = { body: panelOf(s.h.Fp, s.h.Fm), back: panelOf(s.h.Bp, s.h.Bm), sl: { l: flatSleeve(s, 'l'), r: flatSleeve(s, 'r') } };
+  flat = { body: panelOf(s.h.Fp, s.h.Fm), back: panelOf(s.h.Bp, s.h.Bm), sl: { l: flatSleeve(s, 'l'), r: flatSleeve(s, 'r') },
+    hem: [...s.h.Fm.hem.map(([x, y]) => [-x, -y]).reverse(), ...s.h.Fp.hem.map(([x, y]) => [x, -y])] };
   const all = [...flat.back, ...flat.body, ...['l', 'r'].flatMap(k => flat.sl[k] ? flat.sl[k].poly : [])];
-  if (refit || !flatBox) {
-    const w = Math.max(...all.map(p => Math.abs(p[0]))) + 4, ys = all.map(p => p[1]), y0 = Math.min(...ys) - 4, y1 = Math.max(...ys) + 4;
-    flatBox = [-w, y0, 2 * w, y1 - y0];
+  const w = Math.max(...all.map(p => Math.abs(p[0]))) + 4, ys = all.map(p => p[1]), y0 = Math.min(...ys) - 4, y1 = Math.max(...ys) + 4;
+  // (while dragged the frame only grows, as far as the drawing went out of it: a hem pulled down left it)
+  const grow = !refit && flatBox && drag && (w > flatBox[2] / 2 || y0 < flatBox[1] || y1 > flatBox[1] + flatBox[3]);
+  if (refit || !flatBox || grow) {
+    if (grow) { const a = Math.min(y0, flatBox[1]), b = Math.max(y1, flatBox[1] + flatBox[3]), h = Math.max(w, flatBox[2] / 2); flatBox = [-h, a, 2 * h, b - a]; }
+    else flatBox = [-w, y0, 2 * w, y1 - y0];
     flatSvg.setAttribute('viewBox', flatBox.map(v => v.toFixed(1)).join(' '));
     flatSvg.style.aspectRatio = flatBox[2] / flatBox[3];   // (as tall as the drawing, at most the CSS max-height)
   }
@@ -1271,8 +1392,35 @@ function drawFlat(refit) {
     else for (const k of ['l', 'r']) { const F = flat.sl[k]; if (F && F.m && grip.keys.includes('S' + k)) { const p = F.m([xAt(F.und, ym), -ym]); hs.push([k, F.sg * p[0], p[1]]); } }
     for (const [h, x, y] of hs) out += `<circle data-h="${h}" cx="${x.toFixed(2)}" cy="${y.toFixed(2)}" r="2.2" fill="#f2c46b" stroke="#1b0d07" stroke-width="1.5" vector-effect="non-scaling-stroke" style="cursor:ew-resize"/>`;
   }
+  // a pull: what it would move (gold), and while dragged the top as it was (dashed)
+  const hot = flatHotPath();
+  if (hot) out += `<path d="${hot}" fill="none" stroke="#f2c46b" stroke-width="3" stroke-linecap="round" vector-effect="non-scaling-stroke" pointer-events="none"/>`;
+  if (flatGhost) for (const p of [flatGhost.back, ...flatGhost.sl, flatGhost.body])
+    out += `<path d="${pathOf(p)}" fill="none" stroke="#f5f2ea" stroke-width="1.2" stroke-dasharray="4 3" opacity="${p === flatGhost.back ? .45 : .9}" vector-effect="non-scaling-stroke" pointer-events="none"/>`;
   flatSvg.innerHTML = out;
 }
+// the hem or a sleeve's end (as a pull's target) within 2.2 cm of a point on the flat top, or null
+function flatEnd(p) {
+  const near = pts => pts.some((q, i) => i && segDist(p, pts[i - 1], q) < 2.2);
+  if (near(flat.hem)) return { k: 'hem' };
+  for (const [k, i] of [['l', 0], ['r', 1]]) if (flat.sl[k] && flat.sl[k].cuff && near(flat.sl[k].cuff)) return { k: 'sleeve', i, F: flat.sl[k] };
+  return null;
+}
+const segDist = (p, a, b) => {
+  const dx = b[0] - a[0], dy = b[1] - a[1], u = clamp(((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / (dx * dx + dy * dy || 1), 0, 1);
+  return Math.hypot(p[0] - a[0] - u * dx, p[1] - a[1] - u * dy);
+};
+// over the flat top: on the hem or a sleeve's end the pointer says it pulls (and the cloth shows that edge in gold)
+flatSvg.addEventListener('pointermove', e => {
+  if (e.buttons || !flat || drag) return;
+  const t = flatEnd(flatPt(e)), was = pullT && pullT.flat;
+  flatSvg.style.cursor = t ? 'row-resize' : '';
+  if (t ? !was || was !== t.k + (t.i ?? '') : was) {
+    pullT = t && Object.assign(t, { flat: t.k + (t.i ?? '') });
+    drawFlat();
+  }
+});
+flatSvg.addEventListener('pointerleave', () => { if (pullT && pullT.flat && !drag) { pullT = null; drawFlat(); } });
 const flatPt = e => { const p = new DOMPoint(e.clientX, e.clientY).matrixTransform(flatSvg.getScreenCTM().inverse()); return [p.x, p.y]; };
 // pressed on a handle: the band in or out by how far it is dragged across its seam; elsewhere on the top: a band picked
 // by dragging up or down it (a click: 5 cm either side)
@@ -1288,6 +1436,19 @@ flatSvg.addEventListener('pointerdown', e => {
       gripBar.value = clamp(r1(v0 + dx), grip.lo, grip.hi); gripSet(+gripBar.value);
     };
     up = () => commit();
+  } else if (flatEnd(p0)) {
+    // the hem or a sleeve's end: its length, by how far it is dragged down (a sleeve: along it, as laid out at the start)
+    // (cm by the scale at the start: the frame may grow under the hand)
+    const d = Object.assign(flatEnd(p0), { start: structuredClone(state.top) }), F = d.F, k = flatSvg.getScreenCTM().a;
+    if (tool !== 'pull') setTool('pull');
+    pullBegin(d); drag = d; drawFlat();
+    move = ev => {
+      const p = [p0[0] + (ev.clientX - e.clientX) / k, p0[1] + (ev.clientY - e.clientY) / k], [label, why] = d.k === 'hem' ? setLen(d, d.start.L + p[1] - p0[1]) : setLen(d, d.start.sl[d.i] + sleeveLen(F, p) - sleeveLen(F, p0));
+      apply(true);
+      const r = layer.getBoundingClientRect();
+      showTip(why ? `${label} · ${why}` : label, ev.clientX - r.left, ev.clientY - r.top, why);
+    };
+    up = () => { drag = null; tip.classList.remove('show'); pullEnd(); commit(); apply(); };
   } else {
     const part = inside(p0, flat.body) ? 'body' : ['l', 'r'].find(k => flat.sl[k] && flat.sl[k].m && inside(p0, flat.sl[k].poly));
     if (!part) { closeGrip(); return; }
@@ -1320,7 +1481,7 @@ setTool('cut');
 /* ---------- PNG ---------- */
 $('png').addEventListener('click', () => {
   const w = 1000, h = 1500, keep = [camera.aspect];
-  DOTS.forEach(d => { d.el.hidden = true; }); edgeDot.hidden = true; hideRing();
+  DOTS.forEach(d => { d.el.hidden = true; }); edgeDot.hidden = true; hideRing(); hotLine.visible = ghostLine.visible = false; pullT = null;
   renderer.setSize(w, h, false); composer.setPixelRatio(1); composer.setSize(w, h);
   camera.aspect = w / h; camera.clearViewOffset(); camera.updateProjectionMatrix();
   composer.render();
@@ -1338,7 +1499,7 @@ let lastStat = 0;
   requestAnimationFrame(frame);
   if (!busy && (awake || next || sent && !cloth)) { busy = true; worker.postMessage({ t: 'tick' }); }
   if (controls.update() || needs) { needs = false; composer.render(); }
-  placeDots(); placeEdge();
+  placeDots(); placeEdge(); drawPull();
   if (hov && awake && cloth && !next) drawRing();   // (the ring rides on the cloth while it moves)
   if (t - lastStat > 400 && t - sayT > 2500) { lastStat = t; $('status').textContent = cloth ? `천 ${awake ? '움직이는 중' : '멈춤'} · 계산 ${simMs.toFixed(1)}ms` : ''; }
 })(0);

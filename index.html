@@ -113,6 +113,7 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 .dot[hidden]{display:none}
 .tip{position:absolute;z-index:4;padding:4px 8px;border-radius:6px;background:rgba(10,10,10,.82);color:#fff;font-size:12px;white-space:nowrap;pointer-events:none;opacity:0;transition:opacity .12s}
 .tip.show{opacity:1}
+.tip.no{background:rgba(150,38,22,.94)}
 .hint{position:absolute;left:calc(var(--wl) + 16px);bottom:66px;z-index:3;font-size:12px;color:var(--muted);max-width:280px;line-height:1.5}
 /* tools: scissors, pull */
 .tools{position:absolute;left:calc(var(--wl) + 14px);top:44px;z-index:3;display:flex;flex-direction:column;gap:4px;padding:5px;border-radius:12px;background:var(--glass);backdrop-filter:blur(14px);border:1px solid var(--line)}
@@ -156,7 +157,7 @@ input[type=range]{width:100%;accent-color:var(--accent)}
   <div class="tip" id="tip"></div>
   <section class="flat" aria-label="펼친 모양">
     <h2>펼친 모양</h2>
-    <p>위아래로 끌어 통을 줄일 범위를 골라요</p>
+    <p>밑단·소매 끝 선을 끌면 길이, 안쪽을 위아래로 끌면 통 범위</p>
     <svg id="flat-svg" role="img" aria-label="앞에서 본 펼친 옷 — 위아래로 끌어 범위 고르기"></svg>
     <div class="grip" id="grip" role="group" aria-label="고른 범위 조절" hidden>
       <div class="grip-h"><b id="grip-name"></b><button type="button" id="grip-x" aria-label="닫기">×</button></div>
@@ -214,6 +215,6 @@ input[type=range]{width:100%;accent-color:var(--accent)}
   <p class="hint" id="hint"></p>
 </main>
 <script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"}}</script>
-<script type="module" src="studio.js?v=57"></script>
+<script type="module" src="studio.js?v=58"></script>
 </body>
 </html>
