@@ -7,7 +7,9 @@
 //   { t: 'drag', dot: 0…11 (DOTS order), dx, dy (px) }   { t: 'body', v: 'f'|'m' }   { t: 'bottom', v: 'jeans'|'none' }
 //   { t: 'undo' }   { t: 'redo' }   { t: 'view', a: 0|1|2|3 }   { t: 'wait', ms }   { t: 'settle' }
 //   { t: 'edge', f: 0…1 (of the edge points in view), dx, dy } or { t: 'edge', pc, curve, at (0…1 along it), half?, dx, dy }:
-//   the outline pulled by hand there   { t: 'toggle', id: 'sym'|'fb' }
+//   the outline pulled by hand there   { t: 'toggle', id: 'sym'|'fb' }   { t: 'tool', v: 'cut'|'pull' }
+//   { t: 'cut', x, y } or { t: 'cut', pc, at }: the scissors clicked there (px from the canvas's top left, or the cloth's
+//   piece pc 0 front … 3 right sleeve on its middle line at cm down its pattern)
 import { createRequire } from 'node:module';
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
@@ -99,6 +101,23 @@ async function step(page, st) {
     case 'wait': return page.waitForTimeout(st.ms);
     case 'settle': return settle(page);
     case 'toggle': return click(page, '#' + st.id);
+    case 'tool': return click(page, `#tools [data-t="${st.v}"]`);
+    case 'cut': {   // the scissors clicked on the ring there (then back to pull)
+      await click(page, '#tools [data-t="cut"]');
+      const b = await page.evaluate(st => {
+        const S = window.__studio, c = S.cloth, r = S.canvas.getBoundingClientRect();
+        if (st.pc == null) return [r.left + st.x, r.top + st.y];
+        // (by the pattern: the cloth point nearest the piece's middle line at st.at cm down it)
+        const U = c.geometry.attributes.pat.array, P = c.geometry.attributes.position, pcv = c.userData.pcv, sh = [0, .7, 1.4, 1.9][st.pc];
+        let best = -1, bd = 1e9;
+        for (let i = 0; i < pcv.length; i++) if (pcv[i] === st.pc) { const d = (U[i * 2] - sh) ** 2 + (U[i * 2 + 1] + st.at / 100) ** 2; if (d < bd) { bd = d; best = i; } }
+        const [x, y] = S.project(new (S.camera.position.constructor)(P.getX(best), P.getY(best), P.getZ(best)));
+        return [r.left + x, r.top + y];
+      }, st);
+      await page.mouse.move(b[0] + 4, b[1]); await page.mouse.move(b[0], b[1]); await page.waitForTimeout(60);
+      await page.mouse.down(); await page.mouse.up();
+      return click(page, '#tools [data-t="pull"]');
+    }
     case 'drag': case 'edge': {
       const b = st.t === 'edge' ? await page.evaluate(s => s.curve ? window.__studio.edgePoint(s.pc, s.curve, s.at, s.half) : window.__studio.edgeAt(s.f), st)
         : await page.evaluate(i => {
@@ -124,6 +143,7 @@ export async function run(h, page, cas) {
     await page.goto(h.url);
     await page.waitForFunction(() => window.__studio && window.__studio.cloth && window.__studio.A, null, { timeout: 60000 });
     await page.addScriptTag({ content: h.metrics });
+    await click(page, '#tools [data-t="pull"]');   // (the points and the edge's point are the pull tool's; cuts are steps of their own)
     const s0 = await settle(page);
     // (the top as loaded judged by its own amount of cloth: a big one may take longer than the one the edits leave)
     const n0 = s0 > LIMITS.s && cas.steps && cas.steps.length ? await page.evaluate(() => window.__metrics().nP) : 0;

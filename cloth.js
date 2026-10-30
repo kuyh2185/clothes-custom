@@ -815,6 +815,7 @@ function rim(pieces) {
   return { v: Int32Array.from(v), pc: Uint8Array.from(pc), half: Uint8Array.from(half), curve: Uint8Array.from(curve), t: Float32Array.from(t), names: RIM };
 }
 function postTopo() {
-  const c = cloth;
-  postMessage({ t: 'topo', nV: c.nV, nP: c.nP, map: c.map, uv: c.uv, index: c.index, info: c.info, marks: c.marks, rim: c.rim });
+  const c = cloth, pcv = new Uint8Array(c.nV);   // (each display vertex's piece: 0 front, 1 back, 2 / 3 the sleeves)
+  for (const p of c.pieces) pcv.fill(p.pc, p.off, p.off + p.pts.length);
+  postMessage({ t: 'topo', nV: c.nV, nP: c.nP, map: c.map, uv: c.uv, index: c.index, info: c.info, marks: c.marks, rim: c.rim, pcv });
 }

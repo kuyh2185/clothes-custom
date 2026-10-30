@@ -11,6 +11,9 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { LineSegments2 } from 'three/addons/lines/LineSegments2.js';
+import { LineSegmentsGeometry } from 'three/addons/lines/LineSegmentsGeometry.js';
+import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import { smoothChest, tuckUnder } from './mannequin.js?v=1';
 import { BASE, BASE_M, fitSide, halfOk, resample, sleeves, sleeveOk } from './pattern.js?v=32';
 
@@ -381,7 +384,7 @@ const world = mesh => {   // rest pose = bind pose = world here (the asset's roo
 };
 
 /* ---------- the cloth ---------- */
-const worker = new Worker('cloth.js?v=53', { type: 'module' });
+const worker = new Worker('cloth.js?v=54', { type: 'module' });
 worker.onerror = e => console.error('[cloth]', e.message);
 const fabricU = { uC1: { value: new THREE.Color() }, uC2: { value: new THREE.Color() }, uPat: { value: 0 }, uScale: { value: 1 } };
 // the knit's grain as a normal map over the flat pattern (m): a jersey's columns of V-shaped loops, or for the fitted
@@ -454,7 +457,7 @@ worker.onmessage = e => {
     g.setIndex(new THREE.BufferAttribute(t.index, 1));
     if (!cloth) { cloth = new THREE.Mesh(g, fabric); cloth.castShadow = cloth.receiveShadow = true; cloth.frustumCulled = false; scene.add(cloth); }
     else { cloth.geometry.dispose(); cloth.geometry = g; }
-    cloth.userData = { map: t.map, marks: t.marks, info: t.info, rim: t.rim };
+    cloth.userData = { map: t.map, marks: t.marks, info: t.info, rim: t.rim, pcv: t.pcv };
     $('loading').hidden = true;
   }
   if (!cloth) return;
@@ -699,7 +702,7 @@ function placeDots() {
     const [x, y] = project(v3);
     d.sx = x; d.sy = y; d.p = v3.clone();
     d.el.style.transform = `translate(${x}px, ${y}px)`;
-    d.el.hidden = drag ? drag !== d : facing < lim || nearBump(d, vi);   // while dragging only the point in hand
+    d.el.hidden = drag ? drag !== d : tool !== 'pull' || facing < lim || nearBump(d, vi);   // while dragging only the point in hand
     d.el.classList.toggle('on', drag === d);
   }
 }
@@ -793,7 +796,7 @@ const hideEdge = () => { edgeDot.hidden = true; edgeI = -1; tip.classList.remove
 // (on the window: over a fixed point's wide grip the canvas hears nothing, and the edge's point may still show there)
 addEventListener('pointermove', e => {
   if (drag || e.buttons) return;
-  if (e.target !== canvas && !(e.target.closest && e.target.closest('#layer'))) { if (edgeI >= 0) hideEdge(); return; }
+  if (tool !== 'pull' || e.target !== canvas && !(e.target.closest && e.target.closest('#layer'))) { if (edgeI >= 0) hideEdge(); return; }
   const r = canvas.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
   // (a fixed point keeps the spot it is drawn on; around it, where its wider grip reaches, the edge's point is on top)
   const nearDot = DOTS.some(d => !d.el.hidden && Math.hypot(d.sx - x, d.sy - y) < 9);
@@ -890,10 +893,128 @@ function edgeAt(f) {
 // a cloth point near a bump (metrics.js: an outline drawn by hand stands where it was drawn, it is no ear)
 const editNear = (pc, x, y) => (cloth && cloth.userData.info.bumps || []).some(b => b[0] === pc && Math.hypot(x - b[1], y - b[2]) < b[3] + 2);
 
+/* ---------- tools: scissors and pull ---------- */
+// scissors: over the cloth a ring shows where it would be cut — round the body at that depth of the pattern (the hem
+// goes there), round both sleeves at that length, or near the top of a sleeve its whole armhole seam (sleeveless);
+// a click cuts there. Pull: the fixed points and the edge's point as before (2단계)
+let tool = 'cut', hov = null;
+const HINT = { cut: '가위 — 옷 위에 올리면 노란 선이 나와요. 누르면 거기서 잘려요(소매는 양쪽 같이, 어깨 솔기 근처면 민소매).', pull: '당기기 — 흰 점이나 옷 가장자리를 끌어 늘리거나 모양을 바꿔요.' };
+function setTool(t) {
+  tool = t;
+  document.querySelectorAll('#tools [data-t]').forEach(b => b.setAttribute('aria-pressed', b.dataset.t === t));
+  $('hint').textContent = HINT[t] + ' 빈 곳을 끌면 돌려 보기, 휠로 확대.';
+  hideRing(); hideEdge();
+}
+$('tools').addEventListener('click', e => { const b = e.target.closest('[data-t]'); if (b) setTool(b.dataset.t); });
+const ringMat = new LineMaterial({ color: 0xf2c46b, linewidth: 3 });
+const cutLine = new LineSegments2(new LineSegmentsGeometry(), ringMat);
+cutLine.visible = false; cutLine.frustumCulled = false; cutLine.renderOrder = 2;
+scene.add(cutLine);
+function hideRing() { if (hov) { hov = null; cutLine.visible = false; needs = true; tip.classList.remove('show'); } }
+const ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
+// what the scissors would cut at the pointer, or null off the cloth
+function ringAt(e) {
+  if (!cloth || next || !cloth.userData.pcv) return null;
+  const r = canvas.getBoundingClientRect();
+  ray.setFromCamera(ndc.set((e.clientX - r.left) / r.width * 2 - 1, -(e.clientY - r.top) / r.height * 2 + 1), camera);
+  const h = ray.intersectObject(cloth)[0];
+  if (!h) return null;
+  const pc = cloth.userData.pcv[h.face.a], v0 = h.uv.y, y = -v0 * 100;   // (uv = the pattern: y cm below the high shoulder point / down the sleeve)
+  if (pc < 2) { const L = r1(y - .5); return { kind: 'body', pcs: [0, 1], v0, L, ok: L >= LIM().L[0] }; }
+  // (on the cap, above the underarm, a ring would only run part way round: the whole sleeve comes off)
+  const S = cloth.userData.info.sleeve;
+  if (y < (pc === 2 ? S.chL : S.chR)) return { kind: 'off', ok: true };
+  return { kind: 'sleeve', pcs: [2, 3], v0, u: r1(y), ok: true };
+}
+// the ring on the cloth as it hangs now: where the pattern's y crosses v0 on those pieces, or the sleeves' cap seams;
+// a little off the cloth along its normal (else it sank into it in places)
+function drawRing() {
+  const g = cloth.geometry, P = g.attributes.position.array, N = g.attributes.normal.array, U = g.attributes.pat.array, I = g.index.array, pcv = cloth.userData.pcv, out = [];
+  const pt = (a, b, t) => [0, 1, 2].map(k => lerp(P[a * 3 + k], P[b * 3 + k], t) + lerp(N[a * 3 + k], N[b * 3 + k], t) * .003);
+  if (hov.kind === 'off') for (const [a, b] of capEdges()) out.push(...pt(a, a, 0), ...pt(b, b, 0));
+  else for (let i = 0; i < I.length; i += 3) {
+    if (!hov.pcs.includes(pcv[I[i]])) continue;
+    const q = [];
+    for (let k = 0; k < 3; k++) {
+      const a = I[i + k], b = I[i + (k + 1) % 3], da = U[a * 2 + 1] - hov.v0, db = U[b * 2 + 1] - hov.v0;
+      if ((da > 0) !== (db > 0)) q.push(...pt(a, b, da / (da - db)));
+    }
+    if (q.length === 6) out.push(...q);
+  }
+  cutLine.geometry.dispose(); cutLine.geometry = new LineSegmentsGeometry().setPositions(out);
+  ringMat.color.set(hov.ok ? 0xf2c46b : 0xe0533a);
+  const r = canvas.getBoundingClientRect(); ringMat.resolution.set(r.width, r.height);
+  cutLine.visible = out.length > 0; needs = true;
+}
+// the sleeves' outline edges no lower than their cap's foot: the seam round the armhole (once per mesh)
+function capEdges() {
+  const ud = cloth.userData;
+  if (ud.cap) return ud.cap;
+  const I = cloth.geometry.index.array, U = cloth.geometry.attributes.pat.array, n = new Map(), out = [];
+  for (let i = 0; i < I.length; i += 3) for (let k = 0; k < 3; k++) {
+    const a = I[i + k], b = I[i + (k + 1) % 3], key = Math.min(a, b) * 1e6 + Math.max(a, b);
+    n.set(key, (n.get(key) || 0) + 1);
+  }
+  for (const [key, c] of n) {
+    const a = Math.floor(key / 1e6), b = key % 1e6, pc = ud.pcv[a];
+    if (c > 1 || pc < 2) continue;
+    const foot = -((pc === 2 ? ud.info.sleeve.chL : ud.info.sleeve.chR) + .05) / 100;
+    if (U[a * 2 + 1] > foot && U[b * 2 + 1] > foot) out.push([a, b]);
+  }
+  return ud.cap = out;
+}
+const ringName = h => h.kind === 'off' ? '소매 떼기 → 민소매' : h.kind === 'sleeve' ? `소매 ${sleeveName(h.u)} (양쪽)` : h.ok ? `기장 ${lenName(h.L)}` : '여기보다 위로는 못 잘라요 (겨드랑이)';
+addEventListener('pointermove', e => {
+  if (tool !== 'cut' || drag) return;
+  if (e.buttons || e.target !== canvas) { hideRing(); return; }
+  hov = ringAt(e);
+  if (!hov) { hideRing(); return; }
+  const r = layer.getBoundingClientRect();
+  showTip(ringName(hov), e.clientX - r.left, e.clientY - r.top);
+  drawRing();
+});
+// a click on the ring cuts (pressed and let go in place: a drag from the cloth still turns the view)
+wrap.addEventListener('pointerdown', e => {
+  if (tool !== 'cut' || !hov || e.button) return;
+  const h = hov, x0 = e.clientX, y0 = e.clientY, up = ev => {
+    removeEventListener('pointerup', up);
+    if (Math.hypot(ev.clientX - x0, ev.clientY - y0) > 6) return;
+    if (h.ok) cutAt(h); else say(ringName(h));
+  };
+  addEventListener('pointerup', up);
+}, true);
+// cut there: the hem (or both sleeves) where the ring was, every other number as it was. The hem is as wide as the
+// side seam was at that depth (scissors cut what is there: a flared top cut higher has a narrower hem), and an outline
+// drawn by hand below the cut goes with it
+function cutAt(h) {
+  const T = structuredClone(state.top), E = T.edit || {};
+  if (h.kind === 'body') {
+    const x0 = sideX(T, h.L + .5);
+    T.L = h.L;
+    for (const k of ['Fp', 'Fm', 'Bp', 'Bm']) if (E[k]) E[k] = E[k].filter(b => b[0] !== 'hem');
+    fix(T);
+    let [a, b] = flareLim(T);
+    for (let i = 0; i < 12; i++) { T.flare = (a + b) / 2; if (sleeves(params(T)).h.F.side.at(-1)[0] < x0) a = T.flare; else b = T.flare; }
+    T.flare = r1((a + b) / 2);
+  } else {
+    T.sl = T.sl.map(v => Math.min(v, h.kind === 'off' ? 0 : h.u));   // (only ever shorter; a strap stays a strap)
+    for (const k of ['Sl', 'Sr']) if (E[k]) E[k] = E[k].filter(b => b[0] !== 'hem');
+  }
+  fix(T);
+  state.top = T; hideRing(); apply(); commit(); say(ringName(h).replace(' (양쪽)', '') + '로 잘랐어요');
+}
+// the (uncut) front side seam's x at depth y (cm below the high shoulder point); past its end, its end's
+function sideX(T, y) {
+  const s = sleeves(params(T)).h.F.side;
+  for (let i = 1; i < s.length; i++) if (-s[i][1] >= y) { const [a, b] = [s[i - 1], s[i]]; return lerp(a[0], b[0], clamp((y + a[1]) / (a[1] - b[1]), 0, 1)); }
+  return s.at(-1)[0];
+}
+setTool('cut');
+
 /* ---------- PNG ---------- */
 $('png').addEventListener('click', () => {
   const w = 1000, h = 1500, keep = [camera.aspect];
-  DOTS.forEach(d => { d.el.hidden = true; }); edgeDot.hidden = true;
+  DOTS.forEach(d => { d.el.hidden = true; }); edgeDot.hidden = true; hideRing();
   renderer.setSize(w, h, false); composer.setPixelRatio(1); composer.setSize(w, h);
   camera.aspect = w / h; camera.clearViewOffset(); camera.updateProjectionMatrix();
   composer.render();
@@ -912,13 +1033,14 @@ let lastStat = 0;
   if (!busy && (awake || next || sent && !cloth)) { busy = true; worker.postMessage({ t: 'tick' }); }
   if (controls.update() || needs) { needs = false; composer.render(); }
   placeDots(); placeEdge();
+  if (hov && awake && cloth && !next) drawRing();   // (the ring rides on the cloth while it moves)
   if (t - lastStat > 400 && t - sayT > 2500) { lastStat = t; $('status').textContent = cloth ? `천 ${awake ? '움직이는 중' : '멈춤'} · 계산 ${simMs.toFixed(1)}ms` : ''; }
 })(0);
 
 fix(state.top);
 renderSeg(); apply(); undoState();
 showBody(state.body);
-window.__studio = { get state() { return state; }, apply, showBody, camera, controls, get cloth() { return cloth; }, get awake() { return awake; }, get A() { return A; }, composer, renderer, params, edgePoint, edgeAt, editNear,
+window.__studio = { get state() { return state; }, apply, showBody, camera, controls, canvas, project, get cloth() { return cloth; }, get awake() { return awake; }, get A() { return A; }, composer, renderer, params, edgePoint, edgeAt, editNear,
   editOk: () => piecesOk(state.top, sleeves(params({ ...state.top, edit: undefined }))),
   // how far in (cm) a side's armhole was pulled by hand, at most: its sleeve sits that much further up the arm
   armIn: s => {

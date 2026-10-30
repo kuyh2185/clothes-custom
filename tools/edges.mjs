@@ -49,6 +49,24 @@ cases.push({ name: 'f 한쪽 밑단 가운데', state: { v: 2, body: 'f', bottom
     return [...((E.Fp || []).length && !(E.Fm || []).length ? [] : [`혹 Fp ${JSON.stringify(E.Fp)} Fm ${JSON.stringify(E.Fm)}`]),
       ...(gap < .05 && drop > 1 ? [] : [`가운데 어긋남 ${gap.toFixed(2)}cm, 내려감 ${drop.toFixed(2)}cm`]), ...(S.editOk() ? [] : ['조각이 깨짐'])];
   } });
+// the scissors (가위, 1단계 of the 2026-10-30 plan): a click on the ring cuts the hem or both sleeves there and nothing
+// else; above the underarm nothing; on a sleeve's cap the sleeves come off; a flared hem cut higher is narrower; undo
+// puts it back
+const cut = (pc, at) => [{ t: 'view', a: 0 }, { t: 'wait', ms: 400 }, { t: 'cut', pc, at }, { t: 'settle' }];
+const same = (keep, want) => `const T = window.__studio.state.top, o = ${JSON.stringify(keep)}, w = ${JSON.stringify(want)}, bad = [];
+  for (const k in o) if (JSON.stringify(T[k]) !== JSON.stringify(o[k])) bad.push(k + ' 바뀜 ' + JSON.stringify(T[k]));
+  for (const k in w) { const v = [].concat(T[k]), x = [].concat(w[k][0]); if (v.some((q, i) => Math.abs(q - x[i]) > w[k][1])) bad.push(k + ' ' + JSON.stringify(T[k]) + ' (바람 ' + JSON.stringify(w[k][0]) + ')'); }
+  return bad;`;
+const keep = { ease: 0, sEase: 0, dNw: 0, ndF: 10, ndB: 2.6, neckV: 0 };
+cases.push(
+  { name: 'f 가위 밑단', state: { v: 2, body: 'f', bottom: 'jeans', top: TOP }, steps: cut(0, 45), check: new Function(same({ ...keep, sl: [20, 20] }, { L: [44.5, 1] })) },
+  { name: 'm 가위 소매', state: { v: 2, body: 'm', bottom: 'jeans', top: { ...TOP, sl: [45, 45] } }, steps: cut(2, 20), check: new Function(same({ ...keep, L: 62 }, { sl: [[20, 20], 1] })) },
+  { name: 'f 가위 소매산', state: { v: 2, body: 'f', bottom: 'jeans', top: TOP }, steps: cut(2, 5), check: new Function(same({ ...keep, L: 62, sl: [0, 0] }, {})) },
+  { name: 'f 가위 겨드랑이 위', state: { v: 2, body: 'f', bottom: 'jeans', top: TOP }, steps: cut(0, 14), check: new Function(same({ ...keep, L: 62, sl: [20, 20] }, {})) },
+  { name: 'f 가위 플레어 밑단', state: { v: 2, body: 'f', bottom: 'jeans', top: { ...TOP, ease: 4, sEase: 4, flare: 8, L: 70 } }, steps: cut(0, 50),
+    check: () => { const T = window.__studio.state.top; return T.flare < 6 && Math.abs(T.L - 49.5) < 1 && window.__studio.editOk() ? [] : [`flare ${T.flare} L ${T.L}`]; } },
+  { name: 'm 가위 되돌리기', state: { v: 2, body: 'm', bottom: 'jeans', top: TOP }, steps: [...cut(0, 40), { t: 'undo' }, { t: 'settle' }], check: new Function(same({ ...keep, L: 62, sl: [20, 20] }, {})) },
+);
 const h = await start({ pages: +arg('pages', 4) });
 let fail = 0;
 try {

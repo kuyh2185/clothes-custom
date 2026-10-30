@@ -114,6 +114,12 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 .tip{position:absolute;z-index:4;padding:4px 8px;border-radius:6px;background:rgba(10,10,10,.82);color:#fff;font-size:12px;white-space:nowrap;pointer-events:none;opacity:0;transition:opacity .12s}
 .tip.show{opacity:1}
 .hint{position:absolute;left:calc(var(--wl) + 16px);bottom:22px;z-index:3;font-size:12px;color:var(--muted);max-width:280px;line-height:1.5}
+/* tools: scissors, pull */
+.tools{position:absolute;left:calc(var(--wl) + 14px);top:44px;z-index:3;display:flex;flex-direction:column;gap:4px;padding:5px;border-radius:12px;background:var(--glass);backdrop-filter:blur(14px);border:1px solid var(--line)}
+.tools button{display:grid;place-items:center;width:42px;height:42px;border-radius:9px;color:var(--text-2);border:1px solid transparent}
+.tools button:hover{color:var(--text);background:var(--panel-3)}
+.tools button[aria-pressed=true]{color:#f2c46b;border-color:#c9a14f;background:rgba(201,161,79,.14)}
+.tools svg{width:21px;height:21px}
 </style>
 </head>
 <body>
@@ -150,19 +156,20 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 
   <aside class="panel right" aria-label="옷 고치기">
     <div class="tabs" role="tablist">
-      <button type="button" role="tab" aria-selected="true" data-tab="shape">모양</button>
-      <button type="button" role="tab" aria-selected="false" data-tab="color">색·무늬</button>
+      <button type="button" role="tab" aria-selected="true" data-tab="color">색·무늬</button>
+      <button type="button" role="tab" aria-selected="false" data-tab="shape">핏·목선</button>
     </div>
-    <div data-pane="shape">
-      <div class="row"><h3>소매 <span id="lbl-sleeve"></span></h3><div class="cards" id="c-sleeve"></div></div>
-      <div class="row"><h3>기장 <span id="lbl-len"></span></h3><div class="cards" id="c-len"></div></div>
+    <div data-pane="shape" hidden>
       <div class="row"><h3>핏 <span id="lbl-fit"></span></h3><div class="cards" id="c-fit"></div></div>
       <div class="row"><h3>목선 <span id="lbl-neck"></span></h3><div class="cards" id="c-neck"></div></div>
-      <label class="check"><input type="checkbox" id="fb" checked> 밑단·목선 앞뒤 같이 끌기</label>
-      <label class="check"><input type="checkbox" id="sym" checked> 왼쪽·오른쪽 같이</label>
-      <details class="fine" id="fine"><summary>세밀하게</summary><div id="bars"></div></details>
+      <details class="fine" id="fine"><summary>세밀하게</summary>
+        <div class="row" style="margin-top:12px"><h3>소매 <span id="lbl-sleeve"></span></h3><div class="cards" id="c-sleeve"></div></div>
+        <div class="row"><h3>기장 <span id="lbl-len"></span></h3><div class="cards" id="c-len"></div></div>
+        <label class="check"><input type="checkbox" id="fb" checked> 밑단·목선 앞뒤 같이 당기기</label>
+        <label class="check"><input type="checkbox" id="sym" checked> 왼쪽·오른쪽 같이</label>
+        <div id="bars"></div></details>
     </div>
-    <div data-pane="color" hidden>
+    <div data-pane="color">
       <div class="row"><h3>색</h3><div class="sw" id="sw1"></div>
         <div class="pick"><input type="color" id="c1"><span class="mono" id="c1t"></span></div></div>
       <div class="row"><h3>무늬</h3><div class="cards" id="c-pat"></div></div>
@@ -173,9 +180,13 @@ input[type=range]{width:100%;accent-color:var(--accent)}
   </aside>
 
   <div class="views" role="group" aria-label="보는 방향"><button type="button" data-a="0">앞</button><button type="button" data-a="0.7">비스듬히</button><button type="button" data-a="1.5708">옆</button><button type="button" data-a="3.1416">뒤</button></div>
-  <p class="hint" id="hint">옷 위의 흰 점을 끌어 보세요 — 소매 끝, 밑단, 옆구리, 목선. 빈 곳을 끌면 돌려 보기, 휠로 확대.</p>
+  <div class="tools" id="tools" role="toolbar" aria-label="도구" aria-orientation="vertical">
+    <button type="button" data-t="cut" aria-pressed="true" aria-label="가위 — 옷 위에 올리고 누르면 거기서 잘려요" title="가위"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M8.1 8.1 20 20M8.1 15.9 20 4"/></svg></button>
+    <button type="button" data-t="pull" aria-pressed="false" aria-label="당기기 — 가장자리를 끌어 늘리거나 모양 바꾸기" title="당기기"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20M2 12h20M12 2 9 5m3-3 3 3M12 22l-3-3m3 3 3-3M2 12l3-3m-3 3 3 3M22 12l-3-3m3 3-3 3"/></svg></button>
+  </div>
+  <p class="hint" id="hint"></p>
 </main>
 <script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"}}</script>
-<script type="module" src="studio.js?v=50"></script>
+<script type="module" src="studio.js?v=51"></script>
 </body>
 </html>
