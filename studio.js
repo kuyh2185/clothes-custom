@@ -994,8 +994,9 @@ const ringGone = h => h.kind === 'off' ? pc => pc >= 2 : (pc, x, y) => h.pcs.inc
 addEventListener('pointermove', e => {
   if (tool !== 'cut' || drag || stroke) return;
   if (e.buttons || e.target !== canvas) { hideRing(); return; }
-  hov = ringAt(e);
-  if (!hov) { hideRing(); return; }
+  const h = ringAt(e);
+  if (!h) { hideRing(); return; }   // (before hov is cleared: hideRing only hides a ring hov still names)
+  hov = h;
   const r = layer.getBoundingClientRect();
   showTip(ringName(hov), e.clientX - r.left, e.clientY - r.top);
   drawRing(); setFade(hov.ok && ringGone(hov));
