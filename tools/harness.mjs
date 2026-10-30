@@ -104,6 +104,7 @@ async function step(page, st) {
     case 'settle': return settle(page);
     case 'toggle': return click(page, '#' + st.id);
     case 'tool': return click(page, `#tools [data-t="${st.v}"]`);
+    case 'band': return page.evaluate(st => window.__studio.band(st.part, st.ya, st.yb, st.x ?? 1, st.v), st);   // the 통 tool's band (studio.js choose)
     case 'cut': {   // the scissors clicked on the ring there (then back to pull)
       await click(page, '#tools [data-t="cut"]');
       const b = await page.evaluate(st => {

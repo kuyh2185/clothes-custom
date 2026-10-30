@@ -22,14 +22,14 @@
  },
  "steps": [
   {
-   "t": "drag",
-   "dot": 10,
-   "dx": 50,
-   "dy": 85
+   "t": "bar",
+   "id": "dNw",
+   "v": 8
   },
   {
    "t": "wait",
    "ms": 968
   }
- ]
+ ],
+ "note": "2026-10-30: was a drag of the neck-width point (dot 10, dx 50 dy 85, which set dNw to 8); pull no longer has that point, so the bar sets the same. The top as loaded (dNw -1.7) has a 1.41 cm hem ear on the old code too: not fixed here"
 }

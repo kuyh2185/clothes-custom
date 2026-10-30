@@ -15,7 +15,7 @@ import { LineSegments2 } from 'three/addons/lines/LineSegments2.js';
 import { LineSegmentsGeometry } from 'three/addons/lines/LineSegmentsGeometry.js';
 import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import { smoothChest, tuckUnder } from './mannequin.js?v=1';
-import { BASE, BASE_M, applyCuts, fitSide, halfOk, halves, inside, resample, sleeves, sleeveOk } from './pattern.js?v=33';
+import { BASE, BASE_M, applyCuts, fitSide, halfOk, halves, inside, resample, sleeves, sleeveOk } from './pattern.js?v=34';
 
 const $ = id => document.getElementById(id);
 const PI = Math.PI;
@@ -252,8 +252,8 @@ function fit(keepDir = true) {
   const r = wrap.getBoundingClientRect(), w = Math.max(1, r.width), h = Math.max(1, r.height);
   renderer.setSize(w, h, false); composer.setPixelRatio(renderer.getPixelRatio()); composer.setSize(w, h);
   camera.aspect = w / h;
-  const css = getComputedStyle(document.documentElement), wl = parseFloat(css.getPropertyValue('--wl')), wr = parseFloat(css.getPropertyValue('--wr'));
-  shiftX = (wl - wr) / 2;
+  const css = getComputedStyle(document.documentElement), wl = parseFloat(css.getPropertyValue('--wl')), wr = parseFloat(css.getPropertyValue('--wr')) + parseFloat(css.getPropertyValue('--wf')) + 14;
+  shiftX = (wl - wr) / 2;   // (the flat top's panel beside the right one)
   camera.setViewOffset(w, h, -shiftX, 0, w, h);
   camera.updateProjectionMatrix();
   const t = Math.tan(camera.fov * PI / 360), d = Math.max((H * .5 + .28) / t, .55 / (t * camera.aspect));
@@ -385,7 +385,7 @@ const world = mesh => {   // rest pose = bind pose = world here (the asset's roo
 };
 
 /* ---------- the cloth ---------- */
-const worker = new Worker('cloth.js?v=55', { type: 'module' });
+const worker = new Worker('cloth.js?v=56', { type: 'module' });
 worker.onerror = e => console.error('[cloth]', e.message);
 const fabricU = { uC1: { value: new THREE.Color() }, uC2: { value: new THREE.Color() }, uPat: { value: 0 }, uScale: { value: 1 } };
 // the knit's grain as a normal map over the flat pattern (m): a jersey's columns of V-shaped loops, or for the fitted
@@ -629,6 +629,7 @@ function apply(light) {
   fabric.normalMap = fitOf(T.ease) > .5 ? rib2 : jersey;
   renderBars(); renderCards();
   if (!light) closeGrip();   // (any other change: the bar's start is no longer what is worn)
+  drawFlat(!light);
   if (light) { $('c1t').textContent = T.c1; $('c2t').textContent = T.c2; $('lbl-scale').textContent = `×${T.scale.toFixed(2)}`; }
   else renderColor();
   needs = true;
@@ -673,6 +674,8 @@ const DOTS = [
   { k: 'neck', i: 0 }, { k: 'neck', i: 1 }, { k: 'neckSide', i: 0 }, { k: 'neckSide', i: 1 },
 ];
 const LABEL = { sleeve: '소매 끝', hem: '밑단', hemSide: '밑단 폭', side: '옆구리 (품)', neck: '목선', neckSide: '목 넓이' };
+// pull moves things the long way only (the user, 2026-10-30): the points that widen are hidden, widths are the 통 tool's
+const WIDE = new Set(['hemSide', 'side', 'neckSide']);
 DOTS.forEach(d => {
   d.el = document.createElement('button');
   d.el.type = 'button';
@@ -711,7 +714,7 @@ function placeDots() {
     const [x, y] = project(v3);
     d.sx = x; d.sy = y; d.p = v3.clone();
     d.el.style.transform = `translate(${x}px, ${y}px)`;
-    d.el.hidden = drag ? drag !== d : tool !== 'pull' || facing < lim || nearBump(d, vi);   // while dragging only the point in hand
+    d.el.hidden = drag ? drag !== d : tool !== 'pull' || WIDE.has(d.k) || facing < lim || nearBump(d, vi);   // while dragging only the point in hand
     d.el.classList.toggle('on', drag === d);
   }
 }
@@ -810,7 +813,9 @@ addEventListener('pointermove', e => {
   // (a fixed point keeps the spot it is drawn on; around it, where its wider grip reaches, the edge's point is on top)
   const nearDot = DOTS.some(d => !d.el.hidden && Math.hypot(d.sx - x, d.sy - y) < 9);
   let best = -1, bd = 14 * 14;
-  if (!nearDot) for (const [i, px, py, f] of rimInView()) { const d = (px - x) ** 2 + (py - y) ** 2 - f * 4; if (d < bd) { bd = d; best = i; } }
+  // (not the side seams, a body's or a sleeve's: pulled the long way they only slide along themselves)
+  const R0 = cloth && cloth.userData.rim, along = i => { const nm = R0.names[R0.curve[i]]; return nm !== 'side' && nm !== 'und'; };
+  if (!nearDot) for (const [i, px, py, f] of rimInView()) { const d = (px - x) ** 2 + (py - y) ** 2 - f * 4; if (d < bd && along(i)) { bd = d; best = i; } }
   edgeI = best; edgeDot.hidden = best < 0;
   if (best >= 0) { placeEdge(); const R = cloth.userData.rim; showTip(edgeName(R, best), x, y); }
   else if (e.target === canvas || e.target === edgeDot) tip.classList.remove('show');   // (a fixed point shows its own)
@@ -820,26 +825,23 @@ edgeDot.addEventListener('pointerdown', e => {
   if (!R || edgeI < 0) return;
   e.preventDefault(); e.stopPropagation();
   const i = edgeI, curve = R.names[R.curve[i]], pc = R.pc[i], half = R.half[i];
-  const p = v3.fromBufferAttribute(cloth.geometry.attributes.position, R.v[i]).clone(), [sx, sy] = project(p);
+  const p = v3.fromBufferAttribute(cloth.geometry.attributes.position, R.v[i]).clone();
   const d = { k: 'edge', curve, name: edgeName(R, i), t: Math.round(R.t[i] * 1000) / 1000, x0: e.clientX, y0: e.clientY, start: structuredClone(state.top), along: [0, 1] };
   if (pc >= 2) {
-    // a sleeve: both alike while 좌우 같이 is on; "down" is along the arm (shoulder → cuff on screen), "out" across it
-    // away from the arm's middle line, the line from the shoulder's end to the middle of the cuff
+    // a sleeve: both alike while 좌우 같이 is on; "down" is along the arm (shoulder → cuff on screen)
     d.keys = $('sym').checked ? ['Sl', 'Sr'] : [pc === 2 ? 'Sl' : 'Sr'];
     d.local = 0;
     const P = cloth.geometry.attributes.position, c = new THREE.Vector3();
     let n = 0;
     for (let j = 0; j < R.v.length; j++) if (R.pc[j] === pc && R.names[R.curve[j]] === 'hem') { c.add(v3.fromBufferAttribute(P, R.v[j])); n++; }
     const [hx, hy] = project(c.divideScalar(n)), [ux, uy] = project(v3.fromBufferAttribute(P, cloth.userData.marks.shoulder[pc - 2]));
-    const al = Math.hypot(hx - ux, hy - uy) || 1, ax = (hx - ux) / al, ay = (hy - uy) / al, sg = (sx - hx) * -ay + (sy - hy) * ax < 0 ? -1 : 1;
-    d.along = [ax, ay]; d.out = [-ay * sg, ax * sg];
+    const al = Math.hypot(hx - ux, hy - uy) || 1;
+    d.along = [(hx - ux) / al, (hy - uy) / al];
   } else {
     // which panels, and whether it keeps to its own curve (a free edge pulled on one panel: its corner is sewn to the other)
     const both = !(curve === 'neck' || curve === 'hem') || $('fb').checked;
     d.keys = (both ? ['F', 'B'] : [pc ? 'B' : 'F']).flatMap(k => $('sym').checked ? [k + 'p', k + 'm'] : [k + (half ? 'm' : 'p')]);
     d.local = both ? 0 : 1;
-    const [ax, ay] = project(new THREE.Vector3(0, p.y, A.z0)), ox = sx - ax, oy = sy - ay, ol = Math.hypot(ox, oy);
-    d.out = ol > 6 ? [ox / ol, oy / ol] : [half ? -1 : 1, 0];
   }
   d.mpp = 2 * camera.position.distanceTo(p) * Math.tan(camera.fov * PI / 360) / canvas.getBoundingClientRect().height;
   drag = d; controls.enabled = false; edgeDot.classList.add('on');
@@ -870,9 +872,10 @@ function edgeOk(T, d) {
   return !d.ok0 || piecesOk(T, s0);
 }
 function edgeMove(e, d) {
-  const px = e.clientX - d.x0, py = e.clientY - d.y0, down = (px * d.along[0] + py * d.along[1]) * d.mpp * 100, out = (px * d.out[0] + py * d.out[1]) * d.mpp * 100;
-  // at most 15 cm at once; dragged further than the outline can take, it stops where it still can
-  const l = Math.hypot(out, down), s = l > 15 ? 15 / l : 1, dx = out * s, dy = -down * s;
+  // the long way only (down the body, along the arm); at most 15 cm at once; dragged further than the outline can take,
+  // it stops where it still can
+  const px = e.clientX - d.x0, py = e.clientY - d.y0, down = (px * d.along[0] + py * d.along[1]) * d.mpp * 100;
+  const dx = 0, dy = -clamp(down, -15, 15);
   let k = 1;
   if (!edgeOk(withBump(d, dx, dy, 1), d)) {
     let lo = 0, hi = 1;
@@ -907,7 +910,7 @@ const editNear = (pc, x, y) => (cloth && cloth.userData.info.bumps || []).some(b
 // goes there), round both sleeves at that length, or near the top of a sleeve its whole armhole seam (sleeveless);
 // a click cuts there. Pull: the fixed points and the edge's point as before (2단계)
 let tool = 'cut', hov = null;
-const HINT = { cut: '가위 — 옷 위에 올리면 노란 선, 누르면 거기서 잘려요(소매는 양쪽 같이). 누른 채 그으면 그은 대로 잘려요. 잘릴 곳은 반투명하게 보여요.', pull: '당기기 — 흰 점이나 옷 가장자리를 끌어 늘리거나 모양을 바꿔요.', fit: '통 — 옷을 누르면 그 높이 둘레(소매는 그 자리 통)가 골라져요. 옆 막대로 몸에 착 붙이거나 넉넉하게 해요.' };
+const HINT = { cut: '가위 — 옷 위에 올리면 노란 선, 누르면 거기서 잘려요(소매는 양쪽 같이). 누른 채 그으면 그은 대로 잘려요. 잘릴 곳은 반투명하게 보여요.', pull: '당기기 — 흰 점이나 옷 가장자리를 위아래(소매는 팔 방향)로 끌어 길이를 바꿔요. 폭은 통 도구로.', fit: '통 — 펼친 모양에서 위아래로 끌어 범위를 고르고(옷을 누르면 그 자리), 금색 손잡이나 막대로 한 번에 줄이거나 늘려요.' };
 function setTool(t) {
   tool = t;
   document.querySelectorAll('#tools [data-t]').forEach(b => b.setAttribute('aria-pressed', b.dataset.t === t));
@@ -1116,17 +1119,19 @@ function cutAt(h) {
   fix(T);
   state.top = T; hideRing(); apply(); commit(); say(ringName(h).replace(' (양쪽)', '') + '로 잘랐어요');
 }
-// the (uncut) front side seam's x at depth y (cm below the high shoulder point); past its end, its end's
-function sideX(T, y) {
-  const s = sleeves(params(T)).h.F.side;
-  for (let i = 1; i < s.length; i++) if (-s[i][1] >= y) { const [a, b] = [s[i - 1], s[i]]; return lerp(a[0], b[0], clamp((y + a[1]) / (a[1] - b[1]), 0, 1)); }
-  return s.at(-1)[0];
+// x along a curve running down where it is d cm down (d positive); past its ends, its end's
+function xAt(c, d) {
+  for (let i = 1; i < c.length; i++) if (-c[i][1] >= d) { const [a, b] = [c[i - 1], c[i]]; return lerp(a[0], b[0], clamp((d + a[1]) / (a[1] - b[1]), 0, 1)); }
+  return c.at(-1)[0];
 }
-/* ---------- 통 (fit): a place picked on the cloth, its width on a bar (시험판, 2026-10-30) ---------- */
+// the (uncut) front side seam's x at depth y (cm below the high shoulder point)
+const sideX = (T, y) => xAt(sleeves(params(T)).h.F.side, y);
+/* ---------- 통 (fit): a band picked, its width at once (2026-10-30) ---------- */
 // its own tool, apart from pull (the user: pulling and taking in / letting out in one tool was what made pulling hard to read)
-// a click on the body picks the round at that height (both side seams bumped out or in there, state.top.edit as the
-// edge's point does), on a sleeve that sleeve's width there; the bar beside it runs from as close to the body as the
-// pieces allow (piecesOk: 1 cm over it) to as loose as they allow, the cloth hanging again as it moves
+// a band picked on the flat top (드래그 위아래, 펼친 모양) or a click on the cloth (5 cm either side): on the body the side
+// seams over that stretch, on a sleeve its underarm, all moved in or out alike (a band bump, pattern.js bend), easing back
+// over 6 cm past its ends. The bar (or the band's gold handles) runs from as close to the body as the pieces allow
+// (piecesOk: 1 cm over it, at the band's tightest) to as loose as they allow, the cloth hanging again as it moves
 let grip = null, pickXY = null;
 const gripEl = $('grip'), gripBar = $('grip-r');
 // t of the way along a curve running down to where it reaches y (cm, down negative)
@@ -1140,10 +1145,10 @@ function tAt(c, y) {
   }
   return 1;
 }
-// the top as picked with the place dx cm out (in, negative) on every half it covers
+// the top as picked with the band dx cm out (in, negative) on every half it covers
 function gripTop(g, dx) {
   const T = structuredClone(g.start), E = T.edit = T.edit || {};
-  if (Math.abs(dx) >= .05) for (const k of g.keys) E[k] = [...(E[k] || []), [g.curve, g.t, r1(dx), 0, g.r]];
+  if (Math.abs(dx) >= .05) for (const k of g.keys) E[k] = [...(E[k] || []), [g.curve, g.t, r1(dx), 0, g.r, 0, g.t2]];
   return T;
 }
 // from 0 toward `to`, as far as the pieces stay whole (a start already failing isn't held, as edgeOk)
@@ -1154,51 +1159,156 @@ function gripEnd(g, to) {
   for (let i = 0; i < 8; i++) { const m = (lo + hi) / 2; if (ok(m)) lo = m; else hi = m; }
   return Math.trunc(lo * 10) / 10;
 }
-function pickAt(e) {
-  const h = hitAt(e);
-  if (!h || !A) { closeGrip(); return; }
+// the band ya … yb cm down (the body from the high shoulder point, a sleeve from its cap's top) of part 'body', 'l' or
+// 'r'; xs: the side the body was picked on (with 왼쪽·오른쪽 같이 off only that side's seams move)
+function choose(part, ya, yb, xs) {
+  if (!A) return;
   const T = state.top, s = sleeves(params({ ...T, edit: undefined, cuts: undefined })), sym = $('sym').checked;
   let g;
-  if (h.pc < 2) {
-    const d = -h.y, m = measure(), part = [['가슴', m.armpit + 4], ['허리', m.waist], ['엉덩이', m.hip]].reduce((a, b) => Math.abs(b[1] - d) < Math.abs(a[1] - d) ? b : a);
-    g = { curve: 'side', c: s.h.F.side, r: 10, keys: (sym ? ['p', 'm'] : [h.x >= 0 ? 'p' : 'm']).flatMap(k => ['F' + k, 'B' + k]),
-      name: (sym ? '' : h.x >= 0 ? '왼쪽 ' : '오른쪽 ') + (Math.abs(part[1] - d) < 7 ? part[0] + ' 둘레' : '옆선') };
+  if (part === 'body') {
+    const m = measure(), name = d => [['겨드랑이', -s.h.F.side[0][1]], ['가슴', m.armpit + 4], ['허리', m.waist], ['엉덩이', m.hip], ['밑단', -s.h.F.side.at(-1)[1]]]
+      .reduce((a, b) => Math.abs(b[1] - d) < Math.abs(a[1] - d) ? b : a)[0];
+    g = { curve: 'side', c: s.h.F.side, pc: 0, keys: (sym ? ['p', 'm'] : [xs >= 0 ? 'p' : 'm']).flatMap(k => ['F' + k, 'B' + k]), name };
   } else {
-    const k = h.pc === 2 ? 'l' : 'r';
-    if (!s[k]) { closeGrip(); return; }
-    g = { curve: 'und', c: s[k].H0.und, r: 8, keys: sym ? ['Sl', 'Sr'] : ['S' + k], name: (sym ? '' : k === 'l' ? '왼쪽 ' : '오른쪽 ') + '소매 통' };
+    if (!s[part]) { closeGrip(); return; }
+    g = { curve: 'und', c: s[part].H0.und, pc: part === 'l' ? 2 : 3, keys: sym ? ['Sl', 'Sr'] : ['S' + part], name: () => '소매' };
   }
+  const top = -g.c[0][1], bot = -g.c.at(-1)[1];
+  ya = clamp(ya, top, bot); yb = clamp(yb, top, bot);
+  if (yb - ya < 1) { closeGrip(); say(part === 'body' ? '겨드랑이 아래 몸판을 골라 주세요' : '소매 아래쪽을 골라 주세요'); return; }
+  const na = g.name(ya), nb = g.name(yb);
+  g.name = (sym ? '' : (part === 'body' ? xs >= 0 : part === 'l') ? '왼쪽 ' : '오른쪽 ') + (part === 'body' ? (na === nb ? na : `${na}~${nb}`) + ' 둘레' : '소매 통');
   // n: how many halves' edges move, so the round changes by n × dx
-  Object.assign(g, { t: Math.round(tAt(g.c, h.y) * 1000) / 1000, y: h.y, pc: h.pc, x: h.x, n: g.curve === 'side' ? g.keys.length : 2, start: structuredClone(T), from: sleeves(params({ ...T, cuts: undefined })) });
+  Object.assign(g, { ya, yb, x: xs, r: 6, t: Math.round(tAt(g.c, -ya) * 1000) / 1000, t2: Math.round(tAt(g.c, -yb) * 1000) / 1000,
+    n: g.curve === 'side' ? g.keys.length : 2, start: structuredClone(T), from: sleeves(params({ ...T, cuts: undefined })) });
   g.ok0 = piecesOk(T, sleeves(params({ ...T, edit: undefined, cuts: undefined })));
   g.lo = gripEnd(g, -15); g.hi = gripEnd(g, 15);
   grip = g;
   gripBar.min = g.lo; gripBar.max = g.hi; gripBar.value = 0;
   $('grip-name').textContent = g.name; gripLabel(0);
   gripEl.hidden = false;
-  // at the stage's right side, level with the click (beside the click it covered the very band being changed)
-  const r = layer.getBoundingClientRect(), y = e.clientY - r.top, right = document.querySelector('.panel.right').getBoundingClientRect().left - r.left;
-  gripEl.style.left = (right - gripEl.offsetWidth - 20) + 'px';
-  gripEl.style.top = clamp(y - 30, 8, r.height - gripEl.offsetHeight - 8) + 'px';
-  gripFade();
+  gripFade(); drawFlat();
+}
+function pickAt(e) {
+  const h = hitAt(e);
+  if (!h) { closeGrip(); return; }
+  const d = -h.y;
+  choose(h.pc < 2 ? 'body' : h.pc === 2 ? 'l' : 'r', d - 5, d + 5, h.x);
 }
 function gripLabel(dx) {
   const g = grip;
   $('grip-v').textContent = g.lo < 0 && dx <= g.lo + .05 ? '몸에 착' : `둘레 ${dx >= 0 ? '+' : ''}${(dx * g.n).toFixed(1)}cm`;
 }
-// the picked place striped: that band of the halves (or sleeves) it covers
+// the picked band striped on the cloth: that band of the halves (or sleeves) it covers
 function gripFade() {
   const g = grip, all = g.keys.length === (g.pc < 2 ? 4 : 2);
-  setFade((pc, x, y) => (g.pc < 2 ? pc < 2 && (all || (x >= 0) === (g.x >= 0)) : pc >= 2 && (all || pc === g.pc)) && Math.abs(y - g.y) < g.r * .6, 2);
+  setFade((pc, x, y) => (g.pc < 2 ? pc < 2 && (all || (x >= 0) === (g.x >= 0)) : pc >= 2 && (all || pc === g.pc)) && -y >= g.ya && -y <= g.yb, 2);
 }
 function closeGrip() {
   if (!grip) return;
-  grip = null; gripEl.hidden = true; setFade(null);
+  grip = null; gripEl.hidden = true; setFade(null); drawFlat();
 }
-gripBar.addEventListener('input', () => { if (!grip) return; const dx = +gripBar.value; state.top = gripTop(grip, dx); apply(true); gripLabel(dx); });
+const gripSet = dx => { state.top = gripTop(grip, dx); apply(true); gripLabel(dx); };
+gripBar.addEventListener('input', () => { if (grip) gripSet(+gripBar.value); });
 gripBar.addEventListener('change', () => { if (grip) commit(); });
 $('grip-fit').addEventListener('click', () => { if (!grip) return; gripBar.value = grip.lo; gripBar.dispatchEvent(new Event('input')); commit(); });
 $('grip-x').addEventListener('click', closeGrip);
+
+/* ---------- 펼친 모양: the top laid flat, seen from the front (2026-10-30) ---------- */
+// the pattern as it is, drawn flat (cm, y down): a body panel as wide as its pattern (half of it is a quarter of the
+// round), a sleeve folded along its middle line, as wide as its half; the back behind the front (its neck shows above
+// the front's). Drawn on every change; a band dragged up or down on it is the 통 tool's pick
+const flatSvg = $('flat-svg'), CH5 = ['neck', 'shoulder', 'arm', 'side', 'hem'];
+let flat = null, flatSel = null, flatBox = null;
+const chainOf = H => CH5.flatMap((k, i) => i ? H[k].slice(1) : H[k]);
+const panelOf = (Hp, Hm) => [...chainOf(Hp).map(([x, y]) => [x, -y]), ...chainOf(Hm).reverse().map(([x, y]) => [-x, -y])];
+// a sleeve laid out from its armhole, down and out (a short one nearly level, a long one steeper): its middle line the
+// straight top fold from T0, its underarm seam the bottom edge; sg 1 the left sleeve (+x, on the right as you face it)
+function flatSleeve(s, k) {
+  const H = k === 'l' ? s.h.Fp : s.h.Fm, sg = k === 'l' ? 1 : -1, u = s.h.uS[k];
+  if (u < 1.2) return null;
+  const O = [H.shoulder.at(-1)[0], -H.shoulder.at(-1)[1]], U = [H.side[0][0], -H.side[0][1]], th = lerp(.5, 1.08, sstep(u / 55));
+  const d = [Math.cos(th), Math.sin(th)], n = [Math.sin(th), -Math.cos(th)], M = p => [sg * p[0], p[1]];
+  const arm = H.arm.map(([x, y]) => [x, -y]).reverse().slice(1, -1);   // (closed along the armhole: a straight close left a gap under the arm)
+  // shortcut: a sleeve shorter than its cap is drawn as a small flap, not cut from the cap; enough to see it is there
+  if (!s[k]) return { poly: [O, [O[0] + d[0] * u, O[1] + d[1] * u], [U[0] + d[0] * u * .4, U[1] + d[1] * u * .4], U, ...arm].map(M) };
+  const { und, hem } = s[k].H, ch = s.sl[k].ch, w0 = und[0][0], T0 = [U[0] + n[0] * w0, U[1] + n[1] * w0];
+  const m = ([x, y]) => [T0[0] + d[0] * (-y - ch) - n[0] * x, T0[1] + d[1] * (-y - ch) - n[1] * x];
+  return { poly: [O, T0, ...hem.slice().reverse().map(m), ...und.slice().reverse().map(m), ...arm].map(M), T0, d, n, ch, sg, m, und };
+}
+// a sleeve's length (cm from its cap's top) at a flat point
+const sleeveLen = (F, p) => F.ch + (F.sg * p[0] - F.T0[0]) * F.d[0] + (p[1] - F.T0[1]) * F.d[1];
+const pathOf = pts => 'M' + pts.map(p => p[0].toFixed(2) + ' ' + p[1].toFixed(2)).join('L') + 'Z';
+// refit: frame the drawing anew (not while something is dragged: the drawing would shift under the hand)
+function drawFlat(refit) {
+  const T = state.top, s = sleeves(params());
+  flat = { body: panelOf(s.h.Fp, s.h.Fm), back: panelOf(s.h.Bp, s.h.Bm), sl: { l: flatSleeve(s, 'l'), r: flatSleeve(s, 'r') } };
+  const all = [...flat.back, ...flat.body, ...['l', 'r'].flatMap(k => flat.sl[k] ? flat.sl[k].poly : [])];
+  if (refit || !flatBox) {
+    const w = Math.max(...all.map(p => Math.abs(p[0]))) + 4, ys = all.map(p => p[1]), y0 = Math.min(...ys) - 4, y1 = Math.max(...ys) + 4;
+    flatBox = [-w, y0, 2 * w, y1 - y0];
+    flatSvg.setAttribute('viewBox', flatBox.map(v => v.toFixed(1)).join(' '));
+    flatSvg.style.aspectRatio = flatBox[2] / flatBox[3];   // (as tall as the drawing, at most the CSS max-height)
+  }
+  const f = T.c1, st = 'stroke="#8d8a83" stroke-width="1.2" vector-effect="non-scaling-stroke" stroke-linejoin="round"';
+  let out = `<defs><pattern id="fstripe" width="1.4" height="1.4" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width=".7" height="1.4" fill="#f2c46b"/></pattern>
+    <clipPath id="fclip-b"><path d="${pathOf(flat.body)}"/></clipPath>${['l', 'r'].map(k => flat.sl[k] ? `<clipPath id="fclip-${k}"><path d="${pathOf(flat.sl[k].poly)}"/></clipPath>` : '').join('')}</defs>`;
+  out += `<path d="${pathOf(flat.back)}" fill="${f}" ${st}/><path d="${pathOf(flat.back)}" fill="#000" opacity=".3"/>`;
+  for (const k of ['l', 'r']) if (flat.sl[k]) out += `<path d="${pathOf(flat.sl[k].poly)}" fill="${f}" ${st}/>`;
+  out += `<path d="${pathOf(flat.body)}" fill="${f}" ${st}/>`;
+  // the band picked (or being dragged), and the handles that take it in or let it out
+  const b = flatSel ? { part: flatSel.part, ya: Math.min(flatSel.a, flatSel.b), yb: Math.max(flatSel.a, flatSel.b), x: flatSel.x, all: $('sym').checked }
+    : grip && { part: grip.pc < 2 ? 'body' : grip.pc === 2 ? 'l' : 'r', ya: grip.ya, yb: grip.yb, x: grip.x, all: grip.keys.length === (grip.pc < 2 ? 4 : 2) };
+  if (b) for (const k of b.part === 'body' ? ['b'] : b.all ? ['l', 'r'] : [b.part]) {
+    let band;
+    if (k === 'b') { const x0 = b.all || b.x < 0 ? -200 : 0, x1 = b.all || b.x >= 0 ? 200 : 0; band = [[x0, b.ya], [x1, b.ya], [x1, b.yb], [x0, b.yb]]; }
+    else { const F = flat.sl[k]; if (!F || !F.m) continue; band = [[-3, -b.ya], [-3, -b.yb], [40, -b.yb], [40, -b.ya]].map(F.m).map(p => [F.sg * p[0], p[1]]); }
+    out += `<path d="${pathOf(band)}" fill="url(#fstripe)" opacity=".75" clip-path="url(#fclip-${k})" pointer-events="none"/>`;
+  }
+  if (grip && !flatSel) {
+    const ym = (grip.ya + grip.yb) / 2, hs = [];
+    if (grip.pc < 2) { for (const h of ['p', 'm']) if (grip.keys.includes('F' + h)) hs.push([h, (h === 'p' ? 1 : -1) * xAt(s.h['F' + h].side, ym), ym]); }
+    else for (const k of ['l', 'r']) { const F = flat.sl[k]; if (F && F.m && grip.keys.includes('S' + k)) { const p = F.m([xAt(F.und, ym), -ym]); hs.push([k, F.sg * p[0], p[1]]); } }
+    for (const [h, x, y] of hs) out += `<circle data-h="${h}" cx="${x.toFixed(2)}" cy="${y.toFixed(2)}" r="2.2" fill="#f2c46b" stroke="#1b0d07" stroke-width="1.5" vector-effect="non-scaling-stroke" style="cursor:ew-resize"/>`;
+  }
+  flatSvg.innerHTML = out;
+}
+const flatPt = e => { const p = new DOMPoint(e.clientX, e.clientY).matrixTransform(flatSvg.getScreenCTM().inverse()); return [p.x, p.y]; };
+// pressed on a handle: the band in or out by how far it is dragged across its seam; elsewhere on the top: a band picked
+// by dragging up or down it (a click: 5 cm either side)
+flatSvg.addEventListener('pointerdown', e => {
+  if (e.button || !flat || !A) return;
+  e.preventDefault();
+  const p0 = flatPt(e), id = e.pointerId, h = e.target.dataset && e.target.dataset.h;
+  let move, up;
+  if (h && grip) {
+    const v0 = +gripBar.value, F = flat.sl[h];
+    move = ev => {
+      const p = flatPt(ev), dx = F ? -((p[0] - p0[0]) * F.sg * F.n[0] + (p[1] - p0[1]) * F.n[1]) : (p[0] - p0[0]) * (h === 'p' ? 1 : -1);
+      gripBar.value = clamp(r1(v0 + dx), grip.lo, grip.hi); gripSet(+gripBar.value);
+    };
+    up = () => commit();
+  } else {
+    const part = inside(p0, flat.body) ? 'body' : ['l', 'r'].find(k => flat.sl[k] && flat.sl[k].m && inside(p0, flat.sl[k].poly));
+    if (!part) { closeGrip(); return; }
+    if (tool !== 'fit') setTool('fit');
+    const depth = p => part === 'body' ? p[1] : sleeveLen(flat.sl[part], p);
+    flatSel = { part, a: depth(p0), b: depth(p0), x: p0[0] };
+    drawFlat();
+    move = ev => { flatSel.b = depth(flatPt(ev)); drawFlat(); };
+    up = () => {
+      const { a, b, x } = flatSel; flatSel = null;
+      if (Math.abs(b - a) < 1.5) choose(part, a - 5, a + 5, x); else choose(part, Math.min(a, b), Math.max(a, b), x);
+    };
+  }
+  flatSvg.setPointerCapture(id);
+  const mv = ev => { if (ev.pointerId === id) move(ev); }, end = ev => {
+    if (ev.pointerId !== id) return;
+    flatSvg.removeEventListener('pointermove', mv); flatSvg.removeEventListener('pointerup', end); flatSvg.removeEventListener('pointercancel', end);
+    up();
+  };
+  flatSvg.addEventListener('pointermove', mv); flatSvg.addEventListener('pointerup', end); flatSvg.addEventListener('pointercancel', end);
+});
 // a click (not a drag to turn the view) on the cloth picks there, off it closes the bar
 wrap.addEventListener('pointerdown', e => { pickXY = tool === 'fit' && !e.button ? [e.clientX, e.clientY] : null; });
 wrap.addEventListener('pointerup', e => {
@@ -1238,6 +1348,8 @@ renderSeg(); apply(); undoState();
 showBody(state.body);
 window.__studio = { get state() { return state; }, apply, showBody, camera, controls, canvas, project, get cloth() { return cloth; }, get awake() { return awake; }, get A() { return A; }, composer, renderer, params, edgePoint, edgeAt, editNear,
   editOk: () => piecesOk(state.top, sleeves(params({ ...state.top, edit: undefined, cuts: undefined }))),
+  // the 통 tool's band picked and set (v: cm in or out, or 'fit' for 몸에 착), as the flat top's drag and the bar do → its range
+  band: (part, ya, yb, xs, v) => { choose(part, ya, yb, xs); if (!grip) return null; gripBar.value = v === 'fit' ? grip.lo : clamp(v, grip.lo, grip.hi); gripSet(+gripBar.value); commit(); return [grip.lo, grip.hi]; },
   // how far in (cm) a side's armhole was pulled by hand, at most: its sleeve sits that much further up the arm
   armIn: s => {
     const e = sleeves(params({ ...state.top, cuts: undefined })).h, o = sleeves(params({ ...state.top, edit: undefined, cuts: undefined })).h, n = 24;

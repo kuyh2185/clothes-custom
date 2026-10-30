@@ -21,10 +21,9 @@
  },
  "steps": [
   {
-   "t": "drag",
-   "dot": 4,
-   "dx": -7,
-   "dy": -12
+   "t": "bar",
+   "id": "flare",
+   "v": -4.5
   },
   {
    "t": "bar",
@@ -39,5 +38,6 @@
   {
    "t": "settle"
   }
- ]
+ ],
+ "note": "2026-10-30: the drags of widening points (hem width, side, neck width) are bars now, set to what the drag gave on the old code: pull no longer has those points"
 }

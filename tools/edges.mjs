@@ -8,8 +8,9 @@ const arg = (k, d) => { const i = process.argv.indexOf('--' + k); return i > 0 ?
 const TOP = { sl: [20, 20], L: 62, ease: 0, sEase: 0, flare: 0, dNw: 0, ndF: 10, ndB: 2.6, neckV: 0 };
 const EDGES = [
   // [name, piece, curve, half, view, drag px (out, then the second one in)]
-  ['밑단', 0, 'hem', 'p', 0], ['옆선', 0, 'side', 'p', 0], ['목선', 0, 'neck', 'p', 0], ['어깨선', 0, 'shoulder', 'p', 0],
-  ['진동둘레', 0, 'arm', 'p', 0], ['소매 끝', 2, 'hem', 's', 0], ['소매 옆선', 2, 'und', 's', 2], ['뒤 밑단', 1, 'hem', 'm', 3],
+  // (the long way only since 2026-10-30: the side seams, a body's or a sleeve's, are the 통 tool's — its bands below)
+  ['밑단', 0, 'hem', 'p', 0], ['목선', 0, 'neck', 'p', 0], ['어깨선', 0, 'shoulder', 'p', 0],
+  ['진동둘레', 0, 'arm', 'p', 0], ['소매 끝', 2, 'hem', 's', 0], ['뒤 밑단', 1, 'hem', 'm', 3],
 ];
 // --panels: the body panels' edges only (and the checks below); --extra: the checks below only
 const cases = [], only = process.argv.includes('--extra');
@@ -25,7 +26,7 @@ if (!only) for (const body of ['f', 'm']) for (const [name, pc, curve, half, vie
 cases.push(
   { name: 'f 목선 위로', state: { v: 2, body: 'f', bottom: 'jeans', top: TOP }, steps: [{ t: 'view', a: 0 }, { t: 'wait', ms: 400 }, { t: 'edge', pc: 0, curve: 'neck', at: .35, half: 'p', dx: 0, dy: -80 }, { t: 'settle' }],
     check: () => { const b = (window.__studio.state.top.edit || {}).Bp || []; return b.length && b[0][3] >= 1 && b[0][3] <= 2.7 ? [] : [`뒤 목 혹 ${JSON.stringify(b)} (앞 목 ${window.__studio.state.top.ndF})`]; } },
-  { name: 'f 카드 뒤 옆선', state: { v: 2, body: 'f', bottom: 'jeans', top: { ...TOP, ease: 6, sEase: 6 } }, steps: [{ t: 'view', a: 0 }, { t: 'wait', ms: 400 }, { t: 'edge', pc: 0, curve: 'side', at: .5, half: 'p', dx: -40, dy: 0 }, { t: 'settle' }, { t: 'card', g: 'fit', i: 0 }, { t: 'settle' }],
+  { name: 'f 카드 뒤 옆선', state: { v: 2, body: 'f', bottom: 'jeans', top: { ...TOP, ease: 6, sEase: 6 } }, steps: [{ t: 'view', a: 0 }, { t: 'wait', ms: 400 }, { t: 'band', part: 'body', ya: 30, yb: 50, v: 'fit' }, { t: 'settle' }, { t: 'card', g: 'fit', i: 0 }, { t: 'settle' }],
     // (the bump may be shrunk to nothing by the fitted card, and a bump of nothing is dropped: only the pieces are checked)
     check: () => window.__studio.editOk() ? [] : ['카드 뒤 조각이 깨짐'] },
   { name: 'f 밑단 가운데 혹', state: { v: 2, body: 'f', bottom: 'jeans', top: TOP }, steps: [{ t: 'view', a: 0 }, { t: 'wait', ms: 400 }, { t: 'edge', pc: 0, curve: 'hem', at: .8, half: 'p', dx: 0, dy: 40 }, { t: 'settle' }],
@@ -33,10 +34,11 @@ cases.push(
 );
 // 왼쪽·오른쪽 같이 off: only the half pulled takes the bump (front and back of it where they are sewn), the other half
 // none, and the cloth still passes — the side, the armhole (that sleeve's cap then cut to its own armhole), the front hem
-for (const [body, curve, at, dx, dy, fb, want] of [['f', 'side', .5, 30, 0, 1, ['Fp', 'Bp']], ['m', 'side', .5, -30, 0, 1, ['Fp', 'Bp']],
-  ['f', 'arm', .5, 25, 0, 1, ['Fp', 'Bp']], ['m', 'hem', .5, 0, 40, 0, ['Fp']]])
+for (const [body, curve, at, dx, dy, fb, want] of [['f', 'side', 0, 4, 0, 1, ['Fp', 'Bp']], ['m', 'side', 0, 'fit', 0, 1, ['Fp', 'Bp']],
+  ['f', 'arm', .5, 0, 25, 1, ['Fp', 'Bp']], ['m', 'hem', .5, 0, 40, 0, ['Fp']]])
   cases.push({ name: `${body} 한쪽 ${curve}`, state: { v: 2, body, bottom: 'jeans', top: TOP },
-    steps: [{ t: 'view', a: 0 }, { t: 'wait', ms: 400 }, { t: 'toggle', id: 'sym' }, ...(fb ? [] : [{ t: 'toggle', id: 'fb' }]), { t: 'edge', pc: 0, curve, at, half: 'p', dx, dy }, { t: 'settle' }],
+    steps: [{ t: 'view', a: 0 }, { t: 'wait', ms: 400 }, { t: 'toggle', id: 'sym' }, ...(fb ? [] : [{ t: 'toggle', id: 'fb' }]),
+      curve === 'side' ? { t: 'band', part: 'body', ya: 32, yb: 48, x: 1, v: dx } : { t: 'edge', pc: 0, curve, at, half: 'p', dx, dy }, { t: 'settle' }],
     check: new Function(`const E = window.__studio.state.top.edit || {}, want = ${JSON.stringify(want)}, has = k => (E[k] || []).some(e => Math.hypot(e[2], e[3]) >= .5);
       return [...want.filter(k => !has(k)).map(k => k + ' 혹이 안 생김'), ...['Fp', 'Fm', 'Bp', 'Bm'].filter(k => !want.includes(k) && has(k)).map(k => k + '에도 혹'),
         ...(window.__studio.editOk() ? [] : ['조각이 깨짐'])];`) });
@@ -44,11 +46,27 @@ for (const [body, curve, at, dx, dy, fb, want] of [['f', 'side', .5, 30, 0, 1, [
 cases.push({ name: 'f 한쪽 밑단 가운데', state: { v: 2, body: 'f', bottom: 'jeans', top: TOP },
   steps: [{ t: 'view', a: 0 }, { t: 'wait', ms: 400 }, { t: 'toggle', id: 'sym' }, { t: 'edge', pc: 0, curve: 'hem', at: .8, half: 'p', dx: 0, dy: 40 }, { t: 'settle' }],
   check: async () => {
-    const S = window.__studio, E = S.state.top.edit || {}, { halves } = await import('./pattern.js?v=27'), h = halves(S.params());
+    const S = window.__studio, E = S.state.top.edit || {}, { halves } = await import('./pattern.js?v=34'), h = halves(S.params());
     const gap = Math.abs(h.Fp.hem.at(-1)[1] - h.Fm.hem.at(-1)[1]), drop = h.F.hem.at(-1)[1] - h.Fp.hem.at(-1)[1];
     return [...((E.Fp || []).length && !(E.Fm || []).length ? [] : [`혹 Fp ${JSON.stringify(E.Fp)} Fm ${JSON.stringify(E.Fm)}`]),
       ...(gap < .05 && drop > 1 ? [] : [`가운데 어긋남 ${gap.toFixed(2)}cm, 내려감 ${drop.toFixed(2)}cm`]), ...(S.editOk() ? [] : ['조각이 깨짐'])];
   } });
+// 통 (2026-10-30): a band picked and taken in to the body or let out — the side seams (a sleeve's underarm) over the whole
+// band move alike (at its middle and a quarter in, by what the bar says), back where they were 6 cm past its ends
+const bandOk = (part, ya, yb) => new Function(`return (async () => {
+  const S = window.__studio, E = S.state.top.edit || {}, k = '${part === 'body' ? 'Fp' : 'Sl'}', c = '${part === 'body' ? 'side' : 'und'}', b = (E[k] || []).at(-1);
+  if (!b || b[6] == null) return ['띠 혹이 안 생김 ' + JSON.stringify(E)];
+  const { sleeves } = await import('./pattern.js?v=34'), p = S.params(), q = { ...p, edit: undefined };
+  const cur = h => ${part === 'body' ? 'h.h.Fp.side' : 'h.l.H.und'}, x = (cv, d) => { for (let i = 1; i < cv.length; i++) if (-cv[i][1] >= d) { const a = cv[i - 1], e = cv[i]; return a[0] + (e[0] - a[0]) * (d + a[1]) / (a[1] - e[1]); } return cv.at(-1)[0]; };
+  const A = cur(sleeves(p)), B = cur(sleeves(q)), dd = d => x(A, d) - x(B, d), bad = [];
+  for (const d of [${(ya + yb) / 2}, ${ya + (yb - ya) / 4}]) if (Math.abs(dd(d) - b[2]) > .25) bad.push(d + 'cm에서 ' + dd(d).toFixed(2) + ' (바람 ' + b[2] + ')');
+  if (Math.abs(dd(${yb + 7})) > .1 && ${yb + 7} < -A.at(-1)[1]) bad.push('띠 끝 너머도 움직임 ' + dd(${yb + 7}).toFixed(2));
+  return [...bad, ...(S.editOk() ? [] : ['조각이 깨짐'])];
+})()`);
+for (const [body, part, ya, yb, v, top] of [['f', 'body', 30, 50, 'fit', { ...TOP, ease: 6, sEase: 6 }], ['m', 'body', 28, 44, 5, TOP], ['f', 'body', 40, 62, 'fit', { ...TOP, L: 70 }],
+  ['m', 'l', 24, 40, 'fit', { ...TOP, sl: [55, 55], ease: 4, sEase: 4 }], ['f', 'l', 14, 22, 3, TOP]])
+  cases.push({ name: `${body} 통 ${part === 'body' ? '몸판' : '소매'} ${ya}~${yb} ${v}`, state: { v: 2, body, bottom: 'jeans', top },
+    steps: [{ t: 'view', a: 0 }, { t: 'wait', ms: 400 }, { t: 'band', part, ya, yb, v }, { t: 'settle' }], check: bandOk(part, ya, yb) });
 // the scissors (가위, 1단계 of the 2026-10-30 plan): a click on the ring cuts the hem or both sleeves there and nothing
 // else; above the underarm nothing; on a sleeve's cap the sleeves come off; a flared hem cut higher is narrower; undo
 // puts it back

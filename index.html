@@ -19,7 +19,7 @@
   --sans:"Geist","Pretendard Variable",Pretendard,"Apple SD Gothic Neo","Malgun Gothic",system-ui,sans-serif;
   --mono:"Geist Mono",ui-monospace,Consolas,monospace;
   --ease:cubic-bezier(.22,1,.36,1);
-  --head:52px; --wl:236px; --wr:320px;
+  --head:52px; --wl:236px; --wr:320px; --wf:300px;
   --glass:color-mix(in srgb,var(--panel) 55%,transparent);
   color-scheme:dark;
 }
@@ -98,7 +98,7 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 .pick .mono{color:var(--muted)}
 
 /* view buttons, status, drag points, label */
-.views{position:absolute;left:50%;bottom:18px;transform:translateX(calc(-50% + (var(--wl) - var(--wr)) / 2));z-index:3;display:flex;gap:2px;padding:4px;border-radius:12px;background:var(--glass);backdrop-filter:blur(14px);border:1px solid var(--line)}
+.views{position:absolute;left:50%;bottom:18px;transform:translateX(calc(-50% + (var(--wl) - var(--wr) - var(--wf) - 14px) / 2));z-index:3;display:flex;gap:2px;padding:4px;border-radius:12px;background:var(--glass);backdrop-filter:blur(14px);border:1px solid var(--line)}
 .views button{height:30px;padding:0 12px;border-radius:8px;color:var(--text-2);font-size:12.5px}
 .views button:hover{background:var(--panel-3);color:var(--text)}
 .status{position:absolute;left:calc(var(--wl) + 16px);top:14px;z-index:3;font-size:12px;color:var(--muted);font-family:var(--mono)}
@@ -113,15 +113,19 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 .dot[hidden]{display:none}
 .tip{position:absolute;z-index:4;padding:4px 8px;border-radius:6px;background:rgba(10,10,10,.82);color:#fff;font-size:12px;white-space:nowrap;pointer-events:none;opacity:0;transition:opacity .12s}
 .tip.show{opacity:1}
-.hint{position:absolute;left:calc(var(--wl) + 16px);bottom:22px;z-index:3;font-size:12px;color:var(--muted);max-width:280px;line-height:1.5}
+.hint{position:absolute;left:calc(var(--wl) + 16px);bottom:66px;z-index:3;font-size:12px;color:var(--muted);max-width:280px;line-height:1.5}
 /* tools: scissors, pull */
 .tools{position:absolute;left:calc(var(--wl) + 14px);top:44px;z-index:3;display:flex;flex-direction:column;gap:4px;padding:5px;border-radius:12px;background:var(--glass);backdrop-filter:blur(14px);border:1px solid var(--line)}
 .tools button{display:grid;place-items:center;width:42px;height:42px;border-radius:9px;color:var(--text-2);border:1px solid transparent}
 .tools button:hover{color:var(--text);background:var(--panel-3)}
 .tools button[aria-pressed=true]{color:#f2c46b;border-color:#c9a14f;background:rgba(201,161,79,.14)}
 .tools svg{width:21px;height:21px}
-/* pull: the picked place's bar */
-.grip{position:absolute;z-index:4;width:216px;padding:10px 12px 12px;border-radius:12px;background:var(--glass);backdrop-filter:blur(14px);border:1px solid var(--line);font-size:12px;color:var(--text-2)}
+/* the flat top (펼친 모양) beside the figure, and the picked band's bar under it */
+.flat{position:absolute;top:14px;right:calc(var(--wr) + 14px);z-index:3;width:var(--wf);max-height:calc(100% - 28px);overflow-y:auto;padding:10px 12px 12px;border-radius:12px;background:var(--glass);backdrop-filter:blur(14px);border:1px solid var(--line)}
+.flat h2{margin:0;font-size:11px;font-weight:600;letter-spacing:.12em;color:var(--muted);font-family:var(--mono)}
+.flat p{margin:2px 0 8px;font-size:11.5px;color:var(--muted)}
+#flat-svg{display:block;width:100%;height:auto;max-height:380px;touch-action:none;cursor:ns-resize;user-select:none}
+.grip{margin:10px 0 0;padding:10px 0 0;border-top:1px solid var(--line);font-size:12px;color:var(--text-2)}
 .grip[hidden]{display:none}
 .grip-h{display:flex;justify-content:space-between;align-items:center;margin:0 0 8px;color:var(--text);font-size:13px}
 .grip-h button{width:24px;height:24px;border-radius:6px;color:var(--muted);font-size:16px}
@@ -150,12 +154,17 @@ input[type=range]{width:100%;accent-color:var(--accent)}
   <div class="loading" id="loading">마네킹을 불러오는 중…</div>
   <div class="layer" id="layer"></div>
   <div class="tip" id="tip"></div>
-  <div class="grip" id="grip" role="group" aria-label="고른 부위 조절" hidden>
-    <div class="grip-h"><b id="grip-name"></b><button type="button" id="grip-x" aria-label="닫기">×</button></div>
-    <input type="range" id="grip-r" step="0.1" aria-label="몸에 착 붙이기에서 넉넉하게까지">
-    <div class="grip-ends"><span>몸에 착</span><span id="grip-v"></span><span>넉넉하게</span></div>
-    <button type="button" id="grip-fit">몸에 착 붙이기</button>
-  </div>
+  <section class="flat" aria-label="펼친 모양">
+    <h2>펼친 모양</h2>
+    <p>위아래로 끌어 통을 줄일 범위를 골라요</p>
+    <svg id="flat-svg" role="img" aria-label="앞에서 본 펼친 옷 — 위아래로 끌어 범위 고르기"></svg>
+    <div class="grip" id="grip" role="group" aria-label="고른 범위 조절" hidden>
+      <div class="grip-h"><b id="grip-name"></b><button type="button" id="grip-x" aria-label="닫기">×</button></div>
+      <input type="range" id="grip-r" step="0.1" aria-label="몸에 착 붙이기에서 넉넉하게까지">
+      <div class="grip-ends"><span>몸에 착</span><span id="grip-v"></span><span>넉넉하게</span></div>
+      <button type="button" id="grip-fit">몸에 착 붙이기</button>
+    </div>
+  </section>
   <div class="status mono" id="status"></div>
 
   <aside class="panel left" aria-label="모델과 옷">
@@ -205,6 +214,6 @@ input[type=range]{width:100%;accent-color:var(--accent)}
   <p class="hint" id="hint"></p>
 </main>
 <script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"}}</script>
-<script type="module" src="studio.js?v=56"></script>
+<script type="module" src="studio.js?v=57"></script>
 </body>
 </html>

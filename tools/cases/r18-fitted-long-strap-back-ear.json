@@ -51,15 +51,15 @@
    "t": "undo"
   },
   {
-   "t": "drag",
-   "dot": 6,
-   "dx": -64,
-   "dy": 8
+   "t": "bar",
+   "id": "ease",
+   "v": -4.4
   },
   {
    "t": "wait",
    "ms": 768
   }
  ],
- "fixed": "stage1"
+ "fixed": "stage1",
+ "note": "2026-10-30: the drags of widening points (hem width, side, neck width) are bars now, set to what the drag gave on the old code: pull no longer has those points"
 }

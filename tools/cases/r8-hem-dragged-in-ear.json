@@ -26,20 +26,13 @@
    "f": 0.32
   },
   {
-   "t": "drag",
-   "dot": 11,
-   "dx": -8,
-   "dy": -3
-  },
-  {
    "t": "wait",
    "ms": 1062
   },
   {
-   "t": "drag",
-   "dot": 4,
-   "dx": -38,
-   "dy": 12
+   "t": "bar",
+   "id": "flare",
+   "v": -2.8
   },
   {
    "t": "wait",
@@ -58,5 +51,6 @@
    "id": "dNw",
    "f": 0.02
   }
- ]
+ ],
+ "note": "2026-10-30: the drags of widening points (hem width, side, neck width) are bars now, set to what the drag gave on the old code: pull no longer has those points"
 }
