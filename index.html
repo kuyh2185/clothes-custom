@@ -120,6 +120,17 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 .tools button:hover{color:var(--text);background:var(--panel-3)}
 .tools button[aria-pressed=true]{color:#f2c46b;border-color:#c9a14f;background:rgba(201,161,79,.14)}
 .tools svg{width:21px;height:21px}
+/* pull: the picked place's bar */
+.grip{position:absolute;z-index:4;width:216px;padding:10px 12px 12px;border-radius:12px;background:var(--glass);backdrop-filter:blur(14px);border:1px solid var(--line);font-size:12px;color:var(--text-2)}
+.grip[hidden]{display:none}
+.grip-h{display:flex;justify-content:space-between;align-items:center;margin:0 0 8px;color:var(--text);font-size:13px}
+.grip-h button{width:24px;height:24px;border-radius:6px;color:var(--muted);font-size:16px}
+.grip-h button:hover{color:var(--text);background:var(--panel-3)}
+.grip input[type=range]{accent-color:#f2c46b}
+.grip-ends{display:flex;justify-content:space-between;margin:4px 0 10px;font-size:11px;color:var(--muted)}
+#grip-v{color:#f2c46b;font-family:var(--mono)}
+#grip-fit{width:100%;height:30px;border-radius:8px;border:1px solid #c9a14f;color:#f2c46b;background:rgba(201,161,79,.12);font-size:12px}
+#grip-fit:hover{background:rgba(201,161,79,.22)}
 </style>
 </head>
 <body>
@@ -139,6 +150,12 @@ input[type=range]{width:100%;accent-color:var(--accent)}
   <div class="loading" id="loading">마네킹을 불러오는 중…</div>
   <div class="layer" id="layer"></div>
   <div class="tip" id="tip"></div>
+  <div class="grip" id="grip" role="group" aria-label="고른 부위 조절" hidden>
+    <div class="grip-h"><b id="grip-name"></b><button type="button" id="grip-x" aria-label="닫기">×</button></div>
+    <input type="range" id="grip-r" step="0.1" aria-label="몸에 착 붙이기에서 넉넉하게까지">
+    <div class="grip-ends"><span>몸에 착</span><span id="grip-v"></span><span>넉넉하게</span></div>
+    <button type="button" id="grip-fit">몸에 착 붙이기</button>
+  </div>
   <div class="status mono" id="status"></div>
 
   <aside class="panel left" aria-label="모델과 옷">
@@ -183,10 +200,11 @@ input[type=range]{width:100%;accent-color:var(--accent)}
   <div class="tools" id="tools" role="toolbar" aria-label="도구" aria-orientation="vertical">
     <button type="button" data-t="cut" aria-pressed="true" aria-label="가위 — 옷 위에 올리고 누르면 거기서 잘려요" title="가위"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M8.1 8.1 20 20M8.1 15.9 20 4"/></svg></button>
     <button type="button" data-t="pull" aria-pressed="false" aria-label="당기기 — 가장자리를 끌어 늘리거나 모양 바꾸기" title="당기기"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20M2 12h20M12 2 9 5m3-3 3 3M12 22l-3-3m3 3 3-3M2 12l3-3m-3 3 3 3M22 12l-3-3m3 3-3 3"/></svg></button>
+    <button type="button" data-t="fit" aria-pressed="false" aria-label="통 — 부위를 누르고 막대로 몸에 붙이거나 넉넉하게" title="통"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5v14M20 5v14M8 12h8M11 9l-3 3 3 3M13 9l3 3-3 3"/></svg></button>
   </div>
   <p class="hint" id="hint"></p>
 </main>
 <script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"}}</script>
-<script type="module" src="studio.js?v=53"></script>
+<script type="module" src="studio.js?v=56"></script>
 </body>
 </html>

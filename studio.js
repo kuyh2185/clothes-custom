@@ -431,7 +431,8 @@ diffuseColor.rgb = gl_FrontFacing ? base : base * .72;   // the inside of the ga
 // what the scissors would cut off: half see-through, in the scissors' gold stripes (see-through alone, a front cut off
 // over the back's own white inside hardly showed) (setFade)
 float stripe = step(.5, fract((gl_FragCoord.x + gl_FragCoord.y) / 18.0));
-diffuseColor.rgb = mix(diffuseColor.rgb, vec3(.95, .66, .22), vCut * (.3 + .5 * stripe)); diffuseColor.a *= 1.0 - .5 * vCut;`);
+float pick = step(1.5, vCut), cutv = min(vCut, 1.0);
+diffuseColor.rgb = mix(diffuseColor.rgb, vec3(.95, .66, .22), cutv * (.3 + .5 * stripe) * (1.0 - .4 * pick)); diffuseColor.a *= 1.0 - .5 * cutv * (1.0 - pick);`);
 };
 let cloth = null, next = null, busy = false, awake = 0, sent = '', laid = '', simMs = 0;
 // fresh: the cloth laid out anew for these values (once per shape: laid). While a point or a bar is dragged it is carried
@@ -464,6 +465,7 @@ worker.onmessage = e => {
     if (!cloth) { cloth = new THREE.Mesh(g, fabric); cloth.castShadow = cloth.receiveShadow = true; cloth.frustumCulled = false; scene.add(cloth); }
     else { cloth.geometry.dispose(); cloth.geometry = g; }
     cloth.userData = { map: t.map, marks: t.marks, info: t.info, rim: t.rim, pcv: t.pcv };
+    if (grip) gripFade();   // (a new mesh comes without the picked place's stripes)
     $('loading').hidden = true;
   }
   if (!cloth) return;
@@ -626,6 +628,7 @@ function apply(light) {
   fabric.sheenColor.set(T.c1).lerp(new THREE.Color('#ffffff'), .15);
   fabric.normalMap = fitOf(T.ease) > .5 ? rib2 : jersey;
   renderBars(); renderCards();
+  if (!light) closeGrip();   // (any other change: the bar's start is no longer what is worn)
   if (light) { $('c1t').textContent = T.c1; $('c2t').textContent = T.c2; $('lbl-scale').textContent = `×${T.scale.toFixed(2)}`; }
   else renderColor();
   needs = true;
@@ -904,12 +907,12 @@ const editNear = (pc, x, y) => (cloth && cloth.userData.info.bumps || []).some(b
 // goes there), round both sleeves at that length, or near the top of a sleeve its whole armhole seam (sleeveless);
 // a click cuts there. Pull: the fixed points and the edge's point as before (2단계)
 let tool = 'cut', hov = null;
-const HINT = { cut: '가위 — 옷 위에 올리면 노란 선, 누르면 거기서 잘려요(소매는 양쪽 같이). 누른 채 그으면 그은 대로 잘려요. 잘릴 곳은 반투명하게 보여요.', pull: '당기기 — 흰 점이나 옷 가장자리를 끌어 늘리거나 모양을 바꿔요.' };
+const HINT = { cut: '가위 — 옷 위에 올리면 노란 선, 누르면 거기서 잘려요(소매는 양쪽 같이). 누른 채 그으면 그은 대로 잘려요. 잘릴 곳은 반투명하게 보여요.', pull: '당기기 — 흰 점이나 옷 가장자리를 끌어 늘리거나 모양을 바꿔요.', fit: '통 — 옷을 누르면 그 높이 둘레(소매는 그 자리 통)가 골라져요. 옆 막대로 몸에 착 붙이거나 넉넉하게 해요.' };
 function setTool(t) {
   tool = t;
   document.querySelectorAll('#tools [data-t]').forEach(b => b.setAttribute('aria-pressed', b.dataset.t === t));
   $('hint').textContent = HINT[t] + ' 빈 곳을 끌면 돌려 보기, 휠로 확대.';
-  hideRing(); hideEdge();
+  hideRing(); hideEdge(); closeGrip();
 }
 $('tools').addEventListener('click', e => { const b = e.target.closest('[data-t]'); if (b) setTool(b.dataset.t); });
 const ringMat = new LineMaterial({ color: 0xf2c46b, linewidth: 3 });
@@ -929,13 +932,14 @@ function hitAt(e) {
   const pc = cloth.userData.pcv[h.face.a];
   return { pc, x: h.uv.x * 100 - SHIFT[pc], y: h.uv.y * 100, p: h.point.clone().addScaledVector(ray.ray.direction, -.004) };
 }
-// the cloth's vertices that fn(pc, x, y) says would be cut off shown half see-through (null: none)
-function setFade(fn) {
+// the cloth's vertices that fn(pc, x, y) says would be cut off shown half see-through (null: none); mark 2: the place
+// picked to pull, in the same stripes but solid
+function setFade(fn, mark = 1) {
   const a = cloth && cloth.geometry.attributes.cut;
   if (!a) return;
   const U = cloth.geometry.attributes.pat.array, pcv = cloth.userData.pcv;
   let any = false;
-  for (let v = 0; v < a.count; v++) { const f = fn && fn(pcv[v], U[v * 2] * 100 - SHIFT[pcv[v]], U[v * 2 + 1] * 100) ? 1 : 0; a.array[v] = f; any ||= !!f; }
+  for (let v = 0; v < a.count; v++) { const f = fn && fn(pcv[v], U[v * 2] * 100 - SHIFT[pcv[v]], U[v * 2 + 1] * 100) ? mark : 0; a.array[v] = f; any ||= f === 1; }
   a.needsUpdate = true;
   if (fabric.transparent !== any) { fabric.transparent = any; fabric.needsUpdate = true; }
   needs = true;
@@ -1118,6 +1122,89 @@ function sideX(T, y) {
   for (let i = 1; i < s.length; i++) if (-s[i][1] >= y) { const [a, b] = [s[i - 1], s[i]]; return lerp(a[0], b[0], clamp((y + a[1]) / (a[1] - b[1]), 0, 1)); }
   return s.at(-1)[0];
 }
+/* ---------- 통 (fit): a place picked on the cloth, its width on a bar (시험판, 2026-10-30) ---------- */
+// its own tool, apart from pull (the user: pulling and taking in / letting out in one tool was what made pulling hard to read)
+// a click on the body picks the round at that height (both side seams bumped out or in there, state.top.edit as the
+// edge's point does), on a sleeve that sleeve's width there; the bar beside it runs from as close to the body as the
+// pieces allow (piecesOk: 1 cm over it) to as loose as they allow, the cloth hanging again as it moves
+let grip = null, pickXY = null;
+const gripEl = $('grip'), gripBar = $('grip-r');
+// t of the way along a curve running down to where it reaches y (cm, down negative)
+function tAt(c, y) {
+  let L = 0, s = 0;
+  for (let i = 1; i < c.length; i++) L += Math.hypot(c[i][0] - c[i - 1][0], c[i][1] - c[i - 1][1]);
+  for (let i = 1; i < c.length; i++) {
+    const d = Math.hypot(c[i][0] - c[i - 1][0], c[i][1] - c[i - 1][1]);
+    if (c[i][1] <= y) return clamp((s + d * clamp((c[i - 1][1] - y) / Math.max(1e-9, c[i - 1][1] - c[i][1]), 0, 1)) / L, 0, 1);
+    s += d;
+  }
+  return 1;
+}
+// the top as picked with the place dx cm out (in, negative) on every half it covers
+function gripTop(g, dx) {
+  const T = structuredClone(g.start), E = T.edit = T.edit || {};
+  if (Math.abs(dx) >= .05) for (const k of g.keys) E[k] = [...(E[k] || []), [g.curve, g.t, r1(dx), 0, g.r]];
+  return T;
+}
+// from 0 toward `to`, as far as the pieces stay whole (a start already failing isn't held, as edgeOk)
+function gripEnd(g, to) {
+  const ok = dx => !g.ok0 || piecesOk(gripTop(g, dx), g.from);
+  if (ok(to)) return to;
+  let lo = 0, hi = to;
+  for (let i = 0; i < 8; i++) { const m = (lo + hi) / 2; if (ok(m)) lo = m; else hi = m; }
+  return Math.trunc(lo * 10) / 10;
+}
+function pickAt(e) {
+  const h = hitAt(e);
+  if (!h || !A) { closeGrip(); return; }
+  const T = state.top, s = sleeves(params({ ...T, edit: undefined, cuts: undefined })), sym = $('sym').checked;
+  let g;
+  if (h.pc < 2) {
+    const d = -h.y, m = measure(), part = [['가슴', m.armpit + 4], ['허리', m.waist], ['엉덩이', m.hip]].reduce((a, b) => Math.abs(b[1] - d) < Math.abs(a[1] - d) ? b : a);
+    g = { curve: 'side', c: s.h.F.side, r: 10, keys: (sym ? ['p', 'm'] : [h.x >= 0 ? 'p' : 'm']).flatMap(k => ['F' + k, 'B' + k]),
+      name: (sym ? '' : h.x >= 0 ? '왼쪽 ' : '오른쪽 ') + (Math.abs(part[1] - d) < 7 ? part[0] + ' 둘레' : '옆선') };
+  } else {
+    const k = h.pc === 2 ? 'l' : 'r';
+    if (!s[k]) { closeGrip(); return; }
+    g = { curve: 'und', c: s[k].H0.und, r: 8, keys: sym ? ['Sl', 'Sr'] : ['S' + k], name: (sym ? '' : k === 'l' ? '왼쪽 ' : '오른쪽 ') + '소매 통' };
+  }
+  // n: how many halves' edges move, so the round changes by n × dx
+  Object.assign(g, { t: Math.round(tAt(g.c, h.y) * 1000) / 1000, y: h.y, pc: h.pc, x: h.x, n: g.curve === 'side' ? g.keys.length : 2, start: structuredClone(T), from: sleeves(params({ ...T, cuts: undefined })) });
+  g.ok0 = piecesOk(T, sleeves(params({ ...T, edit: undefined, cuts: undefined })));
+  g.lo = gripEnd(g, -15); g.hi = gripEnd(g, 15);
+  grip = g;
+  gripBar.min = g.lo; gripBar.max = g.hi; gripBar.value = 0;
+  $('grip-name').textContent = g.name; gripLabel(0);
+  gripEl.hidden = false;
+  // at the stage's right side, level with the click (beside the click it covered the very band being changed)
+  const r = layer.getBoundingClientRect(), y = e.clientY - r.top, right = document.querySelector('.panel.right').getBoundingClientRect().left - r.left;
+  gripEl.style.left = (right - gripEl.offsetWidth - 20) + 'px';
+  gripEl.style.top = clamp(y - 30, 8, r.height - gripEl.offsetHeight - 8) + 'px';
+  gripFade();
+}
+function gripLabel(dx) {
+  const g = grip;
+  $('grip-v').textContent = g.lo < 0 && dx <= g.lo + .05 ? '몸에 착' : `둘레 ${dx >= 0 ? '+' : ''}${(dx * g.n).toFixed(1)}cm`;
+}
+// the picked place striped: that band of the halves (or sleeves) it covers
+function gripFade() {
+  const g = grip, all = g.keys.length === (g.pc < 2 ? 4 : 2);
+  setFade((pc, x, y) => (g.pc < 2 ? pc < 2 && (all || (x >= 0) === (g.x >= 0)) : pc >= 2 && (all || pc === g.pc)) && Math.abs(y - g.y) < g.r * .6, 2);
+}
+function closeGrip() {
+  if (!grip) return;
+  grip = null; gripEl.hidden = true; setFade(null);
+}
+gripBar.addEventListener('input', () => { if (!grip) return; const dx = +gripBar.value; state.top = gripTop(grip, dx); apply(true); gripLabel(dx); });
+gripBar.addEventListener('change', () => { if (grip) commit(); });
+$('grip-fit').addEventListener('click', () => { if (!grip) return; gripBar.value = grip.lo; gripBar.dispatchEvent(new Event('input')); commit(); });
+$('grip-x').addEventListener('click', closeGrip);
+// a click (not a drag to turn the view) on the cloth picks there, off it closes the bar
+wrap.addEventListener('pointerdown', e => { pickXY = tool === 'fit' && !e.button ? [e.clientX, e.clientY] : null; });
+wrap.addEventListener('pointerup', e => {
+  if (tool === 'fit' && pickXY && Math.hypot(e.clientX - pickXY[0], e.clientY - pickXY[1]) < 5) pickAt(e);
+  pickXY = null;
+});
 setTool('cut');
 
 /* ---------- PNG ---------- */
