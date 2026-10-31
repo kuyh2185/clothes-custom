@@ -88,6 +88,30 @@ cases.push({ name: 'm 밸런스 통 허리', mode: 'bal', state: { v: 2, body: '
     const A = sleeves(p).h.Fp.side, B = sleeves({ ...p, edit: undefined }).h.Fp.side, dx = A.at(-1)[0] - B.at(-1)[0];
     return [...(Math.abs(dx) < .1 ? [] : [`밑단 옆이 ${dx.toFixed(2)} 움직임`]), ...(S.editOk() ? [] : ['조각이 깨짐'])];
   } });
+// 통 from the underarm (2026-10-31): the armhole comes up with the bar, or the point sewn there stayed off the body in a
+// web of cloth under the arm; the sleeve keeps its width. A band lower down, or one side alone, keeps the armhole
+const under = (lo, hi) => new Function(`return (async () => {
+  const S = window.__studio, T = S.state.top, p = S.params(), { sleeves } = await import('./pattern.js?v=36'), x = T.under, bad = [];
+  if (!(x >= ${lo} && x <= ${hi})) bad.push('진동 ' + x);
+  const a = sleeves({ ...p, edit: undefined, cuts: undefined }).h.F.side[0];
+  if (x === 1 && -a[1] > S.measure().armpit + 7) bad.push('겨드랑이가 ' + (-a[1]) + 'cm에');
+  if (x === 1 && a[0] > S.measure().q[Math.round(-a[1])] + .5) bad.push('겨드랑이 점이 몸 밖 ' + a[0]);
+  const w = o => sleeves({ ...S.params({ ...T, ...o }), edit: undefined, cuts: undefined }).l?.H0.und[0][0];
+  if (w({}) > w({ under: 0 }) + .1) bad.push('소매통 ' + w({ under: 0 }) + ' → ' + w({}));
+  return [...bad, ...(S.editOk() ? [] : ['조각이 깨짐'])];
+})()`);
+for (const [name, body, top, steps, lo, hi] of [
+  ['f 통 겨드랑이부터 fit', 'f', TOP, [{ t: 'band', part: 'body', ya: 24, yb: 64, v: 'fit' }], 1, 1],
+  ['m 통 겨드랑이부터 오버 fit', 'm', { ...TOP, ease: 9, sEase: 9 }, [{ t: 'band', part: 'body', ya: 30, yb: 74, v: 'fit' }], 1, 1],
+  ['f 통 크롭 fit', 'f', { ...TOP, L: 46 }, [{ t: 'band', part: 'body', ya: 24, yb: 48, v: 'fit' }], 1, 1],
+  ['m 통 겨드랑이부터 막대 중간', 'm', TOP, [{ t: 'band', part: 'body', ya: 26, yb: 40, v: -3 }], .05, .95],
+  ['f 통 허리만', 'f', TOP, [{ t: 'band', part: 'body', ya: 30, yb: 40, v: 'fit' }], 0, 0],
+  ['m 통 한쪽만', 'm', TOP, [{ t: 'toggle', id: 'sym' }, { t: 'band', part: 'body', ya: 26, yb: 40, x: 1, v: 'fit' }], 0, 0],
+  ['f 통 뒤 되돌리기', 'f', TOP, [{ t: 'band', part: 'body', ya: 24, yb: 64, v: 'fit' }, { t: 'settle' }, { t: 'undo' }], 0, 0],
+  ['m 통 뒤 카드', 'm', TOP, [{ t: 'band', part: 'body', ya: 26, yb: 74, v: 'fit' }, { t: 'settle' }, { t: 'card', g: 'fit', i: 3 }], 0, 0],
+  ['f 자른 옷 통', 'f', TOP, [{ t: 'stroke', pts: [[0, 20, -50], [0, 0, -58], [0, -20, -50]] }, { t: 'settle' }, { t: 'band', part: 'body', ya: 24, yb: 44, v: 'fit' }], 1, 1]])
+  // (a hem cut by hand under a band has an ear of its own, 1.6 cm before the armhole came up too)
+  cases.push({ name, state: { v: 2, body, bottom: 'jeans', top }, steps: [{ t: 'view', a: 0 }, { t: 'wait', ms: 400 }, ...steps, { t: 'settle' }], check: under(lo, hi), lim: name.includes('자른') ? { ear: 1.6 } : undefined });
 // the scissors (가위, 1단계 of the 2026-10-30 plan): a click on the ring cuts the hem or both sleeves there and nothing
 // else; above the underarm nothing; on a sleeve's cap the sleeves come off; a flared hem cut higher is narrower; undo
 // puts it back

@@ -29,8 +29,8 @@ const ASSET_VER = 2, KEY = 'clothes-custom:studio:v1';
 // sl: each sleeve as one number (cm of sleeve; below 0, cm the shoulder has narrowed toward a strap), L: length from
 // the high shoulder point, ease: added to each quarter's width below the underarm, sEase: the same round the sleeves
 // (the underarm, armhole, shoulder and sleeve width), flare: more at the hem, dNw: wider neck at the shoulder,
-// ndF / ndB: neckline depth front / back, neckV: round 0 … V 1
-const DEF_TOP = { sl: [20, 20], L: 62, ease: 0, sEase: 0, flare: 0, dNw: 0, ndF: 10, ndB: 2.6, neckV: 0, c1: '#f3f1ec', c2: '#24324a', pat: 0, scale: 1 };
+// ndF / ndB: neckline depth front / back, neckV: round 0 … V 1, under: 0 … 1 how far 통 has brought the armhole up to the armpit
+const DEF_TOP = { sl: [20, 20], L: 62, ease: 0, sEase: 0, under: 0, flare: 0, dNw: 0, ndF: 10, ndB: 2.6, neckV: 0, c1: '#f3f1ec', c2: '#24324a', pat: 0, scale: 1 };
 const DEF = { body: 'f', bottom: 'jeans', top: DEF_TOP };
 let state = load() || structuredClone(DEF);
 function load() {
@@ -60,16 +60,19 @@ const shapeOf = e => sstep((-e - .5) / 1.5);
 // A loose sleeve on a fitted body rises less, the more it is wider than the body (8 cm wider on, up to 4 cm lower): just
 // under the armpit its wide flat cap stood out off the shoulder, a cap sleeve 5 cm up the arm (fuzz 162, 394). Only
 // with a sleeve: a strap top's armhole dropped by the sleeves' unused ease stood off in an ear (r18)
+// T.under brings it up as a fitted body would, on any body (통 taken in from the underarm: the point sewn there stayed
+// 7 cm under the armpit, out off the body, the cloth a web from it to the side), 1 cm less: its sleeve isn't cut to the
+// arm, and hanging from there it drew the seam off the body in a step under the arm and rolled a cap sleeve up
 const adOf = T => {
   const ad = base().ad + Math.max(0, T.sEase - 2) * .85, m = A && measure();
-  return m ? lerp(ad, Math.min(ad, m.armpit + 2.5 + (Math.max(...T.sl) >= 1.2 ? clamp((T.sEase - T.ease - 8) * .4, 0, 4) : 0)), fitOf(Math.min(T.ease, T.sEase))) : ad;
+  return m ? lerp(ad, Math.min(ad, m.armpit + 2.5 + T.under * (1 - fitOf(Math.min(T.ease, T.sEase))) + (Math.max(...T.sl) >= 1.2 ? clamp((T.sEase - lerp(T.ease, Math.min(T.ease, -5), T.under) - 8) * .4, 0, 4) : 0)), Math.max(T.under, fitOf(Math.min(T.ease, T.sEase)))) : ad;
 };
 // cm down the arm's bones from the shoulder joint to the elbow, and to the wrist (a sleeve's cm sit about as far down)
 const elbowOf = () => { const [J, E] = A.bones.l; return Math.hypot(E[0] - J[0], E[1] - J[1], E[2] - J[2]) * 100; };
 const wristOf = () => { const [, E, W] = A.bones.l; return elbowOf() + Math.hypot(W[0] - E[0], W[1] - E[1], W[2] - E[2]) * 100; };
 function params(T = state.top) {
   const b = base(), full = fullOf(T), [l, r] = T.sl, e = T.ease, es = T.sEase, t = tightOf(Math.min(e, es));
-  const ad = adOf(T), w = fitOf(e), ws = shapeOf(e), wa = fitOf(es), m = (ws > 0 || wa > 0) && A ? measure() : null;
+  const ad = adOf(T), w = fitOf(e), ws = shapeOf(e), wa = fitOf(es), m = (ws > 0 || wa > 0 || T.under) && A ? measure() : null;
   // fitted: the quarter round of the body at each depth (cm below the high shoulder point) from the armhole down
   // past the hem, less a little round the chest (a stretch knit sits a few cm smaller than the body), back to the
   // body's own round by the waist, as far as the top reaches down onto the widening below the waist (W): cloth pulled
@@ -83,7 +86,7 @@ function params(T = state.top) {
   // from 10, a strap top taken in at the hem took 20 s to settle)
   let fit = null, cw = b.cw + es;
   if (m) {
-    const off = (e + 2.5) * .4, q = [], y0 = Math.floor(ad), L = Math.max(T.L, ad + 6), n = Math.ceil(L) + 3 - y0;
+    const off = (lerp(e, Math.min(e, -5), T.under) + 2.5) * .4, q = [], y0 = Math.floor(ad), L = Math.max(T.L, ad + 6), n = Math.ceil(L) + 3 - y0;
     const qm = y => m.q[clamp(Math.round(y), 0, m.q.length - 1)];
     const band = -1.6 * clamp((qm(L) - qm(L - 4)) / 4 / .3, 0, 1), W = sstep((qm(L) - qm(m.waist)) / 1.2);
     for (let i = 0; i <= n; i++) {
@@ -97,7 +100,7 @@ function params(T = state.top) {
     const offS = (es + 2.5) * .4;
     for (let y = 0; y <= b.arm + 1; y++) arm.push(r1(ar[Math.min(last, y)] / 2 + lerp(offS * .25, .5, sstep((y - elbow + 3) / 6))));
     fit = { w: Math.round(w * 100) / 100, ws: Math.round(ws * 100) / 100, wa: Math.round(wa * 100) / 100, y0, q, arm };
-    cw = lerp(cw, q[0] + (q[1] - q[0]) * (ad - y0), w);
+    cw = lerp(cw, q[0] + (q[1] - q[0]) * (ad - y0), Math.max(w, T.under));
   }
   // a long sleeve's rib cuff: the arm's round where the sleeve ends and a little ease, starting past the elbow
   let rib = null;
@@ -132,6 +135,7 @@ const hemFloor = T => {
 // further in, the crop's hem pulled its side corners up
 const flareLim = T => {
   if (!A) return [-12, 22];   // not measured yet (as hemFloor): the tee's deep armhole guessed for a fitted one cut a saved hem
+  T = { ...T, under: 0 };   // (the top as cut: 통 bringing the armhole up takes the side in with it, the hem's range stays)
   const P = params({ ...T, flare: 0 }), drop = Math.max(P.L, P.ad + 6) - P.ad, run = P.hw - P.cw;
   const lo = Math.max(hemFloor(T), r1(-drop - run));
   return [lo, Math.max(lo, Math.min(22, r1(drop - run)))];
@@ -167,11 +171,18 @@ function fitEdit(T) {
   scale(lo);
   for (const key in T.edit) T.edit[key] = T.edit[key].filter(b => b[2] || b[3]);   // (shrunk to nothing: gone)
 }
+// how far in a side may come by depth: the body. With the armhole brought up (T.under), near both its ends the fitted
+// top's line, a little under the body as a knit sits: on the body a corner stood out under the arm, and a crop's hem
+// rolled up 4 cm at the back of the side, on the hips' slope
+function floorOf(T) {
+  const q = measure().q, f = T.under && params(T).fit;
+  return f ? q.map((v, d) => lerp(v, Math.min(v, f.q[clamp(d - f.y0, 0, f.q.length - 1)]), Math.max(1 - sstep((d - f.y0 - 6) / 8), sstep((d - T.L + 12) / 4)))) : q;
+}
 // the pieces still whole (pattern.js halfOk, sleeveOk), each against `from`'s (a side or an underarm comes in no further
 // than the body or arm allows, or than it already was). On the outline before any scissors cut: a cut is its own check
 function piecesOk(T, from) {
-  const m = measure(), s = sleeves(params({ ...T, cuts: undefined })), h = s.h, h0 = from.h;
-  return ['Fp', 'Fm', 'Bp', 'Bm'].every(k => halfOk(h[k], h0[k], m.q, h[k[0]]))
+  const m = measure(), s = sleeves(params({ ...T, cuts: undefined })), h = s.h, h0 = from.h, q = floorOf(T);
+  return ['Fp', 'Fm', 'Bp', 'Bm'].every(k => halfOk(h[k], h0[k], q, h[k[0]]))
     && ['l', 'r'].every(k => !s[k] || sleeveOk(s[k].H, (from[k] || s[k]).H, s.sl[k].capb, m.arm, h.P.arm + h.P.over, s[k].H0));
 }
 
@@ -530,7 +541,7 @@ const CARDS = {
       ['캡', { sl: [7, 7] }], ['민소매', { sl: [0, 0] }], ['넓은 끈', { sl: [3 - full, 3 - full] }], ['얇은 끈', { sl: [.8 - full, .8 - full] }], ['탱크톱', TANK()]];
   },
   len: () => { const k = state.body === 'm' ? 1.1 : 1; return [['크롭', { L: 42 * k }], ['기본', { L: 62 * k }], ['롱', { L: 76 * k }], ['원피스', { L: 96 * k }]]; },
-  fit: () => [['밀착', { ease: -5, sEase: -5, flare: 0 }], ['슬림', { ease: -1.2, sEase: -1.2, flare: 0 }], ['기본', { ease: 0, sEase: 0, flare: 0 }], ['여유', { ease: 4, sEase: 4, flare: 1 }], ['오버', { ease: 9, sEase: 9, flare: 2 }]],
+  fit: () => [['밀착', { ease: -5, sEase: -5, under: 0, flare: 0 }], ['슬림', { ease: -1.2, sEase: -1.2, under: 0, flare: 0 }], ['기본', { ease: 0, sEase: 0, under: 0, flare: 0 }], ['여유', { ease: 4, sEase: 4, under: 0, flare: 1 }], ['오버', { ease: 9, sEase: 9, under: 0, flare: 2 }]],
   neck: () => [['라운드', { dNw: 0, ndF: 10, ndB: 2.6, neckV: 0 }], ['U넥', { dNw: 1.5, ndF: 17, ndB: 3, neckV: 0 }], ['V넥', { dNw: .5, ndF: 15, ndB: 2.6, neckV: 1 }],
     ['깊은 V', { dNw: 1, ndF: 23, ndB: 3, neckV: 1 }], ['보트넥', { dNw: 5, ndF: 4, ndB: 4, neckV: 0 }]],
 };
@@ -1293,12 +1304,25 @@ function tAt(c, y) {
 // the top as picked with the band dx cm out (in, negative) on every half it covers
 function gripTop(g, dx) {
   const T = structuredClone(g.start), E = T.edit = T.edit || {};
-  if (Math.abs(dx) >= .05) for (const k of g.keys) E[k] = [...(E[k] || []), dx < 0 ? [g.curve, g.tIn[0], r1(dx), 0, 6, 0, g.tIn[1], g.prof] : [g.curve, g.t, r1(dx), 0, g.r, 0, g.t2]];
+  if (Math.abs(dx) < .05) return T;
+  const b = dx < 0 ? [g.curve, g.tIn[0], r1(dx), 0, 6, 0, g.tIn[1], g.prof] : [g.curve, g.t, r1(dx), 0, g.r, 0, g.t2];
+  if (g.lift && dx < 0) {   // the armhole comes up as the bar goes, the band then taken in on the top that makes
+    const k = dx / -g.most;
+    T.under = Math.max(T.under, k);
+    const q = floorOf(T);
+    // (the band up to the armhole's new end, or the cloth between it and the old one stood off in a corner under the arm)
+    const c = sleeves(params({ ...T, edit: undefined, cuts: undefined })).h.F.side, G = { ...g, c, ya: -c[0][1], fade: lerp(10, 3, k) };
+    b[2] = r1(-gripIn(G, sleeves(params({ ...T, cuts: undefined })).h[g.keys[0]].side, d => q[d]) * k);
+    b[1] = G.tIn[0]; b[6] = G.tIn[1]; b[7] = G.prof;
+  }
+  // (a band down to the hem: the hem eases back from its corner over as long as that takes, or over 6 cm it folded back on itself)
+  if (b[7]) b[4] = Math.max(6, r1(1.6 * Math.abs(b[2] * b[7].at(-1))));
+  for (const k of g.keys) E[k] = [...(E[k] || []), b];
   return T;
 }
 // from 0 toward `to`, as far as the pieces stay whole (a start already failing isn't held, as edgeOk)
 function gripEnd(g, to) {
-  const ok = dx => !g.ok0 || piecesOk(gripTop(g, dx), g.from);
+  const ok = dx => { const T = gripTop(g, dx); return !g.ok0 || piecesOk(T, sleeves(params({ ...g.start, under: T.under, edit: undefined, cuts: undefined }))); };
   if (ok(to)) return to;
   let lo = 0, hi = to;
   for (let i = 0; i < 8; i++) { const m = (lo + hi) / 2; if (ok(m)) lo = m; else hi = m; }
@@ -1308,7 +1332,7 @@ function gripEnd(g, to) {
 // sleeve is sewn there) → the most, and g.tIn, g.prof. The floor over the next cm too: the check reads it cm by cm
 function gripIn(g, cur, floor) {
   const top = -g.c[0][1], bot = -g.c.at(-1)[1], a = Math.max(top, g.ya - g.r), b = Math.min(bot, g.yb + g.r), n = Math.max(2, Math.round(b - a));
-  const ease = d => { const u = Math.max(g.ya - d, d - g.yb, 0) / g.r; return (1 - u * u) ** 2 * sstep((d - top) / 10); };
+  const ease = d => { const u = Math.max(g.ya - d, d - g.yb, 0) / g.r; return (1 - u * u) ** 2 * sstep((d - top) / (g.fade || 10)); };
   const need = Array.from({ length: n + 1 }, (_, i) => { const d = lerp(a, b, i / n); const k = Math.round(d); return Math.max(0, xAt(cur, d) - Math.max(floor(k - 1), floor(k), floor(k + 1)) - .05) * ease(d); }), most = Math.max(...need);
   g.tIn = [tAt(g.c, -a), tAt(g.c, -b)].map(t => Math.round(t * 1000) / 1000);
   g.prof = need.map(v => Math.round(v / (most || 1) * 1000) / 1000);
@@ -1337,8 +1361,12 @@ function choose(part, ya, yb, xs) {
   Object.assign(g, { ya, yb, x: xs, r: balance ? 12 : 6, t: Math.round(tAt(g.c, -ya) * 1000) / 1000, t2: Math.round(tAt(g.c, -yb) * 1000) / 1000,
     n: g.curve === 'side' ? g.keys.length : 2, start: structuredClone(T), from: sleeves(params({ ...T, cuts: undefined })) });
   g.ok0 = piecesOk(T, sleeves(params({ ...T, edit: undefined, cuts: undefined })));
-  const m = measure(), most = gripIn(g, part === 'body' ? g.from.h[g.keys[0]].side : g.from[part].H.und, d => part === 'body' ? m.q[d] : m.arm[d] ? m.arm[d] / 2 + 1 : Infinity);
-  g.lo = gripEnd(g, -most); g.hi = gripEnd(g, 15);
+  const m = measure();
+  g.most = gripIn(g, part === 'body' ? g.from.h[g.keys[0]].side : g.from[part].H.und, d => part === 'body' ? m.q[d] : m.arm[d] ? m.arm[d] / 2 + 1 : Infinity);
+  // (one side alone keeps its armhole: its height is both sides', and the side not taken in would come up too. So does
+  // a sleeve 12 cm or more off the body's width: brought up, the wide one folded on itself, 겹침 31 → 227)
+  g.lift = part === 'body' && sym && ya - top < 5 && Math.abs(T.ease - T.sEase) < 12;
+  g.lo = gripEnd(g, -g.most); g.hi = gripEnd(g, 15);
   grip = g;
   gripBar.min = g.lo; gripBar.max = g.hi; gripBar.value = 0;
   $('grip-name').textContent = g.name; gripLabel(0);
