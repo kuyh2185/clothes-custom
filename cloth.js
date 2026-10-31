@@ -5,7 +5,7 @@
 //        {t:'params', p, fresh}      {t:'tick'}   (one frame per tick; answered with {t:'frame'})
 //        (fresh: laid out anew round the body, not carried on from the old cloth)
 //   out: {t:'topo', ...} when the mesh changes, {t:'frame', pos, nrm, awake, ms}
-import { build, fitSide, BASE, BASE_M } from './pattern.js?v=34';
+import { build, fitSide, BASE, BASE_M } from './pattern.js?v=35';
 
 const G = -9.8, SUB = 12, DT = 1 / 60, TH = 0.004;
 // cloth against itself: two particles not near each other along the cloth stay SC apart (a little over the widest gap
@@ -342,7 +342,7 @@ function assemble(g, old) {
   // added cloth over as wings: fuzz 467. Within a bump's reach the knit doesn't give)
   const pcOf = new Int8Array(nV), B = g.info.bumps || [];
   for (const pc of pieces) pcOf.fill(pc.pc, pc.off, pc.off + pc.pts.length);
-  const firm = (i, j) => B.some(b => b[0] === pcOf[i] && Math.hypot((flat[i * 2] + flat[j * 2]) * 50 - b[1], (flat[i * 2 + 1] + flat[j * 2 + 1]) * 50 - b[2]) < b[3]);
+  const firm = (i, j) => B.some(b => !b[4] && b[0] === pcOf[i] && Math.hypot((flat[i * 2] + flat[j * 2]) * 50 - b[1], (flat[i * 2 + 1] + flat[j * 2 + 1]) * 50 - b[2]) < b[3]);
   for (let t = 0; t < index.length; t += 3) {
     const v = [index[t], index[t + 1], index[t + 2]];
     for (let e = 0; e < 3; e++) {

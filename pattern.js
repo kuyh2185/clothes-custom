@@ -235,7 +235,8 @@ function sleeveOutline(P, frontLen, backLen, chMax) {
 // cut to its armhole). Seams keep matching: side, shoulder and armhole are moved front and back together (studio.js).
 // A bump with a sixth element (local) keeps to its own curve and holds where it meets a seam: a neckline or hem pulled
 // on the front alone, its corner sewn to the back's stays put; a seventh (t2) makes it a band (the 통 tool,
-// 2026-10-30): the whole stretch t … t2 moved alike, the outline easing back over r cm past either end
+// 2026-10-30): the whole stretch t … t2 moved alike, the outline easing back over r cm past either end; an eighth (prof)
+// shapes it: evenly spaced shares of dx along t … t2, a band taken in along the body and not by one width
 const fall = d => d < 1 ? (1 - d * d) ** 2 : 0;
 const dense = pts => {   // at most 0.5 cm apart, the curve's own points kept
   const out = [pts[0]];
@@ -246,6 +247,7 @@ const dense = pts => {   // at most 0.5 cm apart, the curve's own points kept
   return out;
 };
 const hasEdit = b => b && b.some(e => e[2] || e[3]);
+const shareAt = (p, u) => { const v = clamp(u, 0, 1) * (p.length - 1), i = Math.min(p.length - 2, Math.floor(v)); return lerp(p[i], p[i + 1], v - i); };
 // chain: { name: points } in order, each starting where the last ended → the same, bent; sleeve: its underarm end held.
 // other: the other half's own neckline and hem bumps (pulled with 왼쪽·오른쪽 같이 off), carried over the centre line
 // mirrored, so the two halves still meet there (else a hem pulled down near the middle stepped at it)
@@ -253,7 +255,7 @@ function bend(chain, bumps, sleeve, other = []) {
   const names = Object.keys(chain), len = names.map(k => plen(chain[k])), tot = len.reduce((a, b) => a + b, 0), s0 = {};
   names.reduce((a, k, i) => { s0[k] = a; return a + len[i]; }, 0);
   const sAt = (k, t) => s0[k] + clamp(t, 0, 1) * len[names.indexOf(k)];
-  const B = [...bumps.filter(e => e[0] in s0).map(([k, t, dx, dy, r, local, t2 = t]) => [sAt(k, t), dx, dy, r, local && k, sAt(k, t2)]),
+  const B = [...bumps.filter(e => e[0] in s0).map(([k, t, dx, dy, r, local, t2 = t, prof]) => [sAt(k, t), dx, dy, r, local && k, sAt(k, t2), prof]),
     ...other.filter(e => e[0] in s0 && (e[0] === 'neck' || e[0] === 'hem')).map(([k, t, dx, dy, r, local, t2 = t]) => { const m = s => k === 'neck' ? -s : 2 * tot - s; return [m(sAt(k, t)), -dx, dy, r, local && k, m(sAt(k, t2))]; })];
   const out = {};
   for (const k of names) {
@@ -262,11 +264,11 @@ function bend(chain, bumps, sleeve, other = []) {
     out[k] = dense(chain[k]).map((p, j, a) => {
       if (j) s += dist(a[j - 1], p);
       let dx = 0, dy = 0;
-      for (const [sb, bx, by, r, own, se] of B) {
+      for (const [sb, bx, by, r, own, se, prof] of B) {
         if (own && own !== k) continue;
         // (held at the seam end: the hem's side end, the neckline's shoulder end)
         const w = fall(Math.max(0, Math.min(sb, se) - s, s - Math.max(sb, se)) / r) * (!own ? 1 : k === 'hem' ? sstep((s - s0[k]) / 3) : sstep((e - s) / 3));
-        dx += bx * w; dy += by * w;
+        dx += bx * w * (prof ? shareAt(prof, (s - sb) / (se - sb)) : 1); dy += by * w;
       }
       const hold = sstep(s / 3), end = sstep((tot - s) / 3);
       return sleeve ? [p[0] + dx * hold * end, p[1] + dy * hold] : [p[0] + dx * hold * end, p[1] + dy];
@@ -278,8 +280,8 @@ const edited = (H, bumps = [], other = []) => hasEdit(bumps) || hasEdit(other) ?
 // the bumps in a that b hasn't (pulled on a's half alone)
 const solo = (a = [], b = []) => { const s = new Set(b.map(e => e.join())); return a.filter(e => !s.has(e.join())); };
 // where each bump sits on the pattern, for the checks (an outline drawn by hand stands where it was drawn): [pc, x, y, r]
-// (a band: its middle, r reaching over its ends)
-const bumpsAt = (H, bumps, pc, sg) => (hasEdit(bumps) ? bumps : []).filter(e => H[e[0]]).map(([k, t, , , r, , t2 = t]) => { const p = at(H[k], (t + t2) / 2); return [pc, sg * p[0], p[1], r + Math.abs(t2 - t) * plen(H[k]) / 2]; });
+// (a band: its middle, r reaching over its ends; last, whether it is taken in along the body)
+const bumpsAt = (H, bumps, pc, sg) => (hasEdit(bumps) ? bumps : []).filter(e => H[e[0]]).map(([k, t, , , r, , t2 = t, prof]) => { const p = at(H[k], (t + t2) / 2); return [pc, sg * p[0], p[1], r + Math.abs(t2 - t) * plen(H[k]) / 2, !!prof]; });
 // the four body halves as cut: front / back, the +x half and the −x half (each in its own +x frame), with the bumps on
 export function halves(params) {
   const P = { ...(params.base === 'm' ? BASE_M : BASE), ...params };
@@ -443,7 +445,7 @@ export function sleeves(params) {
   return { h, sl, l: side(sl.l, uS.l, E.Sl), r: side(sl.r, uS.r, E.Sr) };
 }
 // a half's outline still a piece: it doesn't cross itself or the centre line, and (q: the body's quarter round by depth)
-// a side taken in stops 1 cm over the body, or where it was if it was already in further; and the armhole stays within
+// a side taken in stops at the body, or where it was if it was already in further; and the armhole stays within
 // 25% of the uncut one's length (base): the sleeve's cap is cut to it, and a zigzag along it made the sleeve half as wide
 // again (now a quarter at most)
 export function halfOk(H, H0, q, base) {
@@ -487,7 +489,7 @@ export function halfOk(H, H0, q, base) {
     const x0 = y => { const s = H0.side; for (let i = 1; i < s.length; i++) if (s[i][1] <= y) return lerp(s[i - 1][0], s[i][0], (s[i - 1][1] - y) / Math.max(1e-9, s[i - 1][1] - s[i][1])); return s[s.length - 1][0]; };
     for (const [x, y] of H.side) {
       const d = Math.round(-y);
-      if (d >= 0 && d < q.length && x < Math.min(x0(y), q[d] + 1) - .05) return false;
+      if (d >= 0 && d < q.length && x < Math.min(x0(y), q[d]) - .05) return false;
     }
   }
   return true;

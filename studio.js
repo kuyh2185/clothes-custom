@@ -15,7 +15,7 @@ import { LineSegments2 } from 'three/addons/lines/LineSegments2.js';
 import { LineSegmentsGeometry } from 'three/addons/lines/LineSegmentsGeometry.js';
 import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import { smoothChest, tuckUnder } from './mannequin.js?v=1';
-import { BASE, BASE_M, applyCuts, fitSide, halfOk, halves, inside, resample, sleeves, sleeveOk } from './pattern.js?v=34';
+import { BASE, BASE_M, applyCuts, fitSide, halfOk, halves, inside, resample, sleeves, sleeveOk } from './pattern.js?v=35';
 
 const $ = id => document.getElementById(id);
 const PI = Math.PI;
@@ -113,7 +113,7 @@ function params(T = state.top) {
     ad: r1(ad), flare: r1(T.flare), fit, rib,
     ndF: r1(T.ndF), ndB: r1(T.ndB), neckV: r1(T.neckV),
     bw: r1(b.bw + (es > 0 ? es * .4 : es * .3)), cuff: r1(b.cuff + (es > 0 ? es * .3 : es * .2)),
-    stretch: Math.round(clamp(t / 2, 0, 1) * 100) / 100,
+    stretch: T.edit && Object.values(T.edit).flat().some(b => b[7] && b[6] > .9) ? 1 : Math.round(clamp(t / 2, 0, 1) * 100) / 100,   // (taken in along the body to the hem it is a fitted knit: stiff, the hem rolled up off the hips; all the way, a band higher up left the loose hem below it in ears)
     edit: T.edit && Object.values(T.edit).some(l => l.length) ? T.edit : undefined,
     cuts: T.cuts && T.cuts.length ? T.cuts : undefined,
   };
@@ -385,7 +385,7 @@ const world = mesh => {   // rest pose = bind pose = world here (the asset's roo
 };
 
 /* ---------- the cloth ---------- */
-const worker = new Worker('cloth.js?v=56', { type: 'module' });
+const worker = new Worker('cloth.js?v=57', { type: 'module' });
 worker.onerror = e => console.error('[cloth]', e.message);
 const fabricU = { uC1: { value: new THREE.Color() }, uC2: { value: new THREE.Color() }, uPat: { value: 0 }, uScale: { value: 1 } };
 // the knit's grain as a normal map over the flat pattern (m): a jersey's columns of V-shaped loops, or for the fitted
@@ -1030,7 +1030,7 @@ const editNear = (pc, x, y) => (cloth && cloth.userData.info.bumps || []).some(b
 // a click cuts there. Pull: the fixed points and the edge's point as before (2단계)
 let tool = 'cut', hov = null;
 // 자유 / 밸런스 (2026-10-30, the user: pulled here and there the hem and sides went wavy ~~~, ordinary tops are straight ---):
-// 밸런스 pulls a hem or cuff all alike and takes 통 on down to the hem; 자유 as before. Kept per browser, not in the top
+// 밸런스 pulls a hem or cuff all alike and eases 통's band out twice as far; 자유 as before. Kept per browser, not in the top
 let balance = (() => { try { return localStorage.getItem(KEY + ':mode') !== 'free'; } catch (e) { return true; } })();
 const showMode = () => { const b = $('mode'); b.textContent = balance ? '밸런스' : '자유'; b.setAttribute('aria-pressed', balance); };
 showMode();
@@ -1259,8 +1259,10 @@ const sideX = (T, y) => xAt(sleeves(params(T)).h.F.side, y);
 // its own tool, apart from pull (the user: pulling and taking in / letting out in one tool was what made pulling hard to read)
 // a band picked on the flat top (드래그 위아래, 펼친 모양) or a click on the cloth (5 cm either side): on the body the side
 // seams over that stretch, on a sleeve its underarm, all moved in or out alike (a band bump, pattern.js bend), easing back
-// over 6 cm past its ends. The bar (or the band's gold handles) runs from as close to the body as the pieces allow
-// (piecesOk: 1 cm over it, at the band's tightest) to as loose as they allow, the cloth hanging again as it moves
+// over 6 cm past its ends (밸런스 12: the seam stays straighter). The bar (or the band's gold handles) runs from the body
+// to as loose as the pieces allow, the cloth hanging again as it moves. Taking in follows the body: each height by what
+// it has spare over the body, so at the end of the bar the whole band sits on it (as 밀착 does), the waist as well as the
+// hips (by one width the widest place stopped it and the waist was left standing off)
 let grip = null, pickXY = null;
 const gripEl = $('grip'), gripBar = $('grip-r');
 // t of the way along a curve running down to where it reaches y (cm, down negative)
@@ -1277,7 +1279,7 @@ function tAt(c, y) {
 // the top as picked with the band dx cm out (in, negative) on every half it covers
 function gripTop(g, dx) {
   const T = structuredClone(g.start), E = T.edit = T.edit || {};
-  if (Math.abs(dx) >= .05) for (const k of g.keys) E[k] = [...(E[k] || []), [g.curve, g.t, r1(dx), 0, g.r, 0, g.t2]];
+  if (Math.abs(dx) >= .05) for (const k of g.keys) E[k] = [...(E[k] || []), dx < 0 ? [g.curve, g.tIn[0], r1(dx), 0, 6, 0, g.tIn[1], g.prof] : [g.curve, g.t, r1(dx), 0, g.r, 0, g.t2]];
   return T;
 }
 // from 0 toward `to`, as far as the pieces stay whole (a start already failing isn't held, as edgeOk)
@@ -1287,6 +1289,16 @@ function gripEnd(g, to) {
   let lo = 0, hi = to;
   for (let i = 0; i < 8; i++) { const m = (lo + hi) / 2; if (ok(m)) lo = m; else hi = m; }
   return Math.trunc(lo * 10) / 10;
+}
+// what taking in moves: the band and its ease, in shares of the most any height gives (at the armhole's end nothing: the
+// sleeve is sewn there) → the most, and g.tIn, g.prof. The floor over the next cm too: the check reads it cm by cm
+function gripIn(g, cur, floor) {
+  const top = -g.c[0][1], bot = -g.c.at(-1)[1], a = Math.max(top, g.ya - g.r), b = Math.min(bot, g.yb + g.r), n = Math.max(2, Math.round(b - a));
+  const ease = d => { const u = Math.max(g.ya - d, d - g.yb, 0) / g.r; return (1 - u * u) ** 2 * sstep((d - top) / 10); };
+  const need = Array.from({ length: n + 1 }, (_, i) => { const d = lerp(a, b, i / n); const k = Math.round(d); return Math.max(0, xAt(cur, d) - Math.max(floor(k - 1), floor(k), floor(k + 1)) - .05) * ease(d); }), most = Math.max(...need);
+  g.tIn = [tAt(g.c, -a), tAt(g.c, -b)].map(t => Math.round(t * 1000) / 1000);
+  g.prof = need.map(v => Math.round(v / (most || 1) * 1000) / 1000);
+  return Math.floor(most * 10) / 10;
 }
 // the band ya … yb cm down (the body from the high shoulder point, a sleeve from its cap's top) of part 'body', 'l' or
 // 'r'; xs: the side the body was picked on (with 왼쪽·오른쪽 같이 off only that side's seams move)
@@ -1304,15 +1316,15 @@ function choose(part, ya, yb, xs) {
   }
   const top = -g.c[0][1], bot = -g.c.at(-1)[1];
   ya = clamp(ya, top, bot); yb = clamp(yb, top, bot);
-  if (balance) yb = bot;   // (밸런스: on down to the hem or cuff, easing in from the underarm above: the seam stays straight)
   if (yb - ya < 1) { closeGrip(); say(part === 'body' ? '겨드랑이 아래 몸판을 골라 주세요' : '소매 아래쪽을 골라 주세요'); return; }
   const na = g.name(ya), nb = g.name(yb);
   g.name = (sym ? '' : (part === 'body' ? xs >= 0 : part === 'l') ? '왼쪽 ' : '오른쪽 ') + (part === 'body' ? (na === nb ? na : `${na}~${nb}`) + ' 둘레' : '소매 통');
   // n: how many halves' edges move, so the round changes by n × dx
-  Object.assign(g, { ya, yb, x: xs, r: balance ? r1(Math.max(6, ya - top)) : 6, t: Math.round(tAt(g.c, -ya) * 1000) / 1000, t2: Math.round(tAt(g.c, -yb) * 1000) / 1000,
+  Object.assign(g, { ya, yb, x: xs, r: balance ? 12 : 6, t: Math.round(tAt(g.c, -ya) * 1000) / 1000, t2: Math.round(tAt(g.c, -yb) * 1000) / 1000,
     n: g.curve === 'side' ? g.keys.length : 2, start: structuredClone(T), from: sleeves(params({ ...T, cuts: undefined })) });
   g.ok0 = piecesOk(T, sleeves(params({ ...T, edit: undefined, cuts: undefined })));
-  g.lo = gripEnd(g, -15); g.hi = gripEnd(g, 15);
+  const m = measure(), most = gripIn(g, part === 'body' ? g.from.h[g.keys[0]].side : g.from[part].H.und, d => part === 'body' ? m.q[d] : m.arm[d] ? m.arm[d] / 2 + 1 : Infinity);
+  g.lo = gripEnd(g, -most); g.hi = gripEnd(g, 15);
   grip = g;
   gripBar.min = g.lo; gripBar.max = g.hi; gripBar.value = 0;
   $('grip-name').textContent = g.name; gripLabel(0);
@@ -1520,7 +1532,7 @@ let lastStat = 0;
 fix(state.top);
 renderSeg(); apply(); undoState();
 showBody(state.body);
-window.__studio = { get state() { return state; }, apply, showBody, camera, controls, canvas, project, get cloth() { return cloth; }, get awake() { return awake; }, get A() { return A; }, composer, renderer, params, edgePoint, edgeAt, editNear,
+window.__studio = { get state() { return state; }, apply, showBody, camera, controls, canvas, project, get cloth() { return cloth; }, get awake() { return awake; }, get A() { return A; }, composer, renderer, params, measure, edgePoint, edgeAt, editNear,
   editOk: () => piecesOk(state.top, sleeves(params({ ...state.top, edit: undefined, cuts: undefined }))),
   // the 통 tool's band picked and set (v: cm in or out, or 'fit' for 몸에 착), as the flat top's drag and the bar do → its range
   band: (part, ya, yb, xs, v) => { choose(part, ya, yb, xs); if (!grip) return null; gripBar.value = v === 'fit' ? grip.lo : clamp(v, grip.lo, grip.hi); gripSet(+gripBar.value); commit(); return [grip.lo, grip.hi]; },

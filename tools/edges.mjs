@@ -46,7 +46,7 @@ for (const [body, curve, at, dx, dy, fb, want] of [['f', 'side', 0, 4, 0, 1, ['F
 cases.push({ name: 'f 한쪽 밑단 가운데', state: { v: 2, body: 'f', bottom: 'jeans', top: TOP },
   steps: [{ t: 'view', a: 0 }, { t: 'wait', ms: 400 }, { t: 'toggle', id: 'sym' }, { t: 'edge', pc: 0, curve: 'hem', at: .8, half: 'p', dx: 0, dy: 40 }, { t: 'settle' }],
   check: async () => {
-    const S = window.__studio, E = S.state.top.edit || {}, { halves } = await import('./pattern.js?v=34'), h = halves(S.params());
+    const S = window.__studio, E = S.state.top.edit || {}, { halves } = await import('./pattern.js?v=35'), h = halves(S.params());
     const gap = Math.abs(h.Fp.hem.at(-1)[1] - h.Fm.hem.at(-1)[1]), drop = h.F.hem.at(-1)[1] - h.Fp.hem.at(-1)[1];
     return [...((E.Fp || []).length && !(E.Fm || []).length ? [] : [`혹 Fp ${JSON.stringify(E.Fp)} Fm ${JSON.stringify(E.Fm)}`]),
       ...(gap < .05 && drop > 1 ? [] : [`가운데 어긋남 ${gap.toFixed(2)}cm, 내려감 ${drop.toFixed(2)}cm`]), ...(S.editOk() ? [] : ['조각이 깨짐'])];
@@ -56,23 +56,25 @@ cases.push({ name: 'f 한쪽 밑단 가운데', state: { v: 2, body: 'f', bottom
 const bandOk = (part, ya, yb) => new Function(`return (async () => {
   const S = window.__studio, E = S.state.top.edit || {}, k = '${part === 'body' ? 'Fp' : 'Sl'}', c = '${part === 'body' ? 'side' : 'und'}', b = (E[k] || []).at(-1);
   if (!b || b[6] == null) return ['띠 혹이 안 생김 ' + JSON.stringify(E)];
-  const { sleeves } = await import('./pattern.js?v=34'), p = S.params(), q = { ...p, edit: undefined };
+  const { sleeves } = await import('./pattern.js?v=35'), p = S.params(), q = { ...p, edit: undefined };
   const cur = h => ${part === 'body' ? 'h.h.Fp.side' : 'h.l.H.und'}, x = (cv, d) => { for (let i = 1; i < cv.length; i++) if (-cv[i][1] >= d) { const a = cv[i - 1], e = cv[i]; return a[0] + (e[0] - a[0]) * (d + a[1]) / (a[1] - e[1]); } return cv.at(-1)[0]; };
   const A = cur(sleeves(p)), B = cur(sleeves(q)), dd = d => x(A, d) - x(B, d), bad = [];
-  for (const d of [${(ya + yb) / 2}, ${ya + (yb - ya) / 4}]) if (Math.abs(dd(d) - b[2]) > .25) bad.push(d + 'cm에서 ' + dd(d).toFixed(2) + ' (바람 ' + b[2] + ')');
+  // (taken in it follows the body, at every height but the last cm under the armhole; let out, one width)
+  const m = S.measure(), floor = d => ${part === 'body' ? 'm.q[Math.round(d)]' : 'm.arm[Math.round(d)] / 2 + 1'};
+  for (const d of [${(ya + yb) / 2}, ${ya + (yb - ya) * 3 / 4}]) if (b[7] ? Math.abs(x(A, d) - Math.min(x(B, d), floor(d))) > .8 : Math.abs(dd(d) - b[2]) > .25) bad.push(d + 'cm에서 ' + dd(d).toFixed(2) + ' (바람 ' + b[2] + ')');
   if (Math.abs(dd(${yb + 7})) > .1 && ${yb + 7} < -A.at(-1)[1]) bad.push('띠 끝 너머도 움직임 ' + dd(${yb + 7}).toFixed(2));
   return [...bad, ...(S.editOk() ? [] : ['조각이 깨짐'])];
 })()`);
-for (const [body, part, ya, yb, v, top] of [['f', 'body', 30, 50, 'fit', { ...TOP, ease: 6, sEase: 6 }], ['m', 'body', 28, 44, 5, TOP], ['f', 'body', 40, 62, 'fit', { ...TOP, L: 70 }],
+for (const [body, part, ya, yb, v, top] of [['f', 'body', 30, 50, 'fit', { ...TOP, ease: 6, sEase: 6 }], ['m', 'body', 28, 44, 5, TOP], ['f', 'body', 40, 62, 'fit', { ...TOP, L: 70 }], ['m', 'body', 34, 40, 'fit', { ...TOP, L: 80 }],
   ['m', 'l', 24, 40, 'fit', { ...TOP, sl: [55, 55], ease: 4, sEase: 4 }], ['f', 'l', 14, 22, 3, TOP]])
   cases.push({ name: `${body} 통 ${part === 'body' ? '몸판' : '소매'} ${ya}~${yb} ${v}`, state: { v: 2, body, bottom: 'jeans', top },
     steps: [{ t: 'view', a: 0 }, { t: 'wait', ms: 400 }, { t: 'band', part, ya, yb, v }, { t: 'settle' }], check: bandOk(part, ya, yb) });
-// 밸런스 (2026-10-30): a hem pulled at one spot moves all of it alike (it keeps its shape, only lower), and 통 runs on
-// down to the hem (the seam moved there as much as in the band)
+// 밸런스 (2026-10-30): a hem pulled at one spot moves all of it alike (it keeps its shape, only lower); 통 keeps to the
+// band picked (2026-10-31, the user: it was taking in everything below the click), the hem where it was
 cases.push({ name: 'f 밸런스 밑단', mode: 'bal', state: { v: 2, body: 'f', bottom: 'jeans', top: TOP },
   steps: [{ t: 'view', a: 0 }, { t: 'wait', ms: 400 }, { t: 'edge', pc: 0, curve: 'hem', at: .8, half: 'p', dx: 0, dy: 40 }, { t: 'settle' }],
   check: async () => {
-    const S = window.__studio, { halves } = await import('./pattern.js?v=34'), h = halves(S.params()), y = c => c.map(p => p[1]);
+    const S = window.__studio, { halves } = await import('./pattern.js?v=35'), h = halves(S.params()), y = c => c.map(p => p[1]);
     // (the hem's points then the drop of each from the uncut hem's at the same x: all alike)
     const xs = [2, 8, 14], at = (c, x) => { for (let i = 1; i < c.length; i++) if ((c[i][0] - x) * (c[i - 1][0] - x) <= 0) return c[i][1]; return NaN; };
     const d = xs.map(x => at(h.F.hem, x) - at(h.Fp.hem, x));
@@ -81,10 +83,10 @@ cases.push({ name: 'f 밸런스 밑단', mode: 'bal', state: { v: 2, body: 'f', 
 cases.push({ name: 'm 밸런스 통 허리', mode: 'bal', state: { v: 2, body: 'm', bottom: 'jeans', top: TOP },
   steps: [{ t: 'view', a: 0 }, { t: 'wait', ms: 400 }, { t: 'band', part: 'body', ya: 34, yb: 40, v: -3 }, { t: 'settle' }],
   check: async () => {
-    const S = window.__studio, b = ((S.state.top.edit || {}).Fp || []).at(-1), { sleeves } = await import('./pattern.js?v=34'), p = S.params();
-    if (!b || b[6] !== 1) return ['밑단까지 안 감 ' + JSON.stringify(b)];
+    const S = window.__studio, b = ((S.state.top.edit || {}).Fp || []).at(-1), { sleeves } = await import('./pattern.js?v=35'), p = S.params();
+    if (!b || b[6] >= 1) return ['밑단까지 감 ' + JSON.stringify(b)];
     const A = sleeves(p).h.Fp.side, B = sleeves({ ...p, edit: undefined }).h.Fp.side, dx = A.at(-1)[0] - B.at(-1)[0];
-    return [...(Math.abs(dx - b[2]) < .25 ? [] : [`밑단 옆이 ${dx.toFixed(2)} (바람 ${b[2]})`]), ...(S.editOk() ? [] : ['조각이 깨짐'])];
+    return [...(Math.abs(dx) < .1 ? [] : [`밑단 옆이 ${dx.toFixed(2)} 움직임`]), ...(S.editOk() ? [] : ['조각이 깨짐'])];
   } });
 // the scissors (가위, 1단계 of the 2026-10-30 plan): a click on the ring cuts the hem or both sleeves there and nothing
 // else; above the underarm nothing; on a sleeve's cap the sleeves come off; a flared hem cut higher is narrower; undo
