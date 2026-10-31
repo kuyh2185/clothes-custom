@@ -15,7 +15,7 @@ import { LineSegments2 } from 'three/addons/lines/LineSegments2.js';
 import { LineSegmentsGeometry } from 'three/addons/lines/LineSegmentsGeometry.js';
 import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import { smoothChest, tuckUnder } from './mannequin.js?v=1';
-import { BASE, BASE_M, applyCuts, fitSide, halfOk, halves, inside, resample, sleeves, sleeveOk } from './pattern.js?v=35';
+import { BASE, BASE_M, applyCuts, fitSide, halfOk, halves, inside, resample, sleeves, sleeveOk } from './pattern.js?v=36';
 
 const $ = id => document.getElementById(id);
 const PI = Math.PI;
@@ -385,7 +385,7 @@ const world = mesh => {   // rest pose = bind pose = world here (the asset's roo
 };
 
 /* ---------- the cloth ---------- */
-const worker = new Worker('cloth.js?v=57', { type: 'module' });
+const worker = new Worker('cloth.js?v=58', { type: 'module' });
 worker.onerror = e => console.error('[cloth]', e.message);
 const fabricU = { uC1: { value: new THREE.Color() }, uC2: { value: new THREE.Color() }, uPat: { value: 0 }, uScale: { value: 1 } };
 // the knit's grain as a normal map over the flat pattern (m): a jersey's columns of V-shaped loops, or for the fitted
@@ -714,7 +714,7 @@ function placeDots() {
     const [x, y] = project(v3);
     d.sx = x; d.sy = y; d.p = v3.clone();
     d.el.style.transform = `translate(${x}px, ${y}px)`;
-    d.el.hidden = drag ? drag !== d : tool !== 'pull' || WIDE.has(d.k) || facing < lim || nearBump(d, vi);   // while dragging only the point in hand
+    d.el.hidden = drag ? drag !== d : tool !== 'pull' || WIDE.has(d.k) || facing < lim || nearBump(d, vi) || cutOver(d);   // while dragging only the point in hand
     d.el.classList.toggle('on', drag === d);
   }
 }
@@ -725,6 +725,8 @@ function nearBump(d, vi) {
   const U = cloth.geometry.attributes.pat.array;
   return editNear(pc, U[vi * 2] * 100 - [0, 70, 140, 190][pc], U[vi * 2 + 1] * 100);
 }
+// a hem or neckline point on a panel cut by hand: hidden, its number moves the outline under the cut (the edge's own point pulls the cut)
+const cutOver = d => (d.k === 'hem' || d.k === 'neck') && (state.top.cuts || []).some(c => c.pts && c.k[0] === 'FB'[d.i]);
 // bad: why a pull stopped, in red
 function showTip(text, x, y, bad) {
   tip.textContent = text; tip.classList.toggle('no', !!bad);
@@ -969,6 +971,8 @@ function edgeTarget(i) {
   return d;
 }
 // the bump at k of (dx, dy): the start's bumps and this one
+// (a side cut by hand: in the list of cuts, so it moves the edge as cut: pattern.js pullCut)
+const cutIn = (T, key) => key[0] !== 'S' && (T.cuts || []).some(c => c.pts && c.k[1] === key[1]);
 const withBump = (d, dx, dy, k) => {
   const T = structuredClone(d.start), E = T.edit = T.edit || {};
   for (const key of d.keys) {
@@ -977,7 +981,10 @@ const withBump = (d, dx, dy, k) => {
     if (!b[2] && !b[3]) continue;   // (a click, or a pull stopped at once: nothing drawn, nothing kept)
     if (d.local || d.t2 != null) b.push(d.local);
     if (d.t2 != null) b.push(d.t2);
-    E[key] = [...(E[key] || []), b];
+    if (!cutIn(T, key)) { E[key] = [...(E[key] || []), b]; continue; }
+    T.cuts.push({ k: key, b });
+    const o = key[0] + (key[1] === 'p' ? 'm' : 'p');   // (one half alone: the other meets it on the middle line, as pattern.js solo)
+    if (!d.keys.includes(o) && (d.curve === 'neck' || d.curve === 'hem')) T.cuts.push({ k: o, o: b });
   }
   return T;
 };
@@ -985,12 +992,21 @@ const withBump = (d, dx, dy, k) => {
 function edgeOk(T, d) {
   const s0 = d.s0 || (d.s0 = sleeves(params({ ...d.start, cuts: undefined })));
   if (d.ok0 == null) d.ok0 = piecesOk(d.start, sleeves(params({ ...d.start, edit: undefined, cuts: undefined })));
-  return !d.ok0 || piecesOk(T, s0);
+  const held = t => sleeves(params(t)).h.held || 0;
+  if (d.held0 == null) d.held0 = held(d.start);
+  return (!d.ok0 || piecesOk(T, s0)) && held(T) <= d.held0;
 }
 function edgeMove(e, d) {
+  const px = e.clientX - d.x0, py = e.clientY - d.y0;
+  const [label, why] = pullBy(d, (px * d.along[0] + py * d.along[1]) * d.mpp * 100);
+  const r = layer.getBoundingClientRect();
+  edgeDot.style.transform = `translate(${e.clientX - r.left}px, ${e.clientY - r.top}px)`;
+  showTip(label, e.clientX - r.left, e.clientY - r.top, why);
+}
+// the edge pulled down cm (up, negative) from the drag's start → [what the tip says, why it stopped]
+function pullBy(d, down) {
   // the long way only (down the body, along the arm); at most 15 cm at once; dragged further than the outline can take,
   // it stops where it still can
-  const px = e.clientX - d.x0, py = e.clientY - d.y0, down = (px * d.along[0] + py * d.along[1]) * d.mpp * 100;
   const dx = 0, dy = -clamp(down, -15, 15);
   let k = 1;
   if (!edgeOk(withBump(d, dx, dy, 1), d)) {
@@ -1001,11 +1017,9 @@ function edgeMove(e, d) {
   state.top = withBump(d, dx, dy, k);
   d.r = Math.max(8, Math.hypot(dx, dy) * k * 1.2);   // (withBump's reach: the gold line follows it)
   apply(true);
-  const r = layer.getBoundingClientRect();
-  edgeDot.style.transform = `translate(${e.clientX - r.left}px, ${e.clientY - r.top}px)`;
   // (the shoulder line and a neckline pulled up have rules of their own, pattern.js halfOk; elsewhere it is the outline's shape)
   const why = k >= .999 ? '' : d.curve === 'shoulder' ? '어깨선은 1.5cm 안에서만 움직여요' : d.curve === 'neck' && dy > 0 ? '목선은 어깨보다 위로 못 올려요' : '여기까지예요 — 더 당기면 옷본 선이 꼬여요';
-  showTip(`${d.name} ${(Math.hypot(dx, dy) * k).toFixed(1)}cm${why ? ' · ' + why : ''}`, e.clientX - r.left, e.clientY - r.top, why);
+  return [`${d.name} ${(Math.hypot(dx, dy) * k).toFixed(1)}cm${why ? ' · ' + why : ''}`, why];
 }
 // for the checks (tools/harness.mjs): a rim point on the page — by curve and fraction, or the f-th of those in view
 function edgePoint(pc, curve, at, half = 'p') {
@@ -1427,7 +1441,8 @@ function drawFlat(refit) {
 // the hem or a sleeve's end (as a pull's target) within 2.2 cm of a point on the flat top, or null
 function flatEnd(p) {
   const near = pts => pts.some((q, i) => i && segDist(p, pts[i - 1], q) < 2.2);
-  if (near(flat.hem)) return { k: 'hem' };
+  // (the front cut by hand: the hem as cut, all of it, front and back; its number moves the outline under the cut)
+  if (near(flat.hem)) return cutOver({ k: 'hem', i: 0 }) ? { k: 'edge', curve: 'hem', pc: 0, name: '밑단', keys: ['Fp', 'Fm', 'Bp', 'Bm'], t: 0, t2: 1, r: 8, local: 0 } : { k: 'hem' };
   for (const [k, i] of [['l', 0], ['r', 1]]) if (flat.sl[k] && flat.sl[k].cuff && near(flat.sl[k].cuff)) return { k: 'sleeve', i, F: flat.sl[k] };
   return null;
 }
@@ -1468,10 +1483,10 @@ flatSvg.addEventListener('pointerdown', e => {
     if (tool !== 'pull') setTool('pull');
     pullBegin(d); drag = d; drawFlat();
     move = ev => {
-      const p = [p0[0] + (ev.clientX - e.clientX) / k, p0[1] + (ev.clientY - e.clientY) / k], [label, why] = d.k === 'hem' ? setLen(d, d.start.L + p[1] - p0[1]) : setLen(d, d.start.sl[d.i] + sleeveLen(F, p) - sleeveLen(F, p0));
-      apply(true);
+      const p = [p0[0] + (ev.clientX - e.clientX) / k, p0[1] + (ev.clientY - e.clientY) / k], [label, why] = d.k === 'edge' ? pullBy(d, p[1] - p0[1]) : d.k === 'hem' ? setLen(d, d.start.L + p[1] - p0[1]) : setLen(d, d.start.sl[d.i] + sleeveLen(F, p) - sleeveLen(F, p0));
+      if (d.k !== 'edge') apply(true);   // (pullBy has)
       const r = layer.getBoundingClientRect();
-      showTip(why ? `${label} · ${why}` : label, ev.clientX - r.left, ev.clientY - r.top, why);
+      showTip(why && d.k !== 'edge' ? `${label} · ${why}` : label, ev.clientX - r.left, ev.clientY - r.top, why);
     };
     up = () => { drag = null; tip.classList.remove('show'); pullEnd(); commit(); apply(); };
   } else {

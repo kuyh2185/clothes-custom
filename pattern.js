@@ -292,6 +292,7 @@ export function halves(params) {
   if (P.cuts) {   // (an armhole cut away takes that side's sleeve off: nothing to sew it to)
     const c = applyCuts(h, P.cuts);
     Object.assign(h, c.h);
+    h.held = c.held;
     for (const k of ['l', 'r']) if (c.arm[k]) uS[k] = 0;
   }
   return h;
@@ -299,7 +300,8 @@ export function halves(params) {
 
 /* ---------- cut by hand (가위로 그은 선) ---------- */
 // P.cuts: [{ k: 'Fp' | 'Fm' | 'Bp' | 'Bm', pts }] lines drawn with the scissors over a body half, in that half's own +x
-// frame (cm). Each is run on straight past both ends until it meets the half's outline; of the two parts it makes, the
+// frame (cm). (Entries { k, b } are bumps, as P.edit's: an edge pulled on a side already cut, on the outline as cut at
+// that point of the list; { k, o } the other half's, see pullCut.) Each is run on straight past both ends until it meets the half's outline; of the two parts it makes, the
 // one holding the shoulder seam's middle (the top hangs from it) is kept and the line is its new edge: the hem where it
 // took off hem or side, the armhole where it took off armhole (that side's sleeve comes off), else the neckline.
 // → { H, gone: the outline of what is cut off, name } or { err } (a line that would leave no top), null: nothing crossed
@@ -413,10 +415,29 @@ function match(F, B) {
     return { ...H, neck, shoulder, arm, side, hem };
   });
 }
-// the halves h with cuts made in order → { h, res: cutHalf's per cut, arm: { l, r } an armhole cut away on that side }.
-// A side whose front and back can't be sewn any more keeps its halves uncut
+// a pull on a side already cut (2026-10-31: on P.edit, under the cuts, it moved an edge that was cut off and nothing
+// happened): the bump b on half k as it hangs by now, sewn to its other panel, or o, the other half's carried over the
+// middle line. Refused (→ false) if it leaves no whole piece, or too little to sew
+function pullCut(out, { k, b, o }) {
+  const f = 'F' + k[1], g = 'B' + k[1], m = match(out[f], out[g]);
+  if (!m) return false;
+  [out[f], out[g]] = m;
+  const H0 = out[k], H = edited(H0, b ? [b] : [], o ? [o] : []), whole = (x, base) => halfOk(x, x, null, base);
+  if (whole(H0, H0) && !whole(H, H0) || !match(H, out[k === f ? g : f])) return false;
+  out[k] = H;
+  return true;
+}
+// the halves h with cuts made in order → { h, res: cutHalf's per cut, arm: { l, r } an armhole cut away on that side,
+// held: pulls refused }. A side whose front and back can't be sewn any more keeps its halves uncut
 export function applyCuts(h, cuts) {
-  const out = { ...h }, res = cuts.map(c => { const r = cutHalf(out[c.k], c.pts); if (r && r.H) out[c.k] = r.H; return r; }), arm = { l: false, r: false };
+  const out = { ...h }, arm = { l: false, r: false };
+  let held = 0;
+  const res = cuts.map(c => {
+    if (!c.pts) { if (!pullCut(out, c)) held++; return null; }
+    const r = cutHalf(out[c.k], c.pts);
+    if (r && r.H) out[c.k] = r.H;
+    return r;
+  });
   for (const [f, b, s] of [['Fp', 'Bp', 'l'], ['Fm', 'Bm', 'r']]) {
     if (out[f] === h[f] && out[b] === h[b]) continue;
     const mine = i => cuts[i].k === f || cuts[i].k === b, m = match(out[f], out[b]);
@@ -424,7 +445,7 @@ export function applyCuts(h, cuts) {
     [out[f], out[b]] = m;
     arm[s] = res.some((r, i) => r && r.name === 'arm' && mine(i));
   }
-  return { h: out, res, arm };
+  return { h: out, res, arm, held };
 }
 // a sleeve's +x half as cut (underarm → hem → the middle line), its bumps on; null: a cap cut short, no underarm
 function sleeveHalf(sl, u, bumps) {
@@ -444,6 +465,8 @@ export function sleeves(params) {
   const side = (s, u, b) => { const H0 = sleeveHalf(s, u); return H0 && { H0, H: hasEdit(b) ? sleeveHalf(s, u, b) : H0 }; };
   return { h, sl, l: side(sl.l, uS.l, E.Sl), r: side(sl.r, uS.r, E.Sr) };
 }
+// x of a curve running down at height y
+const xDown = (c, y) => { for (let i = 1; i < c.length; i++) if (c[i][1] <= y) return lerp(c[i - 1][0], c[i][0], (c[i - 1][1] - y) / Math.max(1e-9, c[i - 1][1] - c[i][1])); return c.at(-1)[0]; };
 // a half's outline still a piece: it doesn't cross itself or the centre line, and (q: the body's quarter round by depth)
 // a side taken in stops at the body, or where it was if it was already in further; and the armhole stays within
 // 25% of the uncut one's length (base): the sleeve's cap is cut to it, and a zigzag along it made the sleeve half as wide
@@ -481,15 +504,15 @@ export function halfOk(H, H0, q, base) {
     for (const k of ['side', 'arm']) {
       if (H[k] === base[k]) continue;
       const n = Math.max(2, Math.round(plen(base[k]))), e = resample(H[k], n), o = resample(base[k], n);
-      for (let i = 1; i < n; i++) if ((e[i][0] > o[i][0] + .1 || e[i - 1][0] > o[i - 1][0] + .1)
+      // (out at the same height: by the same share of its length, a line taken in, a little longer, read as standing out)
+      for (let i = 1; i < n; i++) if ((e[i][0] > xDown(base[k], e[i][1]) + .1 || e[i - 1][0] > xDown(base[k], e[i - 1][1]) + .1)
         && Math.abs(e[i][0] - e[i - 1][0]) > Math.max(e[i - 1][1] - e[i][1], Math.abs(o[i][0] - o[i - 1][0])) + .05) return false;
     }
   }
   if (q && H.side !== H0.side) {
-    const x0 = y => { const s = H0.side; for (let i = 1; i < s.length; i++) if (s[i][1] <= y) return lerp(s[i - 1][0], s[i][0], (s[i - 1][1] - y) / Math.max(1e-9, s[i - 1][1] - s[i][1])); return s[s.length - 1][0]; };
     for (const [x, y] of H.side) {
       const d = Math.round(-y);
-      if (d >= 0 && d < q.length && x < Math.min(x0(y), q[d]) - .05) return false;
+      if (d >= 0 && d < q.length && x < Math.min(xDown(H0.side, y), q[d]) - .05) return false;
     }
   }
   return true;
@@ -509,14 +532,13 @@ export function sleeveOk(H, H0, cap, ar, lo, base) {
   // a 5부 sleeve's underarm pulled 9 cm out folded its spare cloth through itself under the arm (fuzz 179)
   if (base && H.und !== base.und) {
     const n = Math.max(2, Math.round(plen(base.und))), e = resample(H.und, n), o = resample(base.und, n);
-    for (let i = 1; i < n; i++) if ((e[i][0] > o[i][0] + .1 || e[i - 1][0] > o[i - 1][0] + .1)
+    for (let i = 1; i < n; i++) if ((e[i][0] > xDown(base.und, e[i][1]) + .1 || e[i - 1][0] > xDown(base.und, e[i - 1][1]) + .1)
       && Math.abs(e[i][0] - e[i - 1][0]) > Math.max(e[i - 1][1] - e[i][1], Math.abs(o[i][0] - o[i - 1][0])) + .05) return false;
   }
   if (ar && H.und !== H0.und) {
-    const u = H0.und, x0 = y => { for (let i = 1; i < u.length; i++) if (u[i][1] <= y) return lerp(u[i - 1][0], u[i][0], (u[i - 1][1] - y) / Math.max(1e-9, u[i - 1][1] - u[i][1])); return u[u.length - 1][0]; };
     for (const [x, y] of H.und) {
       const d = Math.round(-y);
-      if (d < ar.length && ar[d] > 0 && x < Math.min(x0(y), ar[d] / 2 + 1) - .05) return false;
+      if (d < ar.length && ar[d] > 0 && x < Math.min(xDown(H0.und, y), ar[d] / 2 + 1) - .05) return false;
     }
   }
   return true;
@@ -639,9 +661,10 @@ function minDist(p, poly) {
 // seam kinds: 1 shoulder, 2 armhole, 3 side, 4 sleeve underarm
 export function build(params) {
   // each sleeve its own length; a sleeve shorter than this is none at all (a strap only once both are gone: halves)
-  const { h: { P, uS, Fp: F, Fm, Bp: B, Bm }, sl, ...SH } = sleeves(params), full = P.sw - P.nw;
+  const { h: { P, uS, Fp: F, Fm, Bp: B, Bm }, sl, ...SH } = sleeves(params), full = P.sw - P.nw, cutH = { Fp: F, Fm, Bp: B, Bm };
   const has = { l: uS.l >= 1.2, r: uS.r >= 1.2 };
   const E = P.edit || {}, bumps = [...bumpsAt(F, E.Fp, 0, 1), ...bumpsAt(Fm, E.Fm, 0, -1), ...bumpsAt(B, E.Bp, 1, 1), ...bumpsAt(Bm, E.Bm, 1, -1)];
+  for (const c of P.cuts || []) if (c.b) bumps.push(...bumpsAt(cutH[c.k], [c.b], c.k[0] === 'F' ? 0 : 1, c.k[1] === 'p' ? 1 : -1));
   for (const [k, pc] of [['l', 2], ['r', 3]]) if (has[k] && SH[k] && SH[k].H.edited) for (const sg of [1, -1]) bumps.push(...bumpsAt(SH[k].H, E['S' + k], pc, sg));
   // per side (l the +x halves, r the −x): segment counts, the same front and back where they are sewn, and how much of
   // each armhole is sewn to the sleeve (arc fraction from the shoulder), cap cut or not
